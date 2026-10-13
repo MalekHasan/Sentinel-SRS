@@ -31,7 +31,7 @@ Supporting choices:
 - Each screen, translation and accessibility fix is done once for desktop, gateway and TV viewer.
 - The Tauri backend is Rust, so it calls the core directly, with no C#-to-Rust interop layer.
 - Desktop apps use the system web view (WebView2 on Windows, WebKit on macOS and Linux), so behaviour can differ slightly between platforms. Each release is tested on all three.
-- Narrator and VoiceOver work through the web view's accessibility tree, so semantic HTML and ARIA must be done well. This is checked in the Phase A accessibility pass.
+- Narrator and VoiceOver work through the web view's accessibility tree, so semantic HTML and ARIA must be done well. This is checked in the Phase B accessibility pass.
 - Amendment AM-02 (.NET 8 end of support) no longer applies.
 
 ## Alternatives considered

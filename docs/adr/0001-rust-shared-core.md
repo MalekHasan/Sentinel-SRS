@@ -9,21 +9,22 @@ The SRS (§3.1) requires one shared core for every edition: event normalisation,
 
 ## Decision
 
-Write the shared core in Rust, as a Cargo workspace of small crates (`sentinel-model`, `sentinel-ioc`, `sentinel-feed`, `sentinel-store`, `sentinel-scan`, later `sentinel-enrich` and `sentinel-rules`).
+Write the shared core in Rust, as a Cargo workspace of small crates. Phase A (Android) needs `sentinel-model`, `sentinel-store`, `sentinel-ioc`, `sentinel-feed`, `sentinel-enrich`, `sentinel-detect`, `sentinel-vpn` and `sentinel-ffi`. Later phases add `sentinel-scan` and a Sigma-subset rule engine.
 
 - Bindings: Tauri commands on desktop; UniFFI for Kotlin (Android) and Swift (Apple); cargo-ndk for Android builds.
 - Storage: `rusqlite` with SQLCipher; keys in the OS key store.
 - Windows APIs: `windows-rs`; ETW through `ferrisetw`.
 - Linux eBPF (Phase E): `aya`.
 - File scanning (MS-06, Phase D): YARA-X.
-- Gateway DNS (Phase B): `hickory-dns`; HTTP API with `axum`.
+- Android packet engine (Phase A): a Rust userspace TCP/IP stack, chosen by the A0 spike.
+- Gateway DNS (Phase C): `hickory-dns`; HTTP API with `axum`.
 
 ## Consequences
 
 - One implementation of the detection logic, tested once (NF-13: ≥ 80% coverage on the core).
 - No garbage-collector pauses or large runtime on phones and TVs.
 - Rust has a learning curve. At least one team member must be fluent, and reviews must enforce `clippy` and `cargo deny`.
-- Cross-compiling for Android and ARM64 needs CI setup in A0.
+- Cross-compiling for Android (arm64-v8a, armeabi-v7a, x86_64) needs CI setup in A0, and the build must stay reproducible for F-Droid.
 
 ## Alternatives considered
 

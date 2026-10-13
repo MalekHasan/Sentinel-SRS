@@ -7,7 +7,9 @@
 
 Sentinel sees every connection a device makes. Users and partners will ask why they should trust a free tool with that. Open source answers the question, and it also unlocks grants, free audit programmes, F-Droid distribution and free CI.
 
-The repository is currently MIT-licensed. Projects we may want to learn from or reuse code from are mostly GPLv3: NetGuard and PCAPdroid (Android), LuLu (macOS), OpenSnitch (Linux), Portmaster and simplewall (Windows). The engines we bundle in Phase A have their own terms: MVT uses MVT License 1.1 (MPL 2.0 plus a consensual-use restriction), and AndroidQF's licence is to be confirmed in A0.
+The repository is currently MIT-licensed. Projects we may want to learn from or reuse code from are mostly GPLv3: NetGuard and PCAPdroid (Android), LuLu (macOS), OpenSnitch (Linux), Portmaster and simplewall (Windows). The engines we bundle in Phase B have their own terms: MVT uses MVT License 1.1 (MPL 2.0 plus a consensual-use restriction), and AndroidQF's licence is to be confirmed.
+
+The Android packet engine (Phase A) is the hardest part of the first phase. If the A0 spike shows a Rust engine is not ready in time, the fallback is to reuse a proven GPLv3 engine from NetGuard or PCAPdroid, which is only possible under the GPL.
 
 Today there is a single copyright holder, so changing the licence is easy. Once outside contributions arrive, it becomes hard.
 
@@ -24,7 +26,7 @@ Today there is a single copyright holder, so changing the licence is easy. Once 
 
 **GPL-3.0-or-later** for the whole repository:
 
-- it lets us reuse proven GPLv3 code for the hardest parts (Android VPN engine, macOS and Linux firewalls);
+- it lets us reuse proven GPLv3 code for the hardest parts (the Android packet engine in Phase A, macOS and Linux firewalls later);
 - it stops anyone shipping a closed, possibly data-collecting fork of a privacy tool under a similar name;
 - it matches the licences of most comparable tools.
 

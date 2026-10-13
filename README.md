@@ -1,8 +1,8 @@
 # Sentinel
 
-See every network connection and sensor access on devices you own, trace where data goes, block suspicious activity, and check phones for known state-grade spyware from outside the phone.
+See every network connection and sensor access on devices you own, trace where data goes, block suspicious activity, and check phones for known stalkerware and state-grade spyware.
 
-**Status:** planning. No code yet. The first deliverable is **Sentinel Phone Check**, a free desktop app that checks an iPhone or Android phone for known spyware traces (Pegasus, Predator, Graphite and others).
+**Status:** planning. No code yet. We start with **Sentinel for Android**, then move to other devices and systems one at a time: the desktop Phone Check, then the home-network gateway, then Windows.
 
 ## Documents
 
@@ -10,16 +10,22 @@ See every network connection and sensor access on devices you own, trace where d
 | --- | --- |
 | [Sentinel-SRS.md](Sentinel-SRS.md) | Software requirements for every edition |
 | [docs/PLAN.md](docs/PLAN.md) | Project plan: phases, gates, technology, decisions needed |
-| [docs/PHASE-A-PHONE-CHECK.md](docs/PHASE-A-PHONE-CHECK.md) | Detailed plan for the first deliverable |
+| [docs/PHASE-A-ANDROID.md](docs/PHASE-A-ANDROID.md) | Detailed plan for the first deliverable, the Android app |
+| [docs/PHASE-B-PHONE-CHECK.md](docs/PHASE-B-PHONE-CHECK.md) | Plan for the desktop spyware check that follows |
 | [docs/SRS-AMENDMENTS.md](docs/SRS-AMENDMENTS.md) | Problems found in the SRS and proposed fixes |
 | [docs/SUSTAINABILITY.md](docs/SUSTAINABILITY.md) | How a free product pays its costs |
 | [docs/adr/](docs/adr/) | Architecture decision records |
 
 ## نبذة بالعربي
 
-Sentinel تطبيق مجاني ومفتوح المصدر بيورجيك كل اتصال بيعمله جهازك، ومين بيستخدم المايك والكاميرا، ووين بتروح بياناتك. وبيفحص الموبايل من برّا، عن طريق الكمبيوتر أو راوتر البيت، بحثاً عن آثار برامج تجسس معروفة زي Pegasus.
+Sentinel تطبيق مجاني ومفتوح المصدر بيورجيك كل اتصال بيعمله كل تطبيق على جهازك، ومين بيستخدم المايك والكاميرا، ووين بتروح بياناتك. وبيفحص إذا في آثار معروفة لبرامج تجسس أو stalkerware.
 
-أول إصدار: **Sentinel Phone Check**، تطبيق للكمبيوتر بالعربي والإنجليزي لفحص الآيفون والأندرويد. التفاصيل بـ [docs/PLAN.md](docs/PLAN.md).
+بنبلّش بتطبيق **Android**، وبعدين بننتقل خطوة خطوة للأجهزة والأنظمة التانية:
+1. فحص الموبايل من الكمبيوتر.
+2. راوتر البيت.
+3. Windows.
+
+التفاصيل بـ [docs/PLAN.md](docs/PLAN.md).
 
 ## Principles
 

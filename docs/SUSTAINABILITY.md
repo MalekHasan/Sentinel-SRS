@@ -17,9 +17,9 @@ These do not change, whatever the funding situation.
 
 | Group | Why Sentinel matters to them | Phase |
 | --- | --- | --- |
-| Journalists, human-rights defenders, lawyers and activists in Arabic-speaking countries | Pegasus targeting in the region is publicly documented (Citizen Lab, Access Now, Front Line Defenders). MVT exists but is a command-line tool in English. | A |
-| Digital-security helplines and trainers | A free, guided, bilingual tool they can hand to the people they support | A |
-| Privacy-conscious home users | See what their phones, PCs and TVs send, and to whom | B–D |
+| Journalists, human-rights defenders, lawyers and activists in Arabic-speaking countries | Pegasus targeting in the region is publicly documented (Citizen Lab, Access Now, Front Line Defenders). Most of them use Android. MVT exists but is a command-line tool in English. | A, B |
+| Digital-security helplines and trainers | A free, guided, bilingual tool they can hand to the people they support | A, B |
+| Privacy-conscious home users | See what their phones, PCs and TVs send, and to whom | A onwards |
 
 ## 3. Costs
 
@@ -27,12 +27,13 @@ Rough figures for planning; get real quotes before budgeting.
 
 | Item | Approximate cost | Needed from |
 | --- | --- | --- |
-| Apple Developer Program (macOS notarization, later iOS) | 99 USD per year | Phase A |
-| Windows code signing | A few hundred USD per year from a commercial CA; free programmes exist for open-source projects (for example SignPath Foundation; check eligibility) | Phase A |
+| Google Play developer account | 25 USD, one-off | Phase A (Play release) |
 | Domain | About 15 USD per year | Phase A |
-| Hosting, CI, releases | 0 (GitHub is free for public repositories, including Windows and macOS runners) | Phase A |
-| Test devices: an older iPhone, two or three Android phones, a Raspberry Pi | About 1,000–2,000 USD, one-off | Phases A–C |
-| Google Play developer account | 25 USD, one-off | Phase C |
+| Hosting, CI, releases, F-Droid | 0 (GitHub is free for public repositories, including Windows and macOS runners) | Phase A |
+| Android test phones: Android 10, 12, 14 and latest; at least one Samsung and one Xiaomi | About 800–1,500 USD, one-off (second-hand devices are fine) | Phase A |
+| Apple Developer Program (macOS notarization, later iOS) | 99 USD per year | Phase B |
+| Windows code signing | A few hundred USD per year from a commercial CA; free programmes exist for open-source projects (for example SignPath Foundation; check eligibility) | Phase B |
+| An older iPhone for testing the phone check, a Raspberry Pi for the gateway | About 300–600 USD, one-off | Phases B–C |
 | External security audit | Usually tens of thousands of USD per audit; some funders offer free audits to open-source privacy projects | Before 1.0 releases |
 | EV certificate for a Windows kernel driver | Several hundred USD per year, and requires a registered organisation | Phase E only |
 | Legal entity, accounting | Depends on the country | When needed (see §5) |
@@ -43,7 +44,7 @@ The biggest hidden cost is people's time for the indicator feed (MS-10), support
 
 | Source | Examples | Notes |
 | --- | --- | --- |
-| Grants for open-source privacy and digital-rights work | NLnet / NGI Zero, and other internet-freedom funders | Check which calls are open; some funders' budgets changed in 2025. Phase A is a good fit for a first application. |
+| Grants for open-source privacy and digital-rights work | NLnet / NGI Zero, and other internet-freedom funders | Check which calls are open; some funders' budgets changed in 2025. The Android app (Phase A) is a good fit for a first application. |
 | Donations | GitHub Sponsors, Open Collective, Liberapay | Covers fixed yearly fees. |
 | Partner organisations | Helplines and digital-rights NGOs | Can co-fund features or audits, test with real cases, and distribute the tool. |
 | In-kind support | Free code signing for OSS, free CI, free audit programmes | Apply early; approvals take time. |
