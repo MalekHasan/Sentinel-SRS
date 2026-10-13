@@ -1,0 +1,88 @@
+name: Android
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_ANDROID_TARGETS: aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+jobs:
+  build:
+    name: build, lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Rust toolchain and Android targets
+        run: |
+          rustup toolchain install || rustup show
+          rustup target add $RUST_ANDROID_TARGETS
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - name: Install cargo-ndk
+        run: cargo install --locked cargo-ndk --version 4.1.2
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build and lint
+        working-directory: apps/android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        run: ./gradlew --no-daemon --stacktrace assembleDebug lintDebug
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sentinel-debug-apk
+          path: |
+            apps/android/app/build/outputs/apk/debug/*.apk
+            apps/android/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+
+  device-tests:
+    name: instrumented tests (emulator)
+    # Loads the Rust library on an x86_64 emulator and calls it through UniFFI.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Rust toolchain and Android targets
+        run: |
+          rustup toolchain install || rustup show
+          rustup target add $RUST_ANDROID_TARGETS
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - name: Install cargo-ndk
+        run: cargo install --locked cargo-ndk --version 4.1.2
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run tests on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          script: cd apps/android && ./gradlew --no-daemon --stacktrace connectedDebugAndroidTest
