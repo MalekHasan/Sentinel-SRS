@@ -122,7 +122,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 - [ ] **Spike 1: packet engine.** Build a pass-through tunnel with a Rust userspace TCP/IP stack (candidates: `ipstack`, `smoltcp`; reference: `tun2proxy`). Measure latency, throughput and battery on a real phone. If it falls short, the fallback is to reuse a proven C engine (NetGuard, PCAPdroid), which requires the GPL licence (ADR-0004). Record the result as an ADR.
 - [ ] **Spike 2: build pipeline.** UniFFI bindings and `cargo-ndk` builds for arm64-v8a, armeabi-v7a and x86_64 inside Gradle; check that F-Droid can build it from source.
 - [ ] **Spike 3: sensors.** What basic mode can see on Android 10 to the latest version, and whether an ADB-granted `GET_APP_OPS_STATS` gives exact per-app history.
-- [ ] **Spike 4: feed signing.** TUF (`tough`) or our own signed manifest.
+- [x] **Spike 4: feed signing.** Decided: a small DSSE-signed manifest, not TUF yet ([ADR-0005](adr/0005-signed-feed-format.md)). Implemented in `crates/sentinel-feed` and `tools/feed-tool`; procedure in [FEED-SIGNING.md](FEED-SIGNING.md).
 - [ ] Repo setup: Cargo workspace, Gradle project, CI (cargo fmt, clippy, test, `cargo deny`; Android lint, ktlint or detekt, unit tests; an emulator test job)
 - [ ] Phase A threat model (STRIDE): malicious packets reaching the parser, feed tampering, database theft, notification spoofing
 - [ ] Wireframes for every screen, in Arabic and English
