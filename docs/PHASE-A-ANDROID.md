@@ -117,18 +117,19 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 
 ### A0 — Foundations (weeks 1–2)
 
-- [ ] Owner decisions D1–D8 from [PLAN.md §8](PLAN.md#8-decisions-needed-from-the-project-owners)
-- [ ] Licence review of every source in §5, and of any engine code we might reuse
+- [ ] Owner decisions D1–D8 from [PLAN.md §8](PLAN.md#8-decisions-needed-from-the-project-owners). D2 (GPL) and D4 (name kept for now) are decided; D1, D3, D5–D8 are open
+- [x] Licence review, desk part: [LICENCE-REVIEW.md](LICENCE-REVIEW.md)
+- [ ] Licence review, confirmations L1–L3 with the data maintainers (before Sprints 4 and 7)
 - [x] **Spike 1: packet engine (host part).** Rust engine built on `ipstack` and `smoltcp`, measured in a Linux lab that CI runs on every push. Decision: Rust engine on a patched `ipstack` ([ADR-0006](adr/0006-android-packet-engine.md)).
 - [ ] **Spike 1: packet engine (phone part).** Measure latency, battery, throughput and memory on a real phone once Spike 2 can start the tunnel (ADR-0006, "Still open").
 - [ ] **Spike 2: build pipeline.** UniFFI bindings and `cargo-ndk` builds for arm64-v8a, armeabi-v7a and x86_64 inside Gradle; check that F-Droid can build it from source.
-- [ ] **Spike 3: sensors.** What basic mode can see on Android 10 to the latest version, and whether an ADB-granted `GET_APP_OPS_STATS` gives exact per-app history.
+- [ ] **Spike 3: sensors.** What basic mode can see on Android 10 to the latest version, and whether an ADB-granted `GET_APP_OPS_STATS` gives exact per-app history. Test plan ready ([SPIKE-3-SENSORS.md](SPIKE-3-SENSORS.md)); needs real phones, so it runs in Sprint 1
 - [x] **Spike 4: feed signing.** Decided: a small DSSE-signed manifest, not TUF yet ([ADR-0005](adr/0005-signed-feed-format.md)). Implemented in `crates/sentinel-feed` and `tools/feed-tool`; procedure in [FEED-SIGNING.md](FEED-SIGNING.md).
-- [ ] Repo setup: Cargo workspace, Gradle project, CI (cargo fmt, clippy, test, `cargo deny`; Android lint, ktlint or detekt, unit tests; an emulator test job)
-- [ ] Phase A threat model (STRIDE): malicious packets reaching the parser, feed tampering, database theft, notification spoofing
+- [x] Repo setup: Cargo workspace, Gradle project, CI (cargo fmt, clippy, test, `cargo deny`, engine lab; Android build, lint, emulator tests). Still to add: ktlint or detekt
+- [x] Phase A threat model (STRIDE): [THREAT-MODEL-A.md](THREAT-MODEL-A.md)
 - [ ] Wireframes for every screen, in Arabic and English
-- [ ] Google Play policy review: `VpnService` declaration, `QUERY_ALL_PACKAGES`, foreground-service type
-- [ ] `SECURITY.md` (vulnerability disclosure)
+- [x] Google Play policy review: [PLAY-POLICY.md](PLAY-POLICY.md)
+- [x] `SECURITY.md` (vulnerability disclosure). The repository owner must turn on private vulnerability reporting in the GitHub settings
 
 ### Sprint 1 — Tunnel that works
 

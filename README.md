@@ -15,6 +15,19 @@ See every network connection and sensor access on devices you own, trace where d
 | [docs/SRS-AMENDMENTS.md](docs/SRS-AMENDMENTS.md) | Problems found in the SRS and proposed fixes |
 | [docs/SUSTAINABILITY.md](docs/SUSTAINABILITY.md) | How a free product pays its costs |
 | [docs/adr/](docs/adr/) | Architecture decision records |
+| [docs/THREAT-MODEL-A.md](docs/THREAT-MODEL-A.md) | Threat model for the Android app |
+| [docs/LICENCE-REVIEW.md](docs/LICENCE-REVIEW.md), [docs/PLAY-POLICY.md](docs/PLAY-POLICY.md) | Licences of data and code; Google Play requirements |
+| [docs/ANDROID-BUILD.md](docs/ANDROID-BUILD.md), [docs/FEED-SIGNING.md](docs/FEED-SIGNING.md) | How to build the app; how to sign the indicator feed |
+
+## Code
+
+| Path | What |
+| --- | --- |
+| `apps/android` | Android app (Kotlin, Jetpack Compose) |
+| `crates/sentinel-vpn` | Packet engine for the Android tunnel, with its test lab |
+| `crates/sentinel-feed`, `tools/feed-tool` | Signed indicator feed and its signing tool |
+| `crates/sentinel-ffi` | Kotlin bindings to the Rust core (UniFFI) |
+| `third_party/ipstack` | Vendored userspace TCP/IP stack with our fix |
 
 ## نبذة بالعربي
 
