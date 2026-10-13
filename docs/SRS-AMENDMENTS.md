@@ -1,0 +1,21 @@
+# SRS amendments
+
+Version 0.1 · Oct 2026 · Status: **Proposed**
+
+Problems found while reviewing [Sentinel-SRS.md](../Sentinel-SRS.md), with proposed changes. The SRS text itself is left unchanged until each amendment is accepted; accepted amendments are then folded into the next SRS version.
+
+| ID | SRS section | Problem | Proposed change | Status |
+| --- | --- | --- | --- | --- |
+| AM-01 | §2.2, §2.3, §18.1 | Windows 10 reached end of support in Oct 2025 (consumer ESU ends Oct 2026). Windows 11 23H2 Home/Pro left servicing in Nov 2025. Supporting them doubles the test matrix for shrinking value. | Target Windows 11 versions still in servicing at release time (25H2 and later today), x64 and ARM64. | Proposed |
+| AM-02 | §17 | The Windows UI toolchain names .NET 8, which reaches end of support in Nov 2026. | Moot if ADR-0002 (Tauri) is accepted. If WinUI 3 is kept, use .NET 10. | Proposed |
+| AM-03 | §3.2, §4.1, CM-09, NF-02 | A kernel driver from day one needs an EV certificate (issued only to registered organisations), Partner Center attestation signing and HVCI testing. Microsoft is also moving security products out of the kernel. | Windows v1 ships without `SentinelFlt.sys` (ADR-0003). CM-09 becomes "block and notify, then allow on approval". SNI capture (CM-02) is deferred; DNS correlation supplies hostnames. | Proposed |
+| AM-04 | CM-09 | "Default deny after 60 s": a held TCP connection on Windows fails on its own after about 21 s (default SYN retransmissions), so 60 s never takes effect. | When prompts become possible (driver, Phase E), hold for at most 20 s, then apply the default and remember the decision. | Proposed |
+| AM-05 | §1.5, DL-01, §20.3 | The SRS depends on a product specification that is not in the repository: DL-01 needs the "inference table from spec section 6.4", and the traceability table cites TV-FR and DT-FR items. | Add the product specification (at least §6.4) to `docs/`. DL-01 cannot be built without it. | Proposed |
+| AM-06 | MS-04 | MVT is licensed under MVT License 1.1 (based on MPL 2.0, with an added consensual-use restriction), is written in Python, and is developed mainly for Linux and macOS. | Add: engines run as separate processes; MVT's licence terms are reviewed and shown in the app; Windows support is confirmed by the A0 spike before it is promised. | Proposed |
+| AM-07 | MS-10 | Weekly updates with same-day urgent updates are an operational service, not a feature. | Name an owner and a backup; define the urgent-update procedure and target time; document offline signing. | Proposed |
+| AM-08 | §10 data sources, §20.4 | DuckDuckGo Tracker Radar is CC BY-NC-SA. GeoLite2 needs an account and has its own EULA. | Answer §20.4: the product is free and non-commercial, so Tracker Radar is usable for now. Any future revenue triggers a licence re-check. Use DB-IP Lite (CC BY 4.0) for geolocation and a public-domain IP-to-ASN dataset. | Proposed |
+| AM-09 | §2.2, §19.1 | Android allows only one active VPN. Users who run a commercial VPN cannot run Sentinel's local VPN at the same time. With Android Private DNS on, DNS queries are encrypted inside the tunnel and hostnames come only from SNI. | Add both to the Android limits in §2.2 and §19.1, and show them in the app. | Proposed |
+| AM-10 | §8A, MS-01 | The gateway sees only DNS that goes through it. DoH in browsers and apps, Android Private DNS and iCloud Private Relay bypass it, which silently weakens MS-01. | New requirement: the gateway detects devices that use known encrypted-DNS endpoints or relay services and shows a per-device "partly invisible" warning, with steps to fix it. | Proposed |
+| AM-11 | §20 | The delivery plan assumes several parallel teams. | Replace §20.1 and §20.2 with [PLAN.md](PLAN.md) for the current team size; keep §20.3 traceability. | Proposed |
+| AM-12 | Licence | The repository is MIT. Reusing code from NetGuard, PCAPdroid, LuLu, OpenSnitch or Portmaster (all GPLv3) would require the distributed apps to be GPLv3. | Decide the licence now, while there is a single copyright holder (ADR-0004). | Proposed |
+| AM-13 | Product name | "Sentinel" collides with Microsoft Sentinel and SentinelOne, both security products. | Trademark check before any public release; rename if needed. | Proposed |
