@@ -1,13 +1,13 @@
 # ADR-0004: Open source, and which licence
 
-- Status: Proposed: **needs a decision from the copyright holder**
+- Status: **Accepted** (copyright holder decision, 2026-10-13)
 - Date: 2026-10-13
 
 ## Context
 
 Sentinel sees every connection a device makes. Users and partners will ask why they should trust a free tool with that. Open source answers the question, and it also unlocks grants, free audit programmes, F-Droid distribution and free CI.
 
-The repository is currently MIT-licensed. Projects we may want to learn from or reuse code from are mostly GPLv3: NetGuard and PCAPdroid (Android), LuLu (macOS), OpenSnitch (Linux), Portmaster and simplewall (Windows). The engines we bundle in Phase B have their own terms: MVT uses MVT License 1.1 (MPL 2.0 plus a consensual-use restriction), and AndroidQF's licence is to be confirmed.
+The repository was MIT-licensed until this decision. Projects we may want to learn from or reuse code from are mostly GPLv3: NetGuard and PCAPdroid (Android), LuLu (macOS), OpenSnitch (Linux), Portmaster and simplewall (Windows). The engines we bundle in Phase B have their own terms: MVT uses MVT License 1.1 (MPL 2.0 plus a consensual-use restriction), and AndroidQF's licence is to be confirmed.
 
 The Android packet engine (Phase A) is the hardest part of the first phase. If the A0 spike shows a Rust engine is not ready in time, the fallback is to reuse a proven GPLv3 engine from NetGuard or PCAPdroid, which is only possible under the GPL.
 
@@ -32,8 +32,8 @@ Today there is a single copyright holder, so changing the licence is easy. Once 
 
 Bundled engines stay separate programs under their own licences, with their licence texts shipped in the app and shown on an "About and licences" screen. Indicator and tracker data keep their own licences and attribution.
 
-## Consequences if accepted
+## Consequences
 
-- Replace `LICENSE` with the GPL-3.0 text and add SPDX headers to source files.
+- `LICENSE` now holds the GPL-3.0 text. Every source file carries the header `SPDX-License-Identifier: GPL-3.0-or-later`.
 - Add `cargo deny` licence rules so incompatible dependencies fail CI.
 - A future paid edition (SUSTAINABILITY.md §4) would also be GPL. Charging for support, hardware or hosting is still possible, but a closed-source edition is not.

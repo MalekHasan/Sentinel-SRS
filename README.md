@@ -2,7 +2,7 @@
 
 See every network connection and sensor access on devices you own, trace where data goes, block suspicious activity, and check phones for known stalkerware and state-grade spyware.
 
-**Status:** planning. No code yet. We start with **Sentinel for Android**, then move to other devices and systems one at a time: the desktop Phone Check, then the home-network gateway, then Windows.
+**Status:** Phase A0 (foundations). We start with **Sentinel for Android**, then move to other devices and systems one at a time: the desktop Phone Check, then the home-network gateway, then Windows.
 
 ## Documents
 
@@ -35,4 +35,8 @@ Sentinel تطبيق مجاني ومفتوح المصدر بيورجيك كل ا�
 
 ## Licence
 
-Currently [MIT](LICENSE). A change to GPL-3.0-or-later is proposed in [ADR-0004](docs/adr/0004-open-source-and-licensing.md).
+Copyright (C) 2026 Malek Al-Sheekh Hasan and the Sentinel contributors.
+
+Sentinel is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. See [LICENSE](LICENSE) and [ADR-0004](docs/adr/0004-open-source-and-licensing.md).
+
+Bundled data and engines keep their own licences; see [docs/LICENCE-REVIEW.md](docs/LICENCE-REVIEW.md).

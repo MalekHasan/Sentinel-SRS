@@ -1,0 +1,27 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+captures/
+.externalNativeBuild/
+.cxx/
+apps/android/app/src/main/jniLibs/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Secrets: feed signing keys must never be committed
+*.key
+*.secret
+/secrets/

@@ -90,7 +90,7 @@ Details and reasoning are in the ADRs.
 | Storage | SQLite with SQLCipher (`rusqlite`); key wrapped by the platform key store (Android Keystore first) | SRS §13 |
 | Signed updates | Ed25519 signatures, version and expiry checks; evaluate TUF (`tough`) in A0 | SRS §14.3 |
 | Detection rules | Built-in detections in Phase A; Sigma-compatible YAML engine when behaviour rules grow | SRS §14.4 |
-| Licence | **Open decision**: recommendation in ADR-0004 | [0004](adr/0004-open-source-and-licensing.md) |
+| Licence | GPL-3.0-or-later | [0004](adr/0004-open-source-and-licensing.md) |
 
 ## 5. Repository layout (target)
 
@@ -151,9 +151,9 @@ These block or shape Phase A. Each should be answered before the end of A0.
 | # | Decision | Recommendation | Blocks |
 | --- | --- | --- | --- |
 | D1 | Team size and who owns which track | At least: Rust engine, Android and UI, feed and detection | Timeline |
-| D2 | Licence | GPL-3.0-or-later (ADR-0004); it also allows reusing NetGuard or PCAPdroid code if the engine spike needs it | First code commit |
+| D2 | Licence | **Decided:** GPL-3.0-or-later (ADR-0004) | — |
 | D3 | Legal home | Fiscal host now (for example Open Source Collective), own entity later | Store accounts, grants |
-| D4 | Product name | Run a trademark check: "Sentinel" collides with Microsoft Sentinel and SentinelOne, both security products | Public release, Android package name |
+| D4 | Product name | **Decided for now:** keep "Sentinel". A trademark check is still required before the first public release, because the name collides with Microsoft Sentinel and SentinelOne | Public release |
 | D5 | Primary audience for Phase A | At-risk users in Arabic-speaking countries and the helplines that support them; privacy-conscious users second | UX and copy |
 | D6 | Helpline partner(s) | Approach Access Now Digital Security Helpline and SMEX in A0 | MS-13 copy, Phase B gate |
 | D7 | Missing product spec | Add the product specification the SRS references (§6.4 inference table, TV-FR, DT-FR) to the repo (AM-05) | DL-01 and later phases |
@@ -168,7 +168,7 @@ These block or shape Phase A. Each should be answered before the end of A0.
 | Battery drain or manufacturers killing the service | Users uninstall | Battery measured every sprint; per-brand guidance; gaps recorded and shown |
 | Google Play rejects the VPN or package-visibility use | Smaller reach | GitHub and F-Droid are the primary channels; fix and resubmit |
 | Licence conflicts (indicator sources, tracker data, engine code, MVT later) | Legal exposure, rework | Licence review in A0; ADR-0004 |
-| Trademark conflict on "Sentinel" | Forced rename after launch, new package name | Check in A0 (D4) |
+| Trademark conflict on "Sentinel" | Forced rename after launch | Check before the first public release (D4). The Android package ID can stay as it is after a rename, because users do not see it |
 | No funding for devices, signing and audits | No audit, slow progress | SUSTAINABILITY.md |
 | Users read "No known traces found" as "safe" | Real harm to at-risk users | MS-15 wording, §8A.3 limits shown on every such result, partner review, Phase B outside check |
 | Small-team burnout from feed operations | Stale indicators | Named owner, rotation, partner help |
