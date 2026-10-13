@@ -25,3 +25,7 @@ apps/android/app/src/main/jniLibs/
 *.key
 *.secret
 /secrets/
+
+# Python
+__pycache__/
+*.pyc

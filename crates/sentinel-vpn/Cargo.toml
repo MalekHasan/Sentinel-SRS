@@ -1,0 +1,30 @@
+[package]
+name = "sentinel-vpn"
+description = "Userspace packet engine for the Android VpnService tunnel (A0 Spike 1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ipstack = "1.0.1"
+log = "0.4.34"
+rustix = { version = "1.1.5", features = ["fs"] }
+simple-dns = "0.12.0"
+socket2 = { version = "0.6.5", features = ["all"] }
+tokio = { version = "1.53.3", features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
+# Optional second stack for the Spike 1 comparison.
+futures = { version = "0.3.34", optional = true }
+netstack-smoltcp = { version = "0.2.4", optional = true }
+
+[features]
+# Second userspace stack (smoltcp), for the A0 Spike 1 comparison (ADR-0006).
+smoltcp = ["dep:netstack-smoltcp", "dep:futures"]
+
+[dev-dependencies]
+libc = "0.2.190"
+
+[lints]
+workspace = true

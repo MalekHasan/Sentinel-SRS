@@ -29,8 +29,8 @@ jobs:
         run: rustup toolchain install || rustup show
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --workspace --all-features --locked
 
   deny:
     name: licences and advisories
@@ -41,3 +41,18 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  engine-lab:
+    name: packet engine lab (Linux namespaces)
+    # Real TCP/UDP traffic through the engine, checked for metadata and closed flows.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update -q && sudo apt-get install -y -q iperf3 iproute2
+      - run: cargo build --release --locked -p sentinel-vpn --features smoltcp --example linux_lab
+      - name: Run lab (ipstack)
+        run: sudo SKIP_BUILD=1 STACK=ipstack crates/sentinel-vpn/lab/run-lab.sh "$RUNNER_TEMP/lab-ipstack"

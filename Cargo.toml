@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "tools/*"]
+# Vendored third-party code: built as a dependency, not linted or tested as ours.
+exclude = ["third_party/*"]
 
 [workspace.package]
 version = "0.0.0"
@@ -23,3 +25,7 @@ unwrap_used = "warn"
 lto = "thin"
 codegen-units = 1
 panic = "abort"
+
+[patch.crates-io]
+# ipstack 1.0.1 with a fix for flows that never end; see third_party/ipstack/PATCHES.md.
+ipstack = { path = "third_party/ipstack" }

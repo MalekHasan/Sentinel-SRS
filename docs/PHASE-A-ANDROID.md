@@ -119,7 +119,8 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 
 - [ ] Owner decisions D1–D8 from [PLAN.md §8](PLAN.md#8-decisions-needed-from-the-project-owners)
 - [ ] Licence review of every source in §5, and of any engine code we might reuse
-- [ ] **Spike 1: packet engine.** Build a pass-through tunnel with a Rust userspace TCP/IP stack (candidates: `ipstack`, `smoltcp`; reference: `tun2proxy`). Measure latency, throughput and battery on a real phone. If it falls short, the fallback is to reuse a proven C engine (NetGuard, PCAPdroid), which requires the GPL licence (ADR-0004). Record the result as an ADR.
+- [x] **Spike 1: packet engine (host part).** Rust engine built on `ipstack` and `smoltcp`, measured in a Linux lab that CI runs on every push. Decision: Rust engine on a patched `ipstack` ([ADR-0006](adr/0006-android-packet-engine.md)).
+- [ ] **Spike 1: packet engine (phone part).** Measure latency, battery, throughput and memory on a real phone once Spike 2 can start the tunnel (ADR-0006, "Still open").
 - [ ] **Spike 2: build pipeline.** UniFFI bindings and `cargo-ndk` builds for arm64-v8a, armeabi-v7a and x86_64 inside Gradle; check that F-Droid can build it from source.
 - [ ] **Spike 3: sensors.** What basic mode can see on Android 10 to the latest version, and whether an ADB-granted `GET_APP_OPS_STATS` gives exact per-app history.
 - [x] **Spike 4: feed signing.** Decided: a small DSSE-signed manifest, not TUF yet ([ADR-0005](adr/0005-signed-feed-format.md)). Implemented in `crates/sentinel-feed` and `tools/feed-tool`; procedure in [FEED-SIGNING.md](FEED-SIGNING.md).
