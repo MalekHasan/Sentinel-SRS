@@ -141,9 +141,9 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 
 ### Sprint 2 — Flows and storage
 
-- [x] Flow tracking with owner UID, endpoints, protocol, start and end, bytes up and down (CM-01). The engine reports each flow when it starts and when it ends, with the owner from `getConnectionOwnerUid`; flows still open when the engine stops are ended with their byte counts. Kept in memory until the store below exists
+- [x] Flow tracking with owner UID, endpoints, protocol, start and end, bytes up and down (CM-01). The engine reports each flow when it starts and when it ends, with the owner from `getConnectionOwnerUid`; flows still open when the engine stops are ended with their byte counts. Stored in the encrypted history below
 - [x] DNS answer cache and TLS SNI parsing; hostname and its source per flow (CM-02). In the engine since A0; now carried to the app in every flow record
-- [ ] `sentinel-store`: SQLCipher schema from SRS §13, Keystore-wrapped key, retention and roll-up (§13.2), one-tap wipe
+- [x] `sentinel-store`: SQLCipher schema from SRS §13, Keystore-wrapped key, retention and roll-up (§13.2), one-tap wipe ([ADR-0009](adr/0009-local-history-store.md)). The engine writes every flow into it; gaps live there too
 - [ ] Test: 100% of flows in the test suite recorded within 1 s (CM-01 criterion). Done so far: the engine test checks one flow's delivery time, and `MonitoringTest` checks that its own connection is recorded with its app within 1 s on the emulator
 
 ### Sprint 3 — Live view

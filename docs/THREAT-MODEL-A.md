@@ -57,7 +57,7 @@ Status: **Done** = implemented and tested in A0; **Sprint N** = planned; **Accep
 | T1 | Rollback to an older feed that lacks new indicators | Strictly increasing versions; installed version stored | Done (feed); storing the version is Sprint 7 |
 | T2 | A frozen feed: the attacker blocks updates | Expiry: an expired list is still used, but flagged to the user (MS-15) | Done (feed); UI is Sprint 7 |
 | T3 | A path-traversal bundle writes outside its folder | Only plain relative ASCII paths; symbolic links rejected | Done |
-| T4 | Editing the local database to hide history | Database encrypted with a Keystore-wrapped key; changes made outside the app are detected at start | Sprint 2 |
+| T4 | Editing the local database to hide history | Database encrypted with a Keystore-wrapped key; SQLCipher authenticates every page, so a changed file fails to open and the app starts a new history (ADR-0009) | Done; telling the user is Sprint 5 |
 
 ### Repudiation
 
@@ -71,8 +71,8 @@ Status: **Done** = implemented and tested in A0; **Sprint N** = planned; **Accep
 | --- | --- | --- | --- |
 | I1 | Payloads leak through logs or the database | Payloads are never stored; only the first record is parsed for SNI, in memory | Done (engine) |
 | I2 | Cloud backup copies the history off the phone | `android:allowBackup="false"` | Done |
-| I3 | Another app reads our files | App-private storage plus SQLCipher | Sprint 2 |
-| I4 | Someone with the unlocked phone browses the history | Optional app lock (biometric or PIN), one-tap wipe | Sprint 10 (lock), Sprint 2 (wipe) |
+| I3 | Another app reads our files | App-private no-backup storage plus SQLCipher with a random key wrapped by the Android Keystore (ADR-0009) | Done |
+| I4 | Someone with the unlocked phone browses the history | Optional app lock (biometric or PIN), one-tap wipe | Wipe done (deletes database and key); lock is Sprint 10 |
 | I5 | The feed download reveals that this person uses Sentinel | No identifiers sent; download is optional; manual import from a file works offline | Done (design); UI is Sprint 7 |
 | I6 | Upstream connections from the engine reveal the device's real IP | Same as without Sentinel; we add no servers of our own | Accepted |
 
