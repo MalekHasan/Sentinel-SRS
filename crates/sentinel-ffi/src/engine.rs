@@ -2,13 +2,14 @@
 //! Starting and stopping the packet engine from the Android `VpnService`.
 
 use std::io;
+use std::net::{IpAddr, SocketAddr};
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use sentinel_vpn::{EngineConfig, EngineStats, Observer, Protect, TunDevice};
+use sentinel_vpn::{DnsForward, EngineConfig, EngineStats, Observer, Protect, TunDevice};
 use tokio::sync::oneshot;
 
 /// Implemented by the `VpnService`: calls `VpnService.protect(fd)` so the engine's own
@@ -40,6 +41,8 @@ pub struct EngineSnapshot {
 pub enum EngineError {
     #[error("the tunnel descriptor {fd} is not valid")]
     InvalidDescriptor { fd: i32 },
+    #[error("{address} is not an IP address")]
+    InvalidAddress { address: String },
     #[error("the engine could not start: {reason}")]
     StartFailed { reason: String },
 }
@@ -48,6 +51,7 @@ pub enum EngineError {
 #[derive(uniffi::Object)]
 pub struct Engine {
     stats: Arc<EngineStats>,
+    dns: Arc<DnsForward>,
     running: Arc<AtomicBool>,
     stop: Mutex<Option<oneshot::Sender<()>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -64,10 +68,13 @@ impl Engine {
     /// Start the engine on a tunnel descriptor.
     ///
     /// Takes ownership of `tun_fd`: pass the result of
-    /// `ParcelFileDescriptor.detachFd()`, and do not close it in Kotlin.
+    /// `ParcelFileDescriptor.detachFd()`, and do not close it in Kotlin. `tunnel_dns`
+    /// lists the resolver addresses given to `VpnService.Builder.addDnsServer`; DNS sent
+    /// there goes to the resolvers set with [`Engine::set_upstream_dns`].
     #[uniffi::constructor]
     pub fn start(
         tun_fd: i32,
+        tunnel_dns: Vec<String>,
         protector: Arc<dyn SocketProtector>,
         listener: Arc<dyn EngineListener>,
     ) -> Result<Arc<Self>, EngineError> {
@@ -75,9 +82,18 @@ impl Engine {
             return Err(EngineError::InvalidDescriptor { fd: tun_fd });
         }
         // SAFETY: the caller hands over an open descriptor it no longer owns
-        // (`detachFd()`); from here on only this `OwnedFd` closes it.
+        // (`detachFd()`); from here on only this `OwnedFd` closes it, including on
+        // every error below.
         #[allow(unsafe_code)]
         let fd = unsafe { OwnedFd::from_raw_fd(tun_fd) };
+        let tunnel_dns = tunnel_dns
+            .into_iter()
+            .map(|address| {
+                address
+                    .parse::<IpAddr>()
+                    .map_err(|_| EngineError::InvalidAddress { address })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(WORKER_THREADS)
@@ -91,6 +107,11 @@ impl Engine {
             .map_err(start_failed)?;
 
         let stats = Arc::new(EngineStats::default());
+        let dns = Arc::new(DnsForward::new(tunnel_dns));
+        let config = EngineConfig {
+            dns_forward: Some(Arc::clone(&dns)),
+            ..EngineConfig::default()
+        };
         let running = Arc::new(AtomicBool::new(true));
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
 
@@ -106,7 +127,7 @@ impl Engine {
                                 device,
                                 Arc::new(ForeignProtect(protector)),
                                 Arc::new(Quiet),
-                                EngineConfig::default(),
+                                config,
                                 stats,
                             ) => match result {
                                 Ok(()) => Some("the engine stopped unexpectedly".to_owned()),
@@ -124,6 +145,7 @@ impl Engine {
 
         Ok(Arc::new(Engine {
             stats,
+            dns,
             running,
             stop: Mutex::new(Some(stop_tx)),
             thread: Mutex::new(Some(thread)),
@@ -142,6 +164,18 @@ impl Engine {
         if thread.thread().id() != std::thread::current().id() {
             let _ = thread.join();
         }
+    }
+
+    /// Set the current network's resolvers, in order of preference. Call it at start
+    /// and whenever the network or its resolvers change. Entries that are not plain IP
+    /// addresses (for example scoped link-local ones like `fe80::1%wlan0`) are skipped.
+    pub fn set_upstream_dns(&self, servers: Vec<String>) {
+        let servers = servers
+            .iter()
+            .filter_map(|s| s.parse::<IpAddr>().ok())
+            .map(|ip| SocketAddr::new(ip, 53))
+            .collect();
+        self.dns.set_upstream(servers);
     }
 
     pub fn snapshot(&self) -> EngineSnapshot {
@@ -236,6 +270,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let engine = Engine::start(
             OwnedFd::from(tun).into_raw_fd(),
+            vec!["10.111.0.53".into()],
             Arc::clone(&protector) as Arc<dyn SocketProtector>,
             Arc::new(ChannelListener(Mutex::new(tx))),
         )
@@ -308,6 +343,7 @@ mod tests {
         let listener = Arc::new(StopsEngine(Mutex::new(None), Mutex::new(done_tx)));
         let engine = Engine::start(
             OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::clone(&listener) as Arc<dyn EngineListener>,
         )
@@ -324,6 +360,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let result = Engine::start(
             -1,
+            Vec::new(),
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::new(ChannelListener(Mutex::new(tx))),
         );
@@ -331,5 +368,41 @@ mod tests {
             result,
             Err(EngineError::InvalidDescriptor { fd: -1 })
         ));
+    }
+
+    #[test]
+    fn rejects_a_tunnel_resolver_that_is_not_an_address() {
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let (tx, _rx) = mpsc::channel();
+        let result = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            vec!["dns.example".into()],
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+        );
+        assert!(matches!(
+            result,
+            Err(EngineError::InvalidAddress { address }) if address == "dns.example"
+        ));
+        // The engine owned the descriptor and closed it: the peer reads end-of-file.
+        assert_eq!((&peer).read(&mut [0u8; 16]).unwrap(), 0);
+    }
+
+    #[test]
+    fn keeps_only_plain_ip_resolvers() {
+        let (engine, _peer, _protector, _stopped) = start_on_socketpair();
+        engine.set_upstream_dns(vec![
+            "192.0.2.1".into(),
+            "fe80::1%wlan0".into(),
+            "not an address".into(),
+            "2001:db8::1".into(),
+        ]);
+        let expected: Vec<SocketAddr> = vec![
+            "192.0.2.1:53".parse().unwrap(),
+            "[2001:db8::1]:53".parse().unwrap(),
+        ];
+        assert_eq!(engine.dns.upstream(), expected);
+        engine.stop();
     }
 }

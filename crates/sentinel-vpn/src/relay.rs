@@ -51,6 +51,14 @@ impl Ctx {
         }
     }
 
+    /// The real destination for a flow the app sent to `dst` (see [`crate::DnsForward`]).
+    fn upstream_for(&self, dst: SocketAddr) -> io::Result<SocketAddr> {
+        match &self.config.dns_forward {
+            Some(forward) => forward.route(dst),
+            None => Ok(dst),
+        }
+    }
+
     fn finish(&self, flow: &FlowInfo, verdict: Verdict) {
         if verdict == Verdict::Block {
             self.stats.flows_blocked.fetch_add(1, Ordering::Relaxed);
@@ -99,7 +107,11 @@ where
 
     // The app already sees its connection as open: ipstack answered the handshake
     // locally. If the upstream connect fails, dropping the stream resets it.
-    let upstream = match connect_tcp(&*ctx.protect, flow.dst, ctx.config.connect_timeout).await {
+    let connected = match ctx.upstream_for(flow.dst) {
+        Ok(target) => connect_tcp(&*ctx.protect, target, ctx.config.connect_timeout).await,
+        Err(e) => Err(e),
+    };
+    let upstream = match connected {
         Ok(s) => s,
         Err(e) => {
             log::debug!(
@@ -251,7 +263,10 @@ where
         ctx.finish(&flow, Verdict::Block);
         return;
     }
-    let upstream = match connect_udp(&*ctx.protect, flow.dst) {
+    let upstream = match ctx
+        .upstream_for(flow.dst)
+        .and_then(|target| connect_udp(&*ctx.protect, target))
+    {
         Ok(s) => s,
         Err(e) => {
             log::debug!("flow {} UDP socket to {} failed: {e}", flow.id, flow.dst);

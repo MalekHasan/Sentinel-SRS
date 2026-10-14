@@ -22,6 +22,7 @@ mod device;
 mod dns;
 mod engine;
 mod flow;
+mod forward;
 mod protect;
 mod relay;
 mod sni;
@@ -33,6 +34,7 @@ pub use device::{TunClosed, TunDevice};
 pub use dns::{DnsAnswer, DnsCache, parse_dns_response};
 pub use engine::{EngineConfig, EngineStats};
 pub use flow::{FlowCounters, FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
+pub use forward::DnsForward;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub use protect::SoMark;
 pub use protect::{NoProtect, Protect};

@@ -16,7 +16,8 @@ use std::time::Duration;
 
 use etherparse::{NetSlice, PacketBuilder, SlicedPacket, TransportSlice};
 use sentinel_vpn::{
-    EngineConfig, EngineStats, FlowInfo, FlowTotals, NoProtect, Observer, TunDevice, Verdict, run,
+    DnsForward, EngineConfig, EngineStats, FlowInfo, FlowTotals, NoProtect, Observer, TunDevice,
+    Verdict, run,
 };
 use socket2::{Domain, Socket, Type};
 
@@ -46,24 +47,33 @@ impl Observer for Recorder {
 
 /// A UDP echo server on loopback, answering every datagram once.
 fn udp_echo(addr: IpAddr) -> SocketAddr {
+    udp_echo_tagged(addr, b"")
+}
+
+/// A UDP echo server that puts `tag` in front of every reply, to tell servers apart.
+fn udp_echo_tagged(addr: IpAddr, tag: &'static [u8]) -> SocketAddr {
     let socket = UdpSocket::bind((addr, 0)).unwrap();
     let local = socket.local_addr().unwrap();
     std::thread::spawn(move || {
         let mut buf = [0u8; 2048];
         while let Ok((n, from)) = socket.recv_from(&mut buf) {
-            let _ = socket.send_to(&buf[..n], from);
+            let _ = socket.send_to(&[tag, &buf[..n]].concat(), from);
         }
     });
     local
 }
 
 fn udp_packet(src: IpAddr, dst: SocketAddr, payload: &[u8]) -> Vec<u8> {
-    let builder = match (src, dst.ip()) {
+    udp_packet_from(SocketAddr::new(src, APP_PORT), dst, payload)
+}
+
+fn udp_packet_from(src: SocketAddr, dst: SocketAddr, payload: &[u8]) -> Vec<u8> {
+    let builder = match (src.ip(), dst.ip()) {
         (IpAddr::V4(s), IpAddr::V4(d)) => PacketBuilder::ipv4(s.octets(), d.octets(), 64),
         (IpAddr::V6(s), IpAddr::V6(d)) => PacketBuilder::ipv6(s.octets(), d.octets(), 64),
         _ => panic!("mixed address families"),
     }
-    .udp(APP_PORT, dst.port());
+    .udp(src.port(), dst.port());
     let mut packet = Vec::with_capacity(builder.size(payload.len()));
     builder.write(&mut packet, payload).unwrap();
     packet
@@ -101,6 +111,10 @@ struct Harness {
 }
 
 fn start(recorder: Recorder) -> Harness {
+    start_with(recorder, EngineConfig::default())
+}
+
+fn start_with(recorder: Recorder, config: EngineConfig) -> Harness {
     let (tun_end, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
     peer.set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
@@ -111,7 +125,7 @@ fn start(recorder: Recorder) -> Harness {
         device,
         Arc::new(NoProtect),
         Arc::clone(&recorder) as Arc<dyn Observer>,
-        EngineConfig::default(),
+        config,
         Arc::clone(&stats),
     ));
     Harness {
@@ -234,4 +248,50 @@ async fn aborting_the_engine_releases_the_tunnel() {
         }
     }
     panic!("the tunnel is still open after the engine was dropped");
+}
+
+/// DNS sent to the tunnel's resolver address reaches the network's current resolver,
+/// and follows it when it changes (a switch from Wi-Fi to mobile data).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dns_to_the_tunnel_resolver_follows_the_network() {
+    let tunnel_dns = SocketAddr::new(Ipv4Addr::new(10, 111, 0, 53).into(), 53);
+    let forward = Arc::new(DnsForward::new(vec![tunnel_dns.ip()]));
+    forward.set_upstream(vec![udp_echo_tagged(Ipv4Addr::LOCALHOST.into(), b"A")]);
+    let h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            dns_forward: Some(Arc::clone(&forward)),
+            ..EngineConfig::default()
+        },
+    );
+
+    // Resolvers use a new source port per query, so each query is a new flow.
+    let app = SocketAddr::new(APP_V4.into(), 40_001);
+    h.send(&udp_packet_from(app, tunnel_dns, b"q1"));
+    let (src, dst, payload) = parse_udp(&h.recv().await.expect("no answer"));
+    assert_eq!(
+        src, tunnel_dns,
+        "the answer must come from the address the app asked"
+    );
+    assert_eq!(dst, app);
+    assert_eq!(payload, b"Aq1");
+
+    forward.set_upstream(vec![udp_echo_tagged(Ipv4Addr::LOCALHOST.into(), b"B")]);
+    let app = SocketAddr::new(APP_V4.into(), 40_002);
+    h.send(&udp_packet_from(app, tunnel_dns, b"q2"));
+    let (src, _, payload) = parse_udp(&h.recv().await.expect("no answer after the change"));
+    assert_eq!(src, tunnel_dns);
+    assert_eq!(payload, b"Bq2");
+    assert_eq!(h.stats.upstream_failures(), 0);
+
+    // Only DNS is served at the resolver address.
+    let dot = SocketAddr::new(tunnel_dns.ip(), 853);
+    h.send(&udp_packet_from(
+        SocketAddr::new(APP_V4.into(), 40_003),
+        dot,
+        b"q3",
+    ));
+    assert!(h.recv().await.is_none(), "port 853 must not be relayed");
+    assert_eq!(h.stats.upstream_failures(), 1);
+    h.engine.abort();
 }

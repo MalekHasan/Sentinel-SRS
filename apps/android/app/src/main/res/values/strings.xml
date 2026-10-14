@@ -3,6 +3,33 @@
 <resources>
     <string name="app_name">Sentinel</string>
     <string name="tagline">See which apps connect where, and spot known spyware traces.</string>
-    <string name="build_status">Foundations build. Monitoring is not switched on yet.</string>
     <string name="core_version">Core version %1$s</string>
+
+    <!-- Shown before Android's VPN consent dialog (Google Play prominent disclosure). -->
+    <string name="disclosure">Sentinel uses Android\'s VPN feature to see which apps connect where. Your traffic stays on this phone: Sentinel has no servers, and nothing is sent to us.</string>
+    <string name="action_start">Start monitoring</string>
+    <string name="action_stop">Stop monitoring</string>
+    <string name="status_off">Monitoring is off.</string>
+    <string name="status_starting">Starting…</string>
+    <string name="status_on">Monitoring is on.</string>
+    <string name="stats">Connections seen: %1$d. Open now: %2$d. Could not connect: %3$d.</string>
+
+    <string name="channel_monitoring">Monitoring</string>
+    <string name="channel_monitoring_description">Shown the whole time Sentinel is monitoring this phone.</string>
+    <string name="notification_title">Sentinel is monitoring this phone</string>
+    <string name="notification_text">Tap to see what it found.</string>
+
+    <string name="gaps_title">Gaps in monitoring</string>
+    <string name="gap_open">Since %1$s: %2$s</string>
+    <string name="gap_closed">From %1$s to %2$s: %3$s</string>
+    <string name="gap_time_unknown">an unknown time</string>
+    <string name="gap_revoked">The VPN was switched off in Android settings, or another VPN app took over.</string>
+    <string name="gap_engine_failed">The monitoring engine stopped: %1$s</string>
+    <string name="gap_no_tunnel">Android did not open the tunnel. Another VPN app may be set to always on.</string>
+    <string name="gap_start_failed">Monitoring could not start: %1$s</string>
+    <string name="gap_service_stopped">Android stopped the monitoring service.</string>
+    <string name="gap_process_low_memory">Android closed Sentinel to free memory.</string>
+    <string name="gap_process_crash">Sentinel crashed or stopped responding.</string>
+    <string name="gap_process_force_stop">Sentinel was force-stopped.</string>
+    <string name="gap_process_other">Sentinel was closed without warning.</string>
 </resources>

@@ -2,6 +2,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- The engine opens the real (protected) connections for every app. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Follow the real network's resolvers for DNS forwarding. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- The tunnel runs in a foreground service with a visible notification (SRS §15.3).
+         systemExempted is the type Android 14+ allows for VPN apps (PLAY-POLICY.md). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- allowBackup=false: the local database holds sensitive history and must not
          leave the phone through cloud backups (SRS NF-11, §15.2). -->
     <application
@@ -17,5 +27,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Not exported: only Android itself (which holds BIND_VPN_SERVICE) can bind
+             it, and only this app can start or stop it (THREAT-MODEL-A E1). -->
+        <service
+            android:name=".SentinelVpnService"
+            android:exported="false"
+            android:foregroundServiceType="systemExempted"
+            android:permission="android.permission.BIND_VPN_SERVICE">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

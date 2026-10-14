@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+use crate::DnsForward;
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -20,6 +23,9 @@ pub struct EngineConfig {
     /// faces the app over a local tunnel with a tiny round-trip time, so small buffers
     /// keep throughput while bounding memory (ADR-0006). `None` keeps the stack default.
     pub tcp_buffer: Option<u32>,
+    /// The tunnel's own resolver address and the real resolvers behind it. `None`
+    /// relays DNS to whatever address the app asked, like any other flow.
+    pub dns_forward: Option<Arc<DnsForward>>,
 }
 
 impl Default for EngineConfig {
@@ -32,6 +38,7 @@ impl Default for EngineConfig {
             sni_wait: Duration::from_millis(500),
             dns_cache_capacity: 20_000,
             tcp_buffer: Some(32 * 1024),
+            dns_forward: None,
         }
     }
 }

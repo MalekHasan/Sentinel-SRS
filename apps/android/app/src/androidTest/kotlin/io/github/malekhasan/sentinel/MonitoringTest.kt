@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package io.github.malekhasan.sentinel
+
+import android.Manifest
+import android.app.NotificationManager
+import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.VpnService
+import android.os.Build
+import android.os.ParcelFileDescriptor
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.ByteArrayOutputStream
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketTimeoutException
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Sprint 1 end to end, on a device: start the VPN, relay real traffic through the Rust
+ * engine, forward DNS to the network's resolver, and stop cleanly.
+ *
+ * Needs an HTTP server reachable from the device, by default on the test machine's
+ * loopback (10.0.2.2:8765 from the emulator). CI starts one; locally run
+ * `python3 -m http.server 8765 --bind 127.0.0.1` first, or pass another address with
+ * `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=host:port`.
+ */
+@RunWith(AndroidJUnit4::class)
+class MonitoringTest {
+    private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private val context = instrumentation.targetContext
+    private val notifications = context.getSystemService(NotificationManager::class.java)
+
+    @Before
+    fun grantPermissions() {
+        // What the user's "OK" in Android's VPN consent dialog grants.
+        shell("appops set ${context.packageName} ACTIVATE_VPN allow")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            instrumentation.uiAutomation.grantRuntimePermission(
+                context.packageName, Manifest.permission.POST_NOTIFICATIONS,
+            )
+        }
+        assertNull("VPN consent should be granted", VpnService.prepare(context))
+    }
+
+    @After
+    fun stopMonitoring() {
+        context.startService(serviceIntent(SentinelVpnService.ACTION_STOP))
+        waitFor("monitoring to stop") { Monitor.status.value == Monitor.Status.OFF }
+    }
+
+    @Test
+    fun relaysTrafficAndDnsThenStopsCleanly() {
+        val gapsBefore = GapLog.recent(context, 1_000).size
+        context.startForegroundService(serviceIntent(SentinelVpnService.ACTION_START))
+        waitFor("monitoring to start") { Monitor.status.value == Monitor.Status.ON }
+
+        // §15.3: monitoring is never hidden.
+        assertTrue(
+            "the monitoring notification must be showing",
+            notifications.activeNotifications.any { it.id == SentinelVpnService.NOTIFICATION_ID },
+        )
+
+        // Sentinel's own app is inside the tunnel too, so this test's sockets use it.
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        waitFor("the tunnel to become this app's network") {
+            connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        }
+
+        // TCP through the engine and its protected upstream socket.
+        val (host, port) = testServer()
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(host, port), 10_000)
+            socket.soTimeout = 10_000
+            socket.getOutputStream().write("GET / HTTP/1.0\r\n\r\n".toByteArray())
+            val status = socket.getInputStream().bufferedReader().readLine()
+            assertTrue("unexpected reply: $status", status?.startsWith("HTTP/1.") == true)
+        }
+
+        // DNS to the tunnel's resolver reaches the real network's resolver. Any answer
+        // with our query id proves the path; the name's existence does not matter.
+        assertTrue("no DNS answer through the tunnel", dnsAnswered("localhost"))
+
+        val snapshot = checkNotNull(Monitor.snapshot()) { "no engine counters while on" }
+        assertTrue("flows seen: ${snapshot.flowsTotal}", snapshot.flowsTotal >= 2uL)
+
+        context.startService(serviceIntent(SentinelVpnService.ACTION_STOP))
+        waitFor("monitoring to stop") { Monitor.status.value == Monitor.Status.OFF }
+        waitFor("the notification to go") {
+            notifications.activeNotifications.none { it.id == SentinelVpnService.NOTIFICATION_ID }
+        }
+        assertEquals("a stop the user asked for is not a gap", gapsBefore, GapLog.recent(context, 1_000).size)
+    }
+
+    private fun serviceIntent(action: String) =
+        Intent(context, SentinelVpnService::class.java).setAction(action)
+
+    private fun testServer(): Pair<String, Int> {
+        val value = InstrumentationRegistry.getArguments()
+            .getString("sentinelTestServer", "10.0.2.2:8765")
+        val host = value.substringBeforeLast(':')
+        val port = value.substringAfterLast(':').toInt()
+        return host to port
+    }
+
+    /** Sends an A query to the tunnel's resolver, retrying while the network is found. */
+    private fun dnsAnswered(name: String): Boolean {
+        val resolver = InetAddress.getByName(SentinelVpnService.TUNNEL_DNS)
+        repeat(5) { attempt ->
+            val id = 0x5e00 + attempt
+            val query = dnsQuery(id, name)
+            // A new socket per try: a new source port, like a real resolver.
+            DatagramSocket().use { socket ->
+                socket.soTimeout = 2_000
+                socket.send(DatagramPacket(query, query.size, resolver, 53))
+                val buffer = ByteArray(512)
+                val reply = DatagramPacket(buffer, buffer.size)
+                try {
+                    socket.receive(reply)
+                } catch (timeout: SocketTimeoutException) {
+                    return@use
+                }
+                val replyId = (buffer[0].toInt() and 0xFF shl 8) or (buffer[1].toInt() and 0xFF)
+                val isResponse = buffer[2].toInt() and 0x80 != 0
+                if (reply.length >= 12 && replyId == id && isResponse) return true
+            }
+        }
+        return false
+    }
+
+    private fun dnsQuery(id: Int, name: String): ByteArray = ByteArrayOutputStream().apply {
+        write(byteArrayOf((id shr 8).toByte(), id.toByte(), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0))
+        name.split('.').forEach { label ->
+            write(label.length)
+            write(label.toByteArray())
+        }
+        write(byteArrayOf(0, 0, 1, 0, 1)) // end of name, type A, class IN
+    }.toByteArray()
+
+    private fun shell(command: String) {
+        ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(command),
+        ).use { it.readBytes() }
+    }
+
+    private fun waitFor(what: String, timeoutMillis: Long = 10_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMillis
+        while (System.currentTimeMillis() < deadline) {
+            if (condition()) return
+            Thread.sleep(100)
+        }
+        fail("timed out waiting for $what")
+    }
+}
