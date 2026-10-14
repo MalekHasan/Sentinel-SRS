@@ -1,0 +1,226 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+package io.github.malekhasan.sentinel
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
+import android.net.VpnService
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import io.github.malekhasan.sentinel.core.Engine
+import io.github.malekhasan.sentinel.core.EngineException
+import io.github.malekhasan.sentinel.core.EngineListener
+import io.github.malekhasan.sentinel.core.SocketProtector
+
+/**
+ * The local VPN: hands every app's traffic to the Rust engine, which relays it over
+ * protected sockets. Nothing leaves the phone through Sentinel; there is no server.
+ *
+ * Runs as a foreground service with a notification that stays visible the whole time
+ * (SRS §15.3). If the engine stops without being asked, Android routes traffic outside
+ * the tunnel (fail-open, NF-07) and the stop is recorded as a gap (SP-03).
+ */
+class SentinelVpnService : VpnService() {
+    private val main = Handler(Looper.getMainLooper())
+
+    // Main thread only.
+    private var engine: Engine? = null
+    private var listener: Listener? = null
+    private var underlyingDns: UnderlyingDns? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        GapLog.recordUnexpectedExit(this)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            GapLog.setMonitoringWanted(this, false)
+            teardown()
+            stopSelf()
+        } else {
+            // ACTION_START from the app, or Android starting an always-on VPN.
+            startMonitoring()
+        }
+        return START_NOT_STICKY
+    }
+
+    private fun startMonitoring() {
+        if (engine != null) return
+        Monitor.starting()
+        try {
+            goForeground()
+        } catch (e: RuntimeException) {
+            // For example, the VPN permission was withdrawn since the user granted it.
+            fail(getString(R.string.gap_start_failed, e.message.orEmpty()))
+            return
+        }
+        GapLog.setMonitoringWanted(this, true)
+
+        val tunnel = try {
+            tunnelBuilder().establish()
+        } catch (e: RuntimeException) {
+            null
+        }
+        if (tunnel == null) {
+            fail(getString(R.string.gap_no_tunnel))
+            return
+        }
+        val listener = Listener()
+        val started = try {
+            Engine.start(tunnel.detachFd(), listOf(TUNNEL_DNS), Protector(), listener)
+        } catch (e: EngineException) {
+            fail(getString(R.string.gap_start_failed, e.message.orEmpty()))
+            return
+        }
+        engine = started
+        this.listener = listener
+        underlyingDns = UnderlyingDns(this) { servers ->
+            // A callback queued before teardown must not reach a closed engine.
+            if (engine === started) started.setUpstreamDns(servers)
+        }.also { it.start() }
+        GapLog.closeOpen(this, System.currentTimeMillis())
+        Monitor.started(started)
+    }
+
+    private fun tunnelBuilder(): Builder {
+        val openApp = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+        )
+        return Builder()
+            .setSession(getString(R.string.app_name))
+            .setConfigureIntent(openApp)
+            .setMtu(MTU)
+            .addAddress(TUNNEL_V4, 32)
+            .addAddress(TUNNEL_V6, 128)
+            .addRoute("0.0.0.0", 0)
+            .addRoute("::", 0)
+            // DNS goes to an address inside the tunnel; the engine forwards it to the
+            // current network's resolvers, so it keeps working across network changes.
+            .addDnsServer(TUNNEL_DNS)
+            // Inherit metered or unmetered from the real network instead of always
+            // looking metered to apps.
+            .setMetered(false)
+    }
+
+    /** Monitoring could not start or keep going: record the gap and stop. */
+    private fun fail(reason: String) {
+        GapLog.open(this, System.currentTimeMillis(), reason)
+        teardown()
+        stopSelf()
+    }
+
+    override fun onRevoke() {
+        // Another VPN app took over, or the user switched the VPN off in Settings.
+        if (engine != null) {
+            GapLog.open(this, System.currentTimeMillis(), getString(R.string.gap_revoked))
+        }
+        teardown()
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        if (engine != null) {
+            GapLog.open(this, System.currentTimeMillis(), getString(R.string.gap_service_stopped))
+        }
+        teardown()
+        super.onDestroy()
+    }
+
+    private fun teardown() {
+        listener = null
+        underlyingDns?.stop()
+        underlyingDns = null
+        engine?.let {
+            it.stop()
+            it.close()
+        }
+        engine = null
+        Monitor.stopped()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun goForeground() {
+        val notifications = getSystemService(NotificationManager::class.java)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            getString(R.string.channel_monitoring),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = getString(R.string.channel_monitoring_description)
+            setShowBadge(false)
+        }
+        notifications.createNotificationChannel(channel)
+
+        val openApp = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+        )
+        val stop = PendingIntent.getService(
+            this, 1, Intent(this, SentinelVpnService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = Notification.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_monitoring)
+            .setContentTitle(getString(R.string.notification_title))
+            .setContentText(getString(R.string.notification_text))
+            .setContentIntent(openApp)
+            .setOngoing(true)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, R.drawable.ic_monitoring),
+                    getString(R.string.action_stop),
+                    stop,
+                ).build(),
+            )
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+                }
+            }
+            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    /** Lets the engine's own sockets bypass the tunnel. */
+    private inner class Protector : SocketProtector {
+        override fun protect(fd: Int): Boolean = this@SentinelVpnService.protect(fd)
+    }
+
+    /** Called on the engine's thread. */
+    private inner class Listener : EngineListener {
+        override fun engineStopped(error: String?) {
+            // `null` means we asked it to stop; teardown() handles that.
+            if (error == null) return
+            main.post {
+                if (listener === this@Listener) {
+                    fail(getString(R.string.gap_engine_failed, error))
+                }
+            }
+        }
+    }
+
+    companion object {
+        const val ACTION_START = "io.github.malekhasan.sentinel.action.START"
+        const val ACTION_STOP = "io.github.malekhasan.sentinel.action.STOP"
+        const val NOTIFICATION_ID = 1
+        const val CHANNEL_ID = "monitoring"
+
+        /** Must match the engine's `EngineConfig::mtu` default. */
+        const val MTU = 1500
+        const val TUNNEL_V4 = "10.215.173.1"
+        const val TUNNEL_V6 = "fd00:5e17:173::1"
+        /** The resolver address apps see; DNS sent here is forwarded by the engine. */
+        const val TUNNEL_DNS = "10.215.173.53"
+    }
+}

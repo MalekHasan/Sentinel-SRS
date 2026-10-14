@@ -1,0 +1,121 @@
+name: Android
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_ANDROID_TARGETS: aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+jobs:
+  build:
+    name: build, lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Rust toolchain and Android targets
+        run: |
+          rustup toolchain install || rustup show
+          rustup target add $RUST_ANDROID_TARGETS
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - name: Install cargo-ndk
+        run: cargo install --locked cargo-ndk --version 4.1.2
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Use the newest installed NDK
+        # Runner variables are not in the `env` context, so read them from the shell.
+        run: echo "ANDROID_NDK_HOME=${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
+      - name: Build and lint
+        working-directory: apps/android
+        run: ./gradlew --no-daemon --stacktrace assembleDebug lintDebug
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sentinel-debug-apk
+          path: |
+            apps/android/app/build/outputs/apk/debug/*.apk
+            apps/android/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+
+  device-tests:
+    name: instrumented tests (emulator)
+    # Loads the Rust library on an x86_64 emulator, calls it through UniFFI, and runs
+    # the VPN end to end (MonitoringTest).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Rust toolchain and Android targets
+        run: |
+          rustup toolchain install || rustup show
+          rustup target add $RUST_ANDROID_TARGETS
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android
+      - name: Install cargo-ndk
+        run: cargo install --locked cargo-ndk --version 4.1.2
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Use the newest installed NDK
+        # Runner variables are not in the `env` context, so read them from the shell.
+        run: echo "ANDROID_NDK_HOME=${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Free disk space for the emulator
+        # The API 34 emulator needs about 7.4 GB for its data partition; runners
+        # sometimes have less left after the Rust and Android caches are restored.
+        # Remove preinstalled toolchains this job never uses.
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null || true
+          df -h /
+      - name: Start the server MonitoringTest connects to through the tunnel
+        # The emulator reaches this machine's loopback as 10.0.2.2.
+        run: |
+          mkdir -p "$RUNNER_TEMP/www"
+          nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/www" \
+            >"$RUNNER_TEMP/http-server.log" 2>&1 &
+          sleep 1
+          curl -sf -o /dev/null http://127.0.0.1:8765/
+      - name: Run tests on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: default
+          script: cd apps/android && ./gradlew --no-daemon --stacktrace connectedDebugAndroidTest
+      - name: List the device tests that ran
+        # Gradle prints no per-test results; show them so a skipped test cannot pass unseen.
+        if: always()
+        run: |
+          find apps/android/app/build/outputs/androidTest-results -name '*.xml' \
+            -exec grep -ho '<testsuite [^>]*\|<testcase [^>]*\|<skipped\|<failure [^>]*' {} +
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: device-test-results
+          path: apps/android/app/build/outputs/androidTest-results/
+          if-no-files-found: error

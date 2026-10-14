@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "tools/*"]
+# Vendored third-party code: built as a dependency, not linted or tested as ours.
+exclude = ["third_party/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/MalekHasan/Sentinel-SRS"
+publish = false
+
+[workspace.lints.rust]
+# Unsafe code is allowed only at reviewed call sites, each with a SAFETY comment.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+[patch.crates-io]
+# ipstack 1.0.1 with a fix for flows that never end; see third_party/ipstack/PATCHES.md.
+ipstack = { path = "third_party/ipstack" }
+# netstack-smoltcp 0.2.4 without idle polling; see third_party/netstack-smoltcp/PATCHES.md.
+netstack-smoltcp = { path = "third_party/netstack-smoltcp" }

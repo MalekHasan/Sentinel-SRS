@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<resources>
+    <string name="app_name">Sentinel</string>
+    <string name="tagline">شوف أي تطبيق بيتصل بأي مكان، واكشف آثار برامج التجسس المعروفة.</string>
+    <string name="core_version">إصدار النواة %1$s</string>
+
+    <string name="disclosure">Sentinel بيستخدم ميزة الـVPN بأندرويد عشان يشوف أي تطبيق بيتصل بأي مكان. بياناتك بتضل على هالموبايل: ما عنا سيرفرات، وما في إشي بينبعتلنا.</string>
+    <string name="action_start">شغّل المراقبة</string>
+    <string name="action_stop">وقّف المراقبة</string>
+    <string name="status_off">المراقبة مطفية.</string>
+    <string name="status_starting">عم تشتغل…</string>
+    <string name="status_on">المراقبة شغّالة.</string>
+    <string name="stats">الاتصالات: %1$d. المفتوحة هلأ: %2$d. ما زبط الاتصال: %3$d.</string>
+
+    <string name="channel_monitoring">المراقبة</string>
+    <string name="channel_monitoring_description">بيظهر طول ما Sentinel عم يراقب هالموبايل.</string>
+    <string name="notification_title">Sentinel عم يراقب هالموبايل</string>
+    <string name="notification_text">اضغط عشان تشوف شو لقى.</string>
+
+    <string name="gaps_title">فترات ما كانت فيها المراقبة شغّالة</string>
+    <string name="gap_open">من %1$s: %2$s</string>
+    <string name="gap_closed">من %1$s لـ %2$s: %3$s</string>
+    <string name="gap_time_unknown">وقت مش معروف</string>
+    <string name="gap_revoked">انطفى الـVPN من إعدادات أندرويد، أو أخده تطبيق VPN تاني.</string>
+    <string name="gap_engine_failed">محرّك المراقبة وقف: %1$s</string>
+    <string name="gap_no_tunnel">أندرويد ما فتح النفق. ممكن يكون في تطبيق VPN تاني مضبوط إنه دايماً شغّال.</string>
+    <string name="gap_start_failed">ما قدرت المراقبة تشتغل: %1$s</string>
+    <string name="gap_service_stopped">أندرويد وقّف خدمة المراقبة.</string>
+    <string name="gap_process_low_memory">أندرويد سكّر Sentinel عشان يفضّي ذاكرة.</string>
+    <string name="gap_process_crash">Sentinel وقع أو علّق.</string>
+    <string name="gap_process_force_stop">في حدا عمل إيقاف إجباري لـSentinel.</string>
+    <string name="gap_process_other">Sentinel تسكّر بدون إنذار.</string>
+</resources>

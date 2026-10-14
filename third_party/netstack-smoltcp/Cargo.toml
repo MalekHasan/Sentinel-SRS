@@ -1,0 +1,26 @@
+# Vendored copy of netstack-smoltcp 0.2.4 (https://github.com/cavivie/netstack-smoltcp,
+# MIT OR Apache-2.0) with the fixes listed in PATCHES.md. Examples, tests and
+# dev-dependencies are removed; the library source is otherwise unchanged.
+[package]
+edition = "2021"
+rust-version = "1.75.0"
+name = "netstack-smoltcp"
+version = "0.2.4"
+description = "A netstack for the special purpose of turning packets from/to a TUN interface into TCP streams and UDP packets. It uses smoltcp-rs as the backend netstack."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cavivie/netstack-smoltcp"
+publish = false
+
+[lib]
+name = "netstack_smoltcp"
+path = "src/lib.rs"
+
+[dependencies]
+etherparse = "0.16"
+futures = "0.3"
+rand = "0.8"
+smoltcp = { version = "0.12", default-features = false, features = ["std", "log", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-icmp", "socket-udp", "socket-tcp"] }
+spin = "0.9"
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tokio-util = "0.7.10"
+tracing = { version = "0.1", default-features = false, features = ["std"] }

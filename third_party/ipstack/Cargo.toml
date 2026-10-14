@@ -1,0 +1,24 @@
+# Vendored copy of ipstack 1.0.1 (https://github.com/narrowlink/ipstack, Apache-2.0)
+# with the fixes listed in PATCHES.md. Examples, benches, the Windows build script and
+# dev-dependencies are removed; the library source is otherwise unchanged.
+[package]
+edition = "2024"
+name = "ipstack"
+version = "1.0.1"
+authors = ["Narrowlink <opensource@narrowlink.com>"]
+description = "Asynchronous lightweight userspace implementation of TCP/IP stack for Tun device"
+license = "Apache-2.0"
+repository = "https://github.com/narrowlink/ipstack"
+publish = false
+
+[lib]
+name = "ipstack"
+path = "src/lib.rs"
+
+[dependencies]
+ahash = { version = "0.8", features = ["std"], default-features = false }
+etherparse = { version = "0.20", features = ["std"], default-features = false }
+log = { version = "0.4", default-features = false }
+rand = { version = "0.10", features = ["thread_rng"], default-features = false }
+thiserror = { version = "2.0", default-features = false }
+tokio = { version = "1.52", features = ["sync", "rt", "time", "io-util", "macros", "rt-multi-thread"], default-features = false }

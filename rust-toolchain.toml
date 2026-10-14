@@ -1,0 +1,6 @@
+# Pinned so builds are reproducible (F-Droid, release signing).
+# Android targets are added by the Android CI job, not here, so other jobs stay small.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

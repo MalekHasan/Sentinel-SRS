@@ -1,0 +1,31 @@
+name: Requirement task
+description: Work that implements one or more SRS requirements.
+labels: [task]
+body:
+  - type: input
+    id: srs
+    attributes:
+      label: SRS IDs
+      placeholder: e.g. CM-01, CM-02
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options: [A0, A, B, C, D, E]
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: What to build
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criterion
+      description: Copy it from the SRS table, and say how a test will check it.
+    validations:
+      required: true
