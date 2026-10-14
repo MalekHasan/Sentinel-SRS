@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
@@ -137,7 +138,8 @@ private fun LiveAppRow(row: LiveRow, onOpenApp: (String) -> Unit) {
             Text(
                 stringResource(
                     R.string.live_destinations,
-                    ListFormatter.getInstance().format(app.topDestinations),
+                    ListFormatter.getInstance(LocalConfiguration.current.locales[0])
+                        .format(app.topDestinations.map(::isolate)),
                 ),
                 style = MaterialTheme.typography.bodySmall,
             )

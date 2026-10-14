@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
@@ -131,7 +132,9 @@ fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                val format = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                val format = DateFormat.getDateTimeInstance(
+                    DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],
+                )
                 Text(
                     stringResource(R.string.app_detail_first_seen, format.format(Date(history.firstSeenMs))),
                     style = MaterialTheme.typography.bodyMedium,

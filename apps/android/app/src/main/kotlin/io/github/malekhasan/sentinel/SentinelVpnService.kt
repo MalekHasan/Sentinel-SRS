@@ -68,7 +68,7 @@ class SentinelVpnService : VpnService() {
             goForeground()
         } catch (e: RuntimeException) {
             // For example, the VPN permission was withdrawn since the user granted it.
-            fail(getString(R.string.gap_start_failed, e.message.orEmpty()))
+            fail(getString(R.string.gap_start_failed, isolate(e.message.orEmpty())))
             return
         }
         GapLog.setMonitoringWanted(this, true)
@@ -93,7 +93,7 @@ class SentinelVpnService : VpnService() {
         val started = try {
             Engine.start(tunnel.detachFd(), listOf(TUNNEL_DNS), Protector(), listener, Flows(), history)
         } catch (e: EngineException) {
-            fail(getString(R.string.gap_start_failed, e.message.orEmpty()))
+            fail(getString(R.string.gap_start_failed, isolate(e.message.orEmpty())))
             return
         }
         engine = started
@@ -276,7 +276,7 @@ class SentinelVpnService : VpnService() {
             if (error == null) return
             main.post {
                 if (listener === this@Listener) {
-                    fail(getString(R.string.gap_engine_failed, error))
+                    fail(getString(R.string.gap_engine_failed, isolate(error)))
                 }
             }
         }

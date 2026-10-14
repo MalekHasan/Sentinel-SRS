@@ -14,8 +14,8 @@
     <string name="status_on">Monitoring is on.</string>
     <string name="stats">Connections seen: %1$d. Open now: %2$d. Could not connect: %3$d.</string>
     <string name="recent_title">Recent connections</string>
-    <string name="flow_open">%1$s → %2$s:%3$d (open)</string>
-    <string name="flow_closed">%1$s → %2$s:%3$d</string>
+    <string name="flow_open">%1$s → %2$s (open)</string>
+    <string name="flow_closed">%1$s → %2$s</string>
     <string name="unknown_app">Unknown app</string>
     <string name="back">Back</string>
 

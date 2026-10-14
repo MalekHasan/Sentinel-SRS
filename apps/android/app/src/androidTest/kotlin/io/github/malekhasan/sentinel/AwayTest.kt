@@ -76,7 +76,7 @@ class AwayTest {
         // The main screen lists the app under "while away".
         val line = context.getString(
             R.string.away_app,
-            AppNames(context).labelFor(context.packageName),
+            isolate(AppNames(context).labelFor(context.packageName)),
             Formatter.formatShortFileSize(context, ours.bytesUpAway),
             Formatter.formatShortFileSize(context, ours.bytesDownAway),
         )

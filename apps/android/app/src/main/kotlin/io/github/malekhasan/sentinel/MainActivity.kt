@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -210,6 +211,37 @@ fun MonitorScreen(
         )
     }
 
+    MonitorContent(
+        coreVersion = coreVersion,
+        status = status,
+        snapshot = snapshot,
+        flows = flows,
+        gaps = gaps,
+        away = away,
+        onStart = onStart,
+        onStop = onStop,
+        onShowLive = onShowLive,
+        onOpenApp = onOpenApp,
+        onWipe = { confirmWipe = true },
+    )
+}
+
+/** The main screen's content, without its loading (so tests can render any state). */
+@Composable
+fun MonitorContent(
+    coreVersion: String,
+    status: Monitor.Status,
+    snapshot: EngineSnapshot?,
+    flows: List<HistoryFlow>,
+    gaps: List<GapLog.Gap>,
+    away: List<AwayRow>,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onShowLive: () -> Unit,
+    onOpenApp: (String) -> Unit,
+    onWipe: () -> Unit,
+) {
+    val context = LocalContext.current
     Column(
         modifier = Modifier
             .safeDrawingPadding()
@@ -254,7 +286,7 @@ fun MonitorScreen(
                 Text(
                     stringResource(
                         R.string.away_app,
-                        row.label ?: stringResource(R.string.unknown_app),
+                        isolate(row.label ?: stringResource(R.string.unknown_app)),
                         Formatter.formatShortFileSize(context, row.away.bytesUpAway),
                         Formatter.formatShortFileSize(context, row.away.bytesDownAway),
                     ),
@@ -284,20 +316,20 @@ fun MonitorScreen(
         // The engine writes to the history while it runs, so it can only be deleted
         // while monitoring is off.
         if (status == Monitor.Status.OFF && (flows.isNotEmpty() || gaps.isNotEmpty())) {
-            OutlinedButton(onClick = { confirmWipe = true }) {
+            OutlinedButton(onClick = onWipe) {
                 Text(stringResource(R.string.wipe_action))
             }
         }
 
         Text(
-            stringResource(R.string.core_version, coreVersion),
+            stringResource(R.string.core_version, isolate(coreVersion)),
             style = MaterialTheme.typography.labelMedium,
         )
     }
 }
 
 /** An app's traffic while the user was away, with the name the user knows it by. */
-private data class AwayRow(val away: HistoryAway, val label: String?)
+data class AwayRow(val away: HistoryAway, val label: String?)
 
 /** Apps listed under "while away", and how far back they are counted (CM-06). */
 private const val AWAY_SHOWN = 5u
@@ -325,18 +357,19 @@ private fun recentFlows(context: Context): List<HistoryFlow> =
 @Composable
 private fun describeFlow(flow: HistoryFlow): String {
     val app = flow.app ?: stringResource(R.string.unknown_app)
-    val destination = flow.hostname ?: flow.remoteIp
+    val destination = hostAndPort(flow.hostname ?: flow.remoteIp, flow.remotePort.toInt())
     return stringResource(
         if (flow.endedMs == null) R.string.flow_open else R.string.flow_closed,
-        app,
-        destination,
-        flow.remotePort.toInt(),
+        isolate(app),
+        isolate(destination),
     )
 }
 
 @Composable
 private fun describeGap(gap: GapLog.Gap): String {
-    val format = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+    val format = DateFormat.getDateTimeInstance(
+        DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],
+    )
     val start = gap.startMillis?.let { format.format(Date(it)) }
         ?: stringResource(R.string.gap_time_unknown)
     return when (val end = gap.endMillis) {

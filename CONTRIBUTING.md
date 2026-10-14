@@ -50,3 +50,8 @@ These come from SRS §15.3 and NF-11. A PR that breaks one will not be merged.
 ## Language
 
 Code, comments and docs are in English. User-facing text is in English and Arabic. Arabic strings are reviewed by a native speaker before release.
+
+Arabic is laid out right to left, and Android sets a line's direction from its first letter. So:
+
+- An Arabic string must start with an Arabic word, not with a Latin name such as "Sentinel". `StringsTest` checks every string and plural form in both languages.
+- A value put into a sentence (an app name, a hostname, an address, an error message) goes through `isolate()`, so it keeps its own direction without turning the sentence around. `RtlTest` renders every screen in Arabic and checks this.

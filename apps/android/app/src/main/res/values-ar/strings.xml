@@ -5,7 +5,7 @@
     <string name="tagline">شوف أي تطبيق بيتصل بأي مكان، واكشف آثار برامج التجسس المعروفة.</string>
     <string name="core_version">إصدار النواة %1$s</string>
 
-    <string name="disclosure">Sentinel بيستخدم ميزة الـVPN بأندرويد عشان يشوف أي تطبيق بيتصل بأي مكان. بياناتك بتضل على هالموبايل: ما عنا سيرفرات، وما في إشي بينبعتلنا.</string>
+    <string name="disclosure">تطبيق Sentinel بيستخدم ميزة الـVPN بأندرويد عشان يشوف أي تطبيق بيتصل بأي مكان. بياناتك بتضل على هالموبايل: ما عنا سيرفرات، وما في إشي بينبعتلنا.</string>
     <string name="action_start">شغّل المراقبة</string>
     <string name="action_stop">وقّف المراقبة</string>
     <string name="status_off">المراقبة مطفية.</string>
@@ -13,8 +13,8 @@
     <string name="status_on">المراقبة شغّالة.</string>
     <string name="stats">الاتصالات: %1$d. المفتوحة هلأ: %2$d. ما زبط الاتصال: %3$d.</string>
     <string name="recent_title">آخر الاتصالات</string>
-    <string name="flow_open">%1$s متصل بـ %2$s:%3$d (لسا مفتوح)</string>
-    <string name="flow_closed">%1$s اتصل بـ %2$s:%3$d</string>
+    <string name="flow_open">%1$s متصل بـ %2$s (لسا مفتوح)</string>
+    <string name="flow_closed">%1$s اتصل بـ %2$s</string>
     <string name="unknown_app">تطبيق مش معروف</string>
     <string name="back">رجوع</string>
 
@@ -57,9 +57,9 @@
     <string name="app_detail_destinations_title">الأماكن اللي بيتصل فيها، الأكتر بعتاً للبيانات أول إشي</string>
     <string name="app_detail_destinations_shown">الأماكن المعروضة: %1$d من %2$d.</string>
     <string name="app_detail_last_seen">آخر مرة: %1$s</string>
-    <string name="app_detail_away">والشاشة مطفية أو مقفولة: بعت %1$s واستلم %2$s</string>
+    <string name="app_detail_away">لما كانت الشاشة مطفية أو مقفولة: بعت %1$s واستلم %2$s</string>
 
-    <string name="away_title">والشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
+    <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>
 
     <string name="wipe_action">امسح السجل</string>
@@ -70,7 +70,7 @@
 
     <string name="channel_monitoring">المراقبة</string>
     <string name="channel_monitoring_description">بيظهر طول ما Sentinel عم يراقب هالموبايل.</string>
-    <string name="notification_title">Sentinel عم يراقب هالموبايل</string>
+    <string name="notification_title">تطبيق Sentinel عم يراقب هالموبايل</string>
     <string name="notification_text">اضغط عشان تشوف شو لقى.</string>
 
     <string name="gaps_title">فترات ما كانت فيها المراقبة شغّالة</string>
@@ -83,7 +83,7 @@
     <string name="gap_start_failed">ما قدرت المراقبة تشتغل: %1$s</string>
     <string name="gap_service_stopped">أندرويد وقّف خدمة المراقبة.</string>
     <string name="gap_process_low_memory">أندرويد سكّر Sentinel عشان يفضّي ذاكرة.</string>
-    <string name="gap_process_crash">Sentinel وقع أو علّق.</string>
+    <string name="gap_process_crash">تطبيق Sentinel وقع أو علّق.</string>
     <string name="gap_process_force_stop">في حدا عمل إيقاف إجباري لـSentinel.</string>
-    <string name="gap_process_other">Sentinel تسكّر بدون إنذار.</string>
+    <string name="gap_process_other">تطبيق Sentinel تسكّر بدون إنذار.</string>
 </resources>
