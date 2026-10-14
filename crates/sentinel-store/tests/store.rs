@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use sentinel_store::{
-    AppSummary, DailyTotal, DestinationTotal, FlowEvent, FlowRow, Gap, HostnameSource, Proto,
-    Store, StoreError, wipe,
+    AppSummary, AwayTotal, DailyTotal, DestinationTotal, FlowEvent, FlowRow, Gap, HostnameSource,
+    Proto, Store, StoreError, wipe,
 };
 
 const KEY: [u8; 32] = [7; 32];
@@ -33,6 +33,8 @@ fn flow(app: &str, host: &str, started: i64) -> FlowRow {
         ended: None,
         bytes_up: 0,
         bytes_down: 0,
+        bytes_up_away: 0,
+        bytes_down_away: 0,
         blocked: false,
     }
 }
@@ -179,6 +181,8 @@ fn old_flows_are_rolled_up_into_daily_totals() {
                 flows: 2,
                 bytes_up: 15,
                 bytes_down: 150,
+                bytes_up_away: 0,
+                bytes_down_away: 0,
             },
             DailyTotal {
                 day,
@@ -188,6 +192,8 @@ fn old_flows_are_rolled_up_into_daily_totals() {
                 flows: 1,
                 bytes_up: 1,
                 bytes_down: 1,
+                bytes_up_away: 0,
+                bytes_down_away: 0,
             },
         ]
     );
@@ -247,6 +253,8 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
             flows: 4,
             bytes_up: 1_015,
             bytes_down: 151,
+            bytes_up_away: 0,
+            bytes_down_away: 0,
             destination_count: 3,
             destinations: vec![
                 DestinationTotal {
@@ -254,6 +262,8 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
                     flows: 1,
                     bytes_up: 1_000,
                     bytes_down: 1,
+                    bytes_up_away: 0,
+                    bytes_down_away: 0,
                     first_seen: NOW - 2 * DAY,
                     last_seen: NOW - 2 * DAY + 1_000,
                 },
@@ -262,6 +272,8 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
                     flows: 2,
                     bytes_up: 15,
                     bytes_down: 150,
+                    bytes_up_away: 0,
+                    bytes_down_away: 0,
                     // The rolled-up flow keeps only its day.
                     first_seen: old_day / DAY * DAY,
                     last_seen: NOW - DAY + 1_000,
@@ -271,6 +283,8 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
                     flows: 1,
                     bytes_up: 0,
                     bytes_down: 0,
+                    bytes_up_away: 0,
+                    bytes_down_away: 0,
                     first_seen: NOW,
                     last_seen: NOW,
                 },
@@ -286,6 +300,77 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
     assert_eq!(top.destinations.len(), 1);
     assert_eq!(top.bytes_up, 1_015, "the totals too");
     assert_eq!(store.app_summary("org.example.never", 10).unwrap(), None);
+}
+
+#[test]
+fn traffic_while_away_is_totalled_per_app_and_survives_roll_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let mut events = Vec::new();
+    for (i, (app, at, up, down, up_away, down_away)) in [
+        ("org.example.a", NOW - 40 * DAY, 100, 100, 10, 20), // rolled up below
+        ("org.example.a", NOW - 2 * DAY, 100, 100, 30, 0),   // before `since`
+        ("org.example.a", NOW - 60_000, 500, 50, 400, 40),
+        ("org.example.a", NOW - 50_000, 9, 9, 0, 0), // nothing while away
+        ("org.example.b", NOW - 40_000, 900, 9, 5, 5),
+        ("org.example.c", NOW - 30_000, 7, 7, 7, 7),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut row = flow(app, "x.example", at);
+        row.ended = Some(at + 1_000);
+        (row.bytes_up, row.bytes_down) = (up, down);
+        (row.bytes_up_away, row.bytes_down_away) = (up_away, down_away);
+        events.push(event(i as u64, row));
+    }
+    // Still open: its start was stored with nothing while away; its end adds some.
+    let mut open = flow("org.example.c", "y.example", NOW - 20_000);
+    store.record_flows(1, &[event(99, open.clone())]).unwrap();
+    open.ended = Some(NOW);
+    open.bytes_up_away = 3;
+    events.push(event(99, open));
+    store.record_flows(1, &events).unwrap();
+    store.apply_retention(NOW, 30).unwrap();
+
+    // The last day: most data sent while away first; flows that carried none do not
+    // count.
+    let since = NOW - DAY;
+    assert_eq!(
+        store.away_totals(since, 10).unwrap(),
+        vec![
+            AwayTotal {
+                app: Some("org.example.a".to_owned()),
+                flows: 1,
+                bytes_up_away: 400,
+                bytes_down_away: 40,
+            },
+            AwayTotal {
+                app: Some("org.example.c".to_owned()),
+                flows: 2,
+                bytes_up_away: 10,
+                bytes_down_away: 7,
+            },
+            AwayTotal {
+                app: Some("org.example.b".to_owned()),
+                flows: 1,
+                bytes_up_away: 5,
+                bytes_down_away: 5,
+            },
+        ]
+    );
+    assert_eq!(store.away_totals(since, 1).unwrap().len(), 1);
+
+    // The app's whole history, rolled-up days included.
+    let a = store.app_summary("org.example.a", 10).unwrap().unwrap();
+    assert_eq!((a.bytes_up_away, a.bytes_down_away), (440, 60));
+    let old = store.daily_totals(10).unwrap();
+    assert_eq!(
+        old.iter()
+            .map(|d| (d.bytes_up_away, d.bytes_down_away))
+            .collect::<Vec<_>>(),
+        vec![(10, 20)]
+    );
 }
 
 #[test]

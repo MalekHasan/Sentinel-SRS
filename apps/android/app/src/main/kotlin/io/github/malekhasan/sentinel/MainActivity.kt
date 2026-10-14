@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.text.format.Formatter
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -45,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.malekhasan.sentinel.core.EngineSnapshot
+import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryFlow
 import io.github.malekhasan.sentinel.core.coreVersion
 import java.text.DateFormat
@@ -166,6 +168,8 @@ fun MonitorScreen(
     var snapshot by remember { mutableStateOf<EngineSnapshot?>(null) }
     var flows by remember { mutableStateOf(emptyList<HistoryFlow>()) }
     var gaps by remember { mutableStateOf(emptyList<GapLog.Gap>()) }
+    var away by remember { mutableStateOf(emptyList<AwayRow>()) }
+    val names = remember(context) { AppNames(context) }
     var confirmWipe by remember { mutableStateOf(false) }
     // Bumped after a wipe so the lists reload.
     var generation by remember { mutableIntStateOf(0) }
@@ -174,6 +178,7 @@ fun MonitorScreen(
         suspend fun reload() {
             flows = withContext(Dispatchers.IO) { recentFlows(context) }
             gaps = withContext(Dispatchers.IO) { GapLog.recent(context, 5) }
+            away = withContext(Dispatchers.IO) { awayRows(context, names) }
         }
         snapshot = null
         reload()
@@ -242,6 +247,23 @@ fun MonitorScreen(
             }
         }
 
+        if (away.isNotEmpty()) {
+            Text(stringResource(R.string.away_title), style = MaterialTheme.typography.titleSmall)
+            away.forEach { row ->
+                val app = row.away.app
+                Text(
+                    stringResource(
+                        R.string.away_app,
+                        row.label ?: stringResource(R.string.unknown_app),
+                        Formatter.formatShortFileSize(context, row.away.bytesUpAway),
+                        Formatter.formatShortFileSize(context, row.away.bytesDownAway),
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.clickable(enabled = app != null) { app?.let(onOpenApp) },
+                )
+            }
+        }
+
         if (flows.isNotEmpty()) {
             Text(stringResource(R.string.recent_title), style = MaterialTheme.typography.titleSmall)
             flows.forEach { flow ->
@@ -273,6 +295,22 @@ fun MonitorScreen(
         )
     }
 }
+
+/** An app's traffic while the user was away, with the name the user knows it by. */
+private data class AwayRow(val away: HistoryAway, val label: String?)
+
+/** Apps listed under "while away", and how far back they are counted (CM-06). */
+private const val AWAY_SHOWN = 5u
+private const val AWAY_WINDOW_MILLIS = 24 * 60 * 60 * 1000L
+
+private fun awayRows(context: Context, names: AppNames): List<AwayRow> =
+    try {
+        History.get(context)
+            .awayTotals(System.currentTimeMillis() - AWAY_WINDOW_MILLIS, AWAY_SHOWN)
+            .map { AwayRow(it, it.app?.let(names::labelFor)) }
+    } catch (e: Exception) {
+        emptyList()
+    }
 
 /** Flows listed on the main screen; open connections by app are in the live view. */
 private const val RECENT_SHOWN = 20u

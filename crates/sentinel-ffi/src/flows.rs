@@ -51,6 +51,9 @@ pub struct FlowRecord {
     pub ended_ms: Option<u64>,
     pub bytes_up: u64,
     pub bytes_down: u64,
+    /// Of the above, the bytes carried while the user was away (CM-06).
+    pub bytes_up_away: u64,
+    pub bytes_down_away: u64,
     pub blocked: bool,
 }
 
@@ -220,6 +223,8 @@ impl Observer for FlowEvents {
         );
         ended.bytes_up = totals.bytes_up;
         ended.bytes_down = totals.bytes_down;
+        ended.bytes_up_away = totals.bytes_up_away;
+        ended.bytes_down_away = totals.bytes_down_away;
         self.push(ended);
     }
 }
@@ -243,6 +248,8 @@ fn record(flow: &FlowInfo, owner: &FlowOwner, ended_ms: Option<u64>, blocked: bo
         ended_ms,
         bytes_up: flow.counters.bytes_up(),
         bytes_down: flow.counters.bytes_down(),
+        bytes_up_away: flow.counters.bytes_up_away(),
+        bytes_down_away: flow.counters.bytes_down_away(),
         blocked,
     }
 }
@@ -271,6 +278,8 @@ fn history_event(record: &FlowRecord) -> sentinel_store::FlowEvent {
             ended: record.ended_ms.map(signed),
             bytes_up: signed(record.bytes_up),
             bytes_down: signed(record.bytes_down),
+            bytes_up_away: signed(record.bytes_up_away),
+            bytes_down_away: signed(record.bytes_down_away),
             blocked: record.blocked,
         },
     }

@@ -48,6 +48,9 @@ pub struct FlowRow {
     pub ended: Option<i64>,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    /// Of the above, the bytes carried while the user was away (SRS CM-06).
+    pub bytes_up_away: i64,
+    pub bytes_down_away: i64,
     pub blocked: bool,
 }
 
@@ -85,6 +88,8 @@ pub struct DailyTotal {
     pub flows: i64,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    pub bytes_up_away: i64,
+    pub bytes_down_away: i64,
 }
 
 /// What the history holds about one app: the app detail screen.
@@ -97,6 +102,9 @@ pub struct AppSummary {
     pub flows: i64,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    /// Of the above, the bytes carried while the user was away (CM-06).
+    pub bytes_up_away: i64,
+    pub bytes_down_away: i64,
     /// Destinations in the whole history, including those beyond the limit asked for.
     pub destination_count: u32,
     /// Most data sent first.
@@ -111,10 +119,23 @@ pub struct DestinationTotal {
     pub flows: i64,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    pub bytes_up_away: i64,
+    pub bytes_down_away: i64,
     /// Unix milliseconds. Flows already rolled up into daily totals keep only their
     /// day, so they count from the start of that day (UTC).
     pub first_seen: i64,
     pub last_seen: i64,
+}
+
+/// One app's traffic while the user was away (SRS CM-06).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AwayTotal {
+    /// `None` for connections whose owner is unknown.
+    pub app: Option<String>,
+    /// Connections that carried data while the user was away.
+    pub flows: i64,
+    pub bytes_up_away: i64,
+    pub bytes_down_away: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -210,7 +231,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT f.id, a.identifier, f.proto, f.local_ip, f.local_port, f.remote_ip,
                     f.remote_port, f.hostname, f.hostname_src, f.started, f.ended,
-                    f.bytes_up, f.bytes_down, f.verdict
+                    f.bytes_up, f.bytes_down, f.verdict, f.away_up, f.away_down
              FROM flow f LEFT JOIN app a ON a.id = f.app_id
              ORDER BY f.started DESC, f.id DESC LIMIT ?1",
         )?;
@@ -230,6 +251,8 @@ impl Store {
                 ended: r.get(10)?,
                 bytes_up: r.get(11)?,
                 bytes_down: r.get(12)?,
+                bytes_up_away: r.get(14)?,
+                bytes_down_away: r.get(15)?,
                 blocked: r.get::<_, String>(13)? == "blocked",
             };
             Ok(StoredFlow {
@@ -292,15 +315,18 @@ impl Store {
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
         tx.execute(
-            "INSERT INTO flow_daily (day, app_id, destination, proto, flows, bytes_up, bytes_down)
+            "INSERT INTO flow_daily (day, app_id, destination, proto, flows, bytes_up, bytes_down,
+                                     away_up, away_down)
              SELECT started / ?2, coalesce(app_id, 0), coalesce(hostname, remote_ip), proto,
-                    count(*), sum(bytes_up), sum(bytes_down)
+                    count(*), sum(bytes_up), sum(bytes_down), sum(away_up), sum(away_down)
              FROM flow WHERE started < ?1
              GROUP BY started / ?2, coalesce(app_id, 0), coalesce(hostname, remote_ip), proto
              ON CONFLICT (day, app_id, destination, proto) DO UPDATE SET
                  flows = flows + excluded.flows,
                  bytes_up = bytes_up + excluded.bytes_up,
-                 bytes_down = bytes_down + excluded.bytes_down",
+                 bytes_down = bytes_down + excluded.bytes_down,
+                 away_up = away_up + excluded.away_up,
+                 away_down = away_down + excluded.away_down",
             params![cutoff, DAY_MS],
         )?;
         let removed = tx.execute("DELETE FROM flow WHERE started < ?1", [cutoff])?;
@@ -324,14 +350,16 @@ impl Store {
             return Ok(None);
         };
         let mut stmt = conn.prepare(
-            "SELECT destination, sum(flows), sum(up), sum(down), min(first), max(last)
+            "SELECT destination, sum(flows), sum(up), sum(down), min(first), max(last),
+                    sum(away_up), sum(away_down)
              FROM (
                  SELECT coalesce(hostname, remote_ip) AS destination, 1 AS flows,
                         bytes_up AS up, bytes_down AS down, started AS first,
-                        coalesce(ended, started) AS last
+                        coalesce(ended, started) AS last, away_up, away_down
                  FROM flow WHERE app_id = ?1
                  UNION ALL
-                 SELECT destination, flows, bytes_up, bytes_down, day * ?2, day * ?2
+                 SELECT destination, flows, bytes_up, bytes_down, day * ?2, day * ?2,
+                        away_up, away_down
                  FROM flow_daily WHERE app_id = ?1
              )
              GROUP BY destination
@@ -346,6 +374,8 @@ impl Store {
                     bytes_down: r.get(3)?,
                     first_seen: r.get(4)?,
                     last_seen: r.get(5)?,
+                    bytes_up_away: r.get(6)?,
+                    bytes_down_away: r.get(7)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -355,16 +385,43 @@ impl Store {
             flows: all.iter().map(|d| d.flows).sum(),
             bytes_up: all.iter().map(|d| d.bytes_up).sum(),
             bytes_down: all.iter().map(|d| d.bytes_down).sum(),
+            bytes_up_away: all.iter().map(|d| d.bytes_up_away).sum(),
+            bytes_down_away: all.iter().map(|d| d.bytes_down_away).sum(),
             destination_count: u32::try_from(all.len()).unwrap_or(u32::MAX),
             destinations: all.into_iter().take(limit as usize).collect(),
         }))
+    }
+
+    /// Apps whose connections carried data while the user was away, among flows active
+    /// since `since` (Unix ms), most data sent first, at most `limit` (CM-06).
+    pub fn away_totals(&self, since: i64, limit: u32) -> Result<Vec<AwayTotal>> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT a.identifier, count(*), sum(f.away_up), sum(f.away_down)
+             FROM flow f LEFT JOIN app a ON a.id = f.app_id
+             WHERE coalesce(f.ended, f.started) >= ?1 AND f.away_up + f.away_down > 0
+             GROUP BY f.app_id
+             ORDER BY sum(f.away_up) DESC, sum(f.away_up) + sum(f.away_down) DESC,
+                      a.identifier
+             LIMIT ?2",
+        )?;
+        let totals = stmt.query_map(params![since, limit], |r| {
+            Ok(AwayTotal {
+                app: r.get(0)?,
+                flows: r.get(1)?,
+                bytes_up_away: r.get(2)?,
+                bytes_down_away: r.get(3)?,
+            })
+        })?;
+        Ok(totals.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Daily totals, newest day first.
     pub fn daily_totals(&self, limit: u32) -> Result<Vec<DailyTotal>> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(
-            "SELECT d.day, a.identifier, d.destination, d.proto, d.flows, d.bytes_up, d.bytes_down
+            "SELECT d.day, a.identifier, d.destination, d.proto, d.flows, d.bytes_up, d.bytes_down,
+                    d.away_up, d.away_down
              FROM flow_daily d LEFT JOIN app a ON a.id = d.app_id
              ORDER BY d.day DESC, d.destination LIMIT ?1",
         )?;
@@ -377,6 +434,8 @@ impl Store {
                 flows: r.get(4)?,
                 bytes_up: r.get(5)?,
                 bytes_down: r.get(6)?,
+                bytes_up_away: r.get(7)?,
+                bytes_down_away: r.get(8)?,
             })
         })?;
         Ok(totals.collect::<rusqlite::Result<_>>()?)
@@ -423,8 +482,9 @@ fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<i64> {
     tx.execute(
         "INSERT INTO flow (app_id, proto, direction, local_ip, local_port, remote_ip,
                            remote_port, hostname, hostname_src, started, ended, bytes_up,
-                           bytes_down, verdict)
-         VALUES (?1, ?2, 'out', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                           bytes_down, verdict, away_up, away_down, while_away)
+         VALUES (?1, ?2, 'out', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                 ?14 + ?15 > 0)",
         params![
             app,
             proto_name(row.proto),
@@ -439,6 +499,8 @@ fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<i64> {
             row.bytes_up,
             row.bytes_down,
             verdict_name(row.blocked),
+            row.bytes_up_away,
+            row.bytes_down_away,
         ],
     )?;
     Ok(tx.last_insert_rowid())
@@ -449,7 +511,8 @@ fn update_flow(tx: &Transaction<'_>, id: i64, row: &FlowRow) -> Result<()> {
     tx.execute(
         "UPDATE flow SET hostname = coalesce(?2, hostname),
                          hostname_src = coalesce(?3, hostname_src),
-                         ended = ?4, bytes_up = ?5, bytes_down = ?6, verdict = ?7
+                         ended = ?4, bytes_up = ?5, bytes_down = ?6, verdict = ?7,
+                         away_up = ?8, away_down = ?9, while_away = ?8 + ?9 > 0
          WHERE id = ?1",
         params![
             id,
@@ -459,6 +522,8 @@ fn update_flow(tx: &Transaction<'_>, id: i64, row: &FlowRow) -> Result<()> {
             row.bytes_up,
             row.bytes_down,
             verdict_name(row.blocked),
+            row.bytes_up_away,
+            row.bytes_down_away,
         ],
     )?;
     Ok(())

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
+import android.text.format.Formatter
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -89,6 +90,8 @@ class AppDetailTest {
                 flows = 1,
                 bytesUp = (100 - n) * 1_000L,
                 bytesDown = 0,
+                bytesUpAway = 0,
+                bytesDownAway = 0,
                 firstSeenMs = 0,
                 lastSeenMs = System.currentTimeMillis(),
             )
@@ -99,6 +102,8 @@ class AppDetailTest {
             flows = 100,
             bytesUp = destinations.sumOf { it.bytesUp },
             bytesDown = 0,
+            bytesUpAway = 2_048,
+            bytesDownAway = 0,
             destinationCount = 150u,
             destinations = destinations,
         )
@@ -110,6 +115,12 @@ class AppDetailTest {
         compose.onNodeWithText("Video").assertIsDisplayed()
         compose.onNodeWithText("org.example.video").assertIsDisplayed()
         compose.onNodeWithText("host0.example").assertIsDisplayed()
+        val away = context.getString(
+            R.string.app_detail_away,
+            Formatter.formatShortFileSize(context, 2_048),
+            Formatter.formatShortFileSize(context, 0),
+        )
+        compose.onNodeWithText(away).assertIsDisplayed()
 
         val list = compose.onNodeWithTag(APP_DETAIL_TAG)
         list.performScrollToNode(hasText("host99.example"))

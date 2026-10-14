@@ -149,6 +149,14 @@ fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                Text(
+                    stringResource(
+                        R.string.app_detail_away,
+                        Formatter.formatShortFileSize(context, history.bytesUpAway),
+                        Formatter.formatShortFileSize(context, history.bytesDownAway),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Text(stringResource(R.string.app_detail_open_note), style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -186,6 +194,16 @@ private fun DestinationRow(destination: HistoryDestination) {
             ),
             style = MaterialTheme.typography.bodySmall,
         )
+        if (destination.bytesUpAway + destination.bytesDownAway > 0) {
+            Text(
+                stringResource(
+                    R.string.app_detail_away,
+                    Formatter.formatShortFileSize(context, destination.bytesUpAway),
+                    Formatter.formatShortFileSize(context, destination.bytesDownAway),
+                ),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         val lastSeen = DateUtils.getRelativeTimeSpanString(
             destination.lastSeenMs, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS,
         )

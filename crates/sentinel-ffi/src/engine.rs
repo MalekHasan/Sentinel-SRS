@@ -40,6 +40,8 @@ pub struct EngineSnapshot {
     pub upstream_failures: u64,
     /// Flow batches that could not be written to the history.
     pub history_failures: u64,
+    /// What [`Engine::set_away`] last said.
+    pub away: bool,
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -58,6 +60,7 @@ pub struct Engine {
     stats: Arc<EngineStats>,
     events: Arc<FlowEvents>,
     dns: Arc<DnsForward>,
+    away: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     stop: Mutex<Option<oneshot::Sender<()>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
@@ -117,8 +120,10 @@ impl Engine {
 
         let stats = Arc::new(EngineStats::default());
         let dns = Arc::new(DnsForward::new(tunnel_dns));
+        let away = Arc::new(AtomicBool::new(false));
         let config = EngineConfig {
             dns_forward: Some(Arc::clone(&dns)),
+            away: Arc::clone(&away),
             ..EngineConfig::default()
         };
         let running = Arc::new(AtomicBool::new(true));
@@ -164,6 +169,7 @@ impl Engine {
             stats,
             events,
             dns,
+            away,
             running,
             stop: Mutex::new(Some(stop_tx)),
             thread: Mutex::new(Some(thread)),
@@ -196,6 +202,12 @@ impl Engine {
         self.dns.set_upstream(servers);
     }
 
+    /// Whether the user is away (on Android: the screen is off or locked). While it is
+    /// set, every byte relayed is also counted as "while away" (CM-06). Starts unset.
+    pub fn set_away(&self, away: bool) {
+        self.away.store(away, Ordering::Relaxed);
+    }
+
     /// Open connections grouped by app, busiest first (SRS CM-03). Cheap enough to call
     /// every second while the live view is on screen.
     pub fn live_apps(&self) -> Vec<LiveApp> {
@@ -210,6 +222,7 @@ impl Engine {
             flows_blocked: self.stats.flows_blocked(),
             upstream_failures: self.stats.upstream_failures(),
             history_failures: self.events.history_failures(),
+            away: self.away.load(Ordering::Relaxed),
         }
     }
 }
@@ -261,6 +274,7 @@ mod tests {
     use socket2::{Domain, Socket, Type};
 
     use crate::flows::{FlowOwner, FlowProto, FlowRecord};
+    use crate::history::HistoryAway;
 
     struct CountingProtector(AtomicUsize);
     impl SocketProtector for CountingProtector {
@@ -654,6 +668,63 @@ mod tests {
         assert_eq!(app.destinations.len(), 1);
         assert_eq!(app.destinations[0].destination, "127.0.0.1");
         assert_eq!(app.first_seen_ms, flow.started_ms);
+    }
+
+    /// Bytes relayed while the user is away are counted apart in the same flow, stored,
+    /// and totalled per app (CM-06).
+    #[test]
+    fn counts_traffic_while_away_apart() {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![5; 32]).unwrap();
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let (flows, _batches) = recording_flows();
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            flows,
+            Some(Arc::clone(&history)),
+        )
+        .unwrap();
+        assert!(!engine.snapshot().away, "present until told otherwise");
+
+        // One flow (same ports each time): present, away, present again. Each echo is
+        // read back before the switch flips, so both of its directions are counted.
+        for away in [false, true, false] {
+            engine.set_away(away);
+            assert_eq!(engine.snapshot().away, away);
+            peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
+            let echoed = (&peer).read(&mut [0u8; 2048]).expect("no echo");
+            assert!(echoed > 0);
+        }
+        engine.stop();
+
+        let stored = history.recent_flows(10).unwrap();
+        assert_eq!(stored.len(), 1, "one flow");
+        assert_eq!((stored[0].bytes_up, stored[0].bytes_down), (6, 6));
+        let app = history.app_summary(OWNER_APP.into(), 10).unwrap().unwrap();
+        assert_eq!((app.bytes_up_away, app.bytes_down_away), (2, 2));
+        assert_eq!(
+            history.away_totals(0, 10).unwrap(),
+            vec![HistoryAway {
+                app: Some(OWNER_APP.to_owned()),
+                flows: 1,
+                bytes_up_away: 2,
+                bytes_down_away: 2,
+            }]
+        );
     }
 
     /// The live view (CM-03) shows open flows by app with their bytes so far, and

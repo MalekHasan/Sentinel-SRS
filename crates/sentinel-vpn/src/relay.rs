@@ -47,7 +47,7 @@ impl Ctx {
             hostname_source: hostname.as_ref().map(|_| HostnameSource::Dns),
             hostname,
             started_ms: now_ms(),
-            counters: Arc::new(FlowCounters::default()),
+            counters: Arc::new(FlowCounters::new(Arc::clone(&self.config.away))),
         }
     }
 
@@ -68,6 +68,8 @@ impl Ctx {
             FlowTotals {
                 bytes_up: flow.counters.bytes_up(),
                 bytes_down: flow.counters.bytes_down(),
+                bytes_up_away: flow.counters.bytes_up_away(),
+                bytes_down_away: flow.counters.bytes_down_away(),
                 ended_ms: now_ms(),
                 verdict,
             },

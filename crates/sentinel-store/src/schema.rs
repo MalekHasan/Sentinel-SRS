@@ -63,7 +63,16 @@ CREATE TABLE monitoring_gap (
 /// The app detail screen reads one app's daily totals.
 const V2: &str = "CREATE INDEX flow_daily_by_app ON flow_daily (app_id, day);";
 
-const STEPS: &[&str] = &[V1, V2];
+/// Bytes carried while the user was away, per flow and per daily total (CM-06).
+/// `flow.while_away` (V1) is set when a flow carried any.
+const V3: &str = "
+ALTER TABLE flow ADD COLUMN away_up INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE flow ADD COLUMN away_down INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE flow_daily ADD COLUMN away_up INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE flow_daily ADD COLUMN away_down INTEGER NOT NULL DEFAULT 0;
+";
+
+const STEPS: &[&str] = &[V1, V2, V3];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -112,5 +121,14 @@ mod tests {
             .query_row("SELECT reason FROM monitoring_gap", [], |r| r.get(0))
             .unwrap();
         assert_eq!(reason, "kept");
+        let away_columns: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('flow_daily')
+                 WHERE name IN ('away_up', 'away_down')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(away_columns, 2);
     }
 }

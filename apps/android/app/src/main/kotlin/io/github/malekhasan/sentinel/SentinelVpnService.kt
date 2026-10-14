@@ -42,6 +42,7 @@ class SentinelVpnService : VpnService() {
     private var engine: Engine? = null
     private var listener: Listener? = null
     private var underlyingDns: UnderlyingDns? = null
+    private var awayWatcher: AwayWatcher? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -100,6 +101,10 @@ class SentinelVpnService : VpnService() {
         underlyingDns = UnderlyingDns(this) { servers ->
             // A callback queued before teardown must not reach a closed engine.
             if (engine === started) started.setUpstreamDns(servers)
+        }.also { it.start() }
+        // Traffic while the screen is off or locked is counted apart (CM-06).
+        awayWatcher = AwayWatcher(this) { away ->
+            if (engine === started) started.setAway(away)
         }.also { it.start() }
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
@@ -163,6 +168,8 @@ class SentinelVpnService : VpnService() {
         listener = null
         underlyingDns?.stop()
         underlyingDns = null
+        awayWatcher?.stop()
+        awayWatcher = null
         engine?.let {
             it.stop()
             it.close()

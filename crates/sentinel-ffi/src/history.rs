@@ -65,6 +65,9 @@ pub struct HistoryApp {
     pub flows: i64,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    /// Of the above, the bytes carried while the user was away (CM-06).
+    pub bytes_up_away: i64,
+    pub bytes_down_away: i64,
     /// Destinations in the whole history, including those not listed.
     pub destination_count: u32,
     /// Most data sent first.
@@ -79,10 +82,23 @@ pub struct HistoryDestination {
     pub flows: i64,
     pub bytes_up: i64,
     pub bytes_down: i64,
+    pub bytes_up_away: i64,
+    pub bytes_down_away: i64,
     /// Flows older than the retention period keep only their day: they count from the
     /// start of that day (UTC).
     pub first_seen_ms: i64,
     pub last_seen_ms: i64,
+}
+
+/// One app's traffic while the user was away (CM-06).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HistoryAway {
+    /// Package name, or `None` for connections whose owner is unknown.
+    pub app: Option<String>,
+    /// Connections that carried data while the user was away.
+    pub flows: i64,
+    pub bytes_up_away: i64,
+    pub bytes_down_away: i64,
 }
 
 #[derive(uniffi::Object)]
@@ -148,6 +164,8 @@ impl HistoryStore {
                 flows: summary.flows,
                 bytes_up: summary.bytes_up,
                 bytes_down: summary.bytes_down,
+                bytes_up_away: summary.bytes_up_away,
+                bytes_down_away: summary.bytes_down_away,
                 destination_count: summary.destination_count,
                 destinations: summary
                     .destinations
@@ -157,11 +175,29 @@ impl HistoryStore {
                         flows: d.flows,
                         bytes_up: d.bytes_up,
                         bytes_down: d.bytes_down,
+                        bytes_up_away: d.bytes_up_away,
+                        bytes_down_away: d.bytes_down_away,
                         first_seen_ms: d.first_seen,
                         last_seen_ms: d.last_seen,
                     })
                     .collect(),
             }))
+    }
+
+    /// Apps whose connections carried data while the user was away, among connections
+    /// active since `since_ms`, most data sent first, at most `limit` (CM-06).
+    pub fn away_totals(&self, since_ms: i64, limit: u32) -> Result<Vec<HistoryAway>, HistoryError> {
+        Ok(self
+            .store
+            .away_totals(since_ms, limit)?
+            .into_iter()
+            .map(|total| HistoryAway {
+                app: total.app,
+                flows: total.flows,
+                bytes_up_away: total.bytes_up_away,
+                bytes_down_away: total.bytes_down_away,
+            })
+            .collect())
     }
 
     /// Start a monitoring gap, unless one is already open. `started_ms` is `None` when
