@@ -41,6 +41,9 @@ print()
 print(f"Idle, 10 s without traffic: {cpu['idle_wakeups_10s']} wake-ups, {cpu['idle_cpu_ticks_10s'] / cpu['clk_tck']:.2f} CPU seconds")
 per_conn = (cpu['rss_kb_with_500'] - cpu['rss_kb_before_500']) / 500
 print(f"500 open connections: RSS {cpu['rss_kb_before_500'] / 1024:.1f} MB -> {cpu['rss_kb_with_500'] / 1024:.1f} MB ({per_conn:.0f} KB per connection)")
+phases = cpu.get("rss_kb_phases", {})
+if phases:
+    print("Engine RSS by phase (MB): " + ", ".join(f"{k.replace('_', ' ')} {v / 1024:.1f}" for k, v in phases.items()))
 print("Engine memory:", " ".join(open(os.path.join(out, "engine-memory.txt")).read().split()))
 print("UDP lost (direct / engine):", direct["udp_round_trip_64B"]["lost"], "/", engine["udp_round_trip_64B"]["lost"])
 

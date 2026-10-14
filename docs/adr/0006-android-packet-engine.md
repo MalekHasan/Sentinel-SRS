@@ -64,12 +64,12 @@ Both are far below NF-04's 5 ms on this machine.
 | Block by server name before the ClientHello is forwarded | ✓ | ✓ |
 | Hostname from an earlier DNS answer | ✓ | ✓ |
 | Flows end when the app closes them | ✓ only with our patch | ✓ |
-| TCP half-close (app shuts its sending side, then reads the reply) | ✗ reply lost | ✓ |
+| TCP half-close (app shuts its sending side, then reads the reply) | ✗ reply lost; ✓ after patch 2 (Sprint 1) | ✓ |
 
 ## Findings
 
 1. **ipstack 1.0.1 never ended flows closed by the app.** Its stream task exits without waking the reader, so every relay waited for the 2-hour idle timeout: 657 of 660 lab flows stayed open. Fixed with a two-line patch in a vendored copy (`third_party/ipstack/PATCHES.md`). We should offer the fix upstream.
-2. **ipstack does not support TCP half-close.** When the app sends FIN, ipstack closes both directions. Few phone apps half-close (HTTP/1.1, HTTP/2 and TLS do not), but the ones that do lose the server's reply.
+2. **ipstack did not support TCP half-close.** When the app sent FIN, ipstack closed both directions, and an app that half-closed lost the server's reply. Fixed in Sprint 1 by patch 2 (`third_party/ipstack/PATCHES.md`); the lab now gates on it.
 3. **ipstack's upload path is CPU-heavy** (about 4.7 times the per-byte cost of download), and its internal channels are unbounded.
 4. **netstack-smoltcp wakes every 5 ms even when idle** (its runner falls back to a 5 ms timer), and smoltcp allocates each connection's buffers up front. On a phone, the first costs battery all day and the second costs memory.
 5. **ipstack's default idle timeout (60 s) is too short for phones.** Push-notification connections stay idle for minutes, so we use 2 hours.

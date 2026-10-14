@@ -60,6 +60,9 @@ pub(crate) struct Tcb {
     max_count_for_dup_ack: usize,
     rto: std::time::Duration,
     max_retransmit_count: usize,
+    /// Sentinel patch 2: our side asked to close (poll_shutdown). The FIN goes out as
+    /// soon as no data is in flight.
+    fin_wanted: bool,
 }
 
 impl Tcb {
@@ -92,6 +95,7 @@ impl Tcb {
             max_count_for_dup_ack,
             rto,
             max_retransmit_count,
+            fin_wanted: false,
         }
     }
 
@@ -164,6 +168,13 @@ impl Tcb {
         }
 
         if data.is_empty() { None } else { Some(data) }
+    }
+
+    pub(super) fn want_fin(&mut self) {
+        self.fin_wanted = true;
+    }
+    pub(super) fn fin_wanted(&self) -> bool {
+        self.fin_wanted
     }
 
     pub(super) fn increase_seq(&mut self) {

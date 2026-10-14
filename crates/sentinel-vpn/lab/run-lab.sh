@@ -96,12 +96,16 @@ sleep 1
 w0=$(wakeups "$ENGINE_PID"); c0=$(cpu_ticks "$ENGINE_PID")
 sleep 10
 w1=$(wakeups "$ENGINE_PID"); c1=$(cpu_ticks "$ENGINE_PID")
+m_start=$(rss_kb "$ENGINE_PID")
 $CLI python3 "$LAB/bench.py" engine >"$OUT/bench-engine.json"
+m_bench=$(rss_kb "$ENGINE_PID")
 t0=$(cpu_ticks "$ENGINE_PID")
 iperf engine-up
 t1=$(cpu_ticks "$ENGINE_PID")
+m_up=$(rss_kb "$ENGINE_PID")
 iperf engine-down -R
 t2=$(cpu_ticks "$ENGINE_PID")
+m_down=$(rss_kb "$ENGINE_PID")
 # 500 concurrent open connections (SRS CM-03).
 sleep 6  # let short flows from the benchmarks finish
 r0=$(rss_kb "$ENGINE_PID")
@@ -114,7 +118,8 @@ grep -E "VmHWM|VmRSS" "/proc/$ENGINE_PID/status" >"$OUT/engine-memory.txt"
 cat >"$OUT/engine-cpu.json" <<JSON
 {"up_cpu_ticks": $((t1 - t0)), "down_cpu_ticks": $((t2 - t1)), "clk_tck": $(getconf CLK_TCK),
  "idle_wakeups_10s": $((w1 - w0)), "idle_cpu_ticks_10s": $((c1 - c0)),
- "rss_kb_before_500": $r0, "rss_kb_with_500": $r1}
+ "rss_kb_before_500": $r0, "rss_kb_with_500": $r1,
+ "rss_kb_phases": {"start": $m_start, "after_bench": $m_bench, "after_upload": $m_up, "after_download": $m_down}}
 JSON
 sleep 1
 

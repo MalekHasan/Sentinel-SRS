@@ -155,7 +155,7 @@ def checks():
     with socket.create_connection((ip, 7007), timeout=5) as s:
         s.sendall(b"hello")
         results["dns_flow_ok"] = recv_exact(s, 5) == b"hello"
-    # 4. Half-close (informational): send, shut down our side, then read the reply.
+    # 4. Half-close: send, shut down our sending side, then read the whole reply.
     try:
         with socket.create_connection((TARGET, 7007), timeout=3) as s:
             s.sendall(b"half")
@@ -166,9 +166,9 @@ def checks():
                 if not chunk:
                     break
                 data += chunk
-            results["half_close"] = "ok" if data == b"half" else "reply lost"
-    except OSError as e:
-        results["half_close"] = f"error: {e.__class__.__name__}"
+            results["half_close_ok"] = data == b"half"
+    except OSError:
+        results["half_close_ok"] = False
     return results
 
 
