@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The Sentinel core as seen from Kotlin.
 //!
-//! The API grows with Phase A: engine control now, then flows, alerts and storage.
+//! The API grows with Phase A: engine control and flow events now, then alerts and storage.
 
 mod engine;
+mod flows;
 
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
+pub use flows::{FlowObserver, FlowProto, FlowRecord, NameSource};
 
 uniffi::setup_scaffolding!();
 

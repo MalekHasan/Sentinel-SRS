@@ -7,10 +7,12 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sentinel_vpn::{DnsForward, EngineConfig, EngineStats, Observer, Protect, TunDevice};
+use sentinel_vpn::{DnsForward, EngineConfig, EngineStats, Protect, TunDevice};
 use tokio::sync::oneshot;
+
+use crate::flows::{FlowEvents, FlowObserver};
 
 /// Implemented by the `VpnService`: calls `VpnService.protect(fd)` so the engine's own
 /// sockets bypass the tunnel. Returns false if Android refused.
@@ -70,13 +72,15 @@ impl Engine {
     /// Takes ownership of `tun_fd`: pass the result of
     /// `ParcelFileDescriptor.detachFd()`, and do not close it in Kotlin. `tunnel_dns`
     /// lists the resolver addresses given to `VpnService.Builder.addDnsServer`; DNS sent
-    /// there goes to the resolvers set with [`Engine::set_upstream_dns`].
+    /// there goes to the resolvers set with [`Engine::set_upstream_dns`]. `flows`
+    /// receives every flow, with its owner (CM-01).
     #[uniffi::constructor]
     pub fn start(
         tun_fd: i32,
         tunnel_dns: Vec<String>,
         protector: Arc<dyn SocketProtector>,
         listener: Arc<dyn EngineListener>,
+        flows: Arc<dyn FlowObserver>,
     ) -> Result<Arc<Self>, EngineError> {
         if tun_fd < 0 {
             return Err(EngineError::InvalidDescriptor { fd: tun_fd });
@@ -114,6 +118,7 @@ impl Engine {
         };
         let running = Arc::new(AtomicBool::new(true));
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
+        let events = Arc::new(FlowEvents::new(flows));
 
         let thread = {
             let stats = Arc::clone(&stats);
@@ -121,21 +126,26 @@ impl Engine {
             std::thread::Builder::new()
                 .name("sentinel-engine-main".into())
                 .spawn(move || {
-                    let outcome = runtime.block_on(async move {
+                    let observer = Arc::clone(&events);
+                    let outcome = runtime.block_on(async {
                         tokio::select! {
                             result = sentinel_vpn::run(
                                 device,
                                 Arc::new(ForeignProtect(protector)),
-                                Arc::new(Quiet),
+                                observer,
                                 config,
                                 stats,
                             ) => match result {
                                 Ok(()) => Some("the engine stopped unexpectedly".to_owned()),
                                 Err(e) => Some(e.to_string()),
                             },
+                            () = events.deliver() => None,
                             _ = stop_rx => None,
                         }
                     });
+                    // The relays are gone: report the flows they left open as ended now,
+                    // so the app never keeps a flow open forever.
+                    events.close_all(now_ms());
                     runtime.shutdown_timeout(SHUTDOWN_GRACE);
                     running.store(false, Ordering::SeqCst);
                     listener.engine_stopped(outcome);
@@ -218,11 +228,11 @@ impl Protect for ForeignProtect {
     }
 }
 
-/// Sprint 1 observer: allows everything and reports nothing per flow. Flow events
-/// and the owner-app lookup arrive in Sprint 2.
-struct Quiet;
-
-impl Observer for Quiet {}
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
 
 #[cfg(test)]
 mod tests {
@@ -234,6 +244,8 @@ mod tests {
     use std::sync::mpsc;
 
     use socket2::{Domain, Socket, Type};
+
+    use crate::flows::{FlowProto, FlowRecord};
 
     struct CountingProtector(AtomicUsize);
     impl SocketProtector for CountingProtector {
@@ -250,32 +262,83 @@ mod tests {
         }
     }
 
-    fn udp_packet(dst_port: u16) -> Vec<u8> {
-        let builder = etherparse::PacketBuilder::ipv4([10, 111, 0, 1], [127, 0, 0, 1], 64)
-            .udp(40_000, dst_port);
+    /// One `owner_uid` question: protocol, local address and port, remote address and port.
+    type OwnerQuestion = (FlowProto, String, u16, String, u16);
+
+    /// Says every flow belongs to UID 10123, and passes on each batch it receives.
+    struct RecordingFlows {
+        asked: Mutex<Vec<OwnerQuestion>>,
+        batches: Mutex<mpsc::Sender<Vec<FlowRecord>>>,
+    }
+    const OWNER: i32 = 10_123;
+    impl FlowObserver for RecordingFlows {
+        fn owner_uid(
+            &self,
+            proto: FlowProto,
+            local_ip: String,
+            local_port: u16,
+            remote_ip: String,
+            remote_port: u16,
+        ) -> i32 {
+            self.asked
+                .lock()
+                .unwrap()
+                .push((proto, local_ip, local_port, remote_ip, remote_port));
+            OWNER
+        }
+        fn flows(&self, records: Vec<FlowRecord>) {
+            let _ = self.batches.lock().unwrap().send(records);
+        }
+    }
+
+    fn recording_flows() -> (Arc<RecordingFlows>, mpsc::Receiver<Vec<FlowRecord>>) {
+        let (tx, rx) = mpsc::channel();
+        let flows = RecordingFlows {
+            asked: Mutex::new(Vec::new()),
+            batches: Mutex::new(tx),
+        };
+        (Arc::new(flows), rx)
+    }
+
+    fn udp_packet(dst: [u8; 4], dst_port: u16) -> Vec<u8> {
+        let builder =
+            etherparse::PacketBuilder::ipv4([10, 111, 0, 1], dst, 64).udp(40_000, dst_port);
         let mut packet = Vec::new();
         builder.write(&mut packet, b"hi").unwrap();
         packet
     }
 
-    fn start_on_socketpair() -> (
-        Arc<Engine>,
-        Socket,
-        Arc<CountingProtector>,
-        mpsc::Receiver<Option<String>>,
-    ) {
+    struct Started {
+        engine: Arc<Engine>,
+        peer: Socket,
+        protector: Arc<CountingProtector>,
+        stopped: mpsc::Receiver<Option<String>>,
+        flows: Arc<RecordingFlows>,
+        batches: mpsc::Receiver<Vec<FlowRecord>>,
+    }
+
+    fn start_on_socketpair() -> Started {
         let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let protector = Arc::new(CountingProtector(AtomicUsize::new(0)));
-        let (tx, rx) = mpsc::channel();
+        let (tx, stopped) = mpsc::channel();
+        let (flows, batches) = recording_flows();
         let engine = Engine::start(
             OwnedFd::from(tun).into_raw_fd(),
             vec!["10.111.0.53".into()],
             Arc::clone(&protector) as Arc<dyn SocketProtector>,
             Arc::new(ChannelListener(Mutex::new(tx))),
+            Arc::clone(&flows) as Arc<dyn FlowObserver>,
         )
         .unwrap();
-        (engine, peer, protector, rx)
+        Started {
+            engine,
+            peer,
+            protector,
+            stopped,
+            flows,
+            batches,
+        }
     }
 
     #[test]
@@ -289,8 +352,14 @@ mod tests {
             }
         });
 
-        let (engine, peer, protector, stopped) = start_on_socketpair();
-        peer.send(&udp_packet(port)).unwrap();
+        let Started {
+            engine,
+            peer,
+            protector,
+            stopped,
+            ..
+        } = start_on_socketpair();
+        peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
         let mut reply = vec![0u8; 2048];
         let n = (&peer)
             .read(&mut reply)
@@ -315,7 +384,12 @@ mod tests {
 
     #[test]
     fn reports_an_unexpected_stop_when_the_tunnel_closes() {
-        let (engine, peer, _protector, stopped) = start_on_socketpair();
+        let Started {
+            engine,
+            peer,
+            stopped,
+            ..
+        } = start_on_socketpair();
         drop(peer);
         let reason = stopped
             .recv_timeout(Duration::from_secs(5))
@@ -346,6 +420,7 @@ mod tests {
             Vec::new(),
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::clone(&listener) as Arc<dyn EngineListener>,
+            recording_flows().0,
         )
         .unwrap();
         *listener.0.lock().unwrap() = Some(Arc::clone(&engine));
@@ -363,6 +438,7 @@ mod tests {
             Vec::new(),
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::new(ChannelListener(Mutex::new(tx))),
+            recording_flows().0,
         );
         assert!(matches!(
             result,
@@ -380,6 +456,7 @@ mod tests {
             vec!["dns.example".into()],
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::new(ChannelListener(Mutex::new(tx))),
+            recording_flows().0,
         );
         assert!(matches!(
             result,
@@ -391,7 +468,11 @@ mod tests {
 
     #[test]
     fn keeps_only_plain_ip_resolvers() {
-        let (engine, _peer, _protector, _stopped) = start_on_socketpair();
+        let Started {
+            engine,
+            peer: _peer,
+            ..
+        } = start_on_socketpair();
         engine.set_upstream_dns(vec![
             "192.0.2.1".into(),
             "fe80::1%wlan0".into(),
@@ -404,5 +485,87 @@ mod tests {
         ];
         assert_eq!(engine.dns.upstream(), expected);
         engine.stop();
+    }
+
+    /// Every flow reaches the app with its owner within a second (CM-01), and every
+    /// flow that starts also ends, even when the engine stops first.
+    #[test]
+    fn reports_each_flow_with_its_owner_within_a_second() {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let Started {
+            engine,
+            peer,
+            flows,
+            batches,
+            ..
+        } = start_on_socketpair();
+
+        let sent = std::time::Instant::now();
+        peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
+        let first = batches
+            .recv_timeout(Duration::from_secs(1))
+            .expect("no flow event within 1 s");
+        assert!(sent.elapsed() < Duration::from_secs(1));
+        assert_eq!(first.len(), 1);
+        let started = &first[0];
+        assert_eq!(started.proto, FlowProto::Udp);
+        assert_eq!(
+            (started.local_ip.as_str(), started.local_port),
+            ("10.111.0.1", 40_000)
+        );
+        assert_eq!(
+            (started.remote_ip.as_str(), started.remote_port),
+            ("127.0.0.1", port)
+        );
+        assert_eq!(started.uid, OWNER);
+        assert_eq!(started.ended_ms, None);
+        assert_eq!(
+            flows.asked.lock().unwrap()[0],
+            (
+                FlowProto::Udp,
+                "10.111.0.1".to_owned(),
+                40_000,
+                "127.0.0.1".to_owned(),
+                port
+            )
+        );
+        let echoed = (&peer).read(&mut [0u8; 2048]).expect("no echo");
+        assert!(echoed > 0);
+
+        // Refused at once (port 853 at the tunnel resolver): it starts and ends.
+        peer.send(&udp_packet([10, 111, 0, 53], 853)).unwrap();
+        let mut records = Vec::new();
+        while !records
+            .iter()
+            .any(|r: &FlowRecord| r.remote_port == 853 && r.ended_ms.is_some())
+        {
+            records.extend(
+                batches
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("refused flow not reported"),
+            );
+        }
+
+        // Stopping ends the echo flow, which was still open, with its byte counts.
+        engine.stop();
+        let mut rest: Vec<FlowRecord> = batches.try_iter().flatten().collect();
+        rest.retain(|r| r.id == started.id);
+        assert_eq!(
+            rest.len(),
+            1,
+            "the open flow must be reported as ended once"
+        );
+        let ended = &rest[0];
+        assert!(ended.ended_ms.unwrap() >= ended.started_ms);
+        assert_eq!((ended.bytes_up, ended.bytes_down), (2, 2));
+        assert_eq!(ended.uid, OWNER);
+        assert!(!ended.blocked);
     }
 }

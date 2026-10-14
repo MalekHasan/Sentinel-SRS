@@ -8,14 +8,22 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
+import android.system.OsConstants
 import io.github.malekhasan.sentinel.core.Engine
 import io.github.malekhasan.sentinel.core.EngineException
 import io.github.malekhasan.sentinel.core.EngineListener
+import io.github.malekhasan.sentinel.core.FlowObserver
+import io.github.malekhasan.sentinel.core.FlowProto
+import io.github.malekhasan.sentinel.core.FlowRecord
 import io.github.malekhasan.sentinel.core.SocketProtector
+import java.net.InetAddress
+import java.net.InetSocketAddress
 
 /**
  * The local VPN: hands every app's traffic to the Rust engine, which relays it over
@@ -73,7 +81,7 @@ class SentinelVpnService : VpnService() {
         }
         val listener = Listener()
         val started = try {
-            Engine.start(tunnel.detachFd(), listOf(TUNNEL_DNS), Protector(), listener)
+            Engine.start(tunnel.detachFd(), listOf(TUNNEL_DNS), Protector(), listener, Flows())
         } catch (e: EngineException) {
             fail(getString(R.string.gap_start_failed, e.message.orEmpty()))
             return
@@ -195,6 +203,32 @@ class SentinelVpnService : VpnService() {
     /** Lets the engine's own sockets bypass the tunnel. */
     private inner class Protector : SocketProtector {
         override fun protect(fd: Int): Boolean = this@SentinelVpnService.protect(fd)
+    }
+
+    /** Called on engine threads. */
+    private inner class Flows : FlowObserver {
+        private val connectivity = getSystemService(ConnectivityManager::class.java)
+
+        /** Only the active VPN app may ask Android who owns a connection (API 29+). */
+        override fun ownerUid(
+            proto: FlowProto,
+            localIp: String,
+            localPort: UShort,
+            remoteIp: String,
+            remotePort: UShort,
+        ): Int = try {
+            connectivity.getConnectionOwnerUid(
+                if (proto == FlowProto.TCP) OsConstants.IPPROTO_TCP else OsConstants.IPPROTO_UDP,
+                // Numeric addresses: no lookup happens.
+                InetSocketAddress(InetAddress.getByName(localIp), localPort.toInt()),
+                InetSocketAddress(InetAddress.getByName(remoteIp), remotePort.toInt()),
+            )
+        } catch (e: RuntimeException) {
+            // SecurityException once this app is no longer the active VPN.
+            Process.INVALID_UID
+        }
+
+        override fun flows(records: List<FlowRecord>) = Monitor.flowsUpdated(records)
     }
 
     /** Called on the engine's thread. */

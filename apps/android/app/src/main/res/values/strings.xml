@@ -13,6 +13,10 @@
     <string name="status_starting">Starting…</string>
     <string name="status_on">Monitoring is on.</string>
     <string name="stats">Connections seen: %1$d. Open now: %2$d. Could not connect: %3$d.</string>
+    <string name="recent_title">Recent connections</string>
+    <string name="flow_open">%1$s → %2$s:%3$d (open)</string>
+    <string name="flow_closed">%1$s → %2$s:%3$d</string>
+    <string name="unknown_app">Unknown app</string>
 
     <string name="channel_monitoring">Monitoring</string>
     <string name="channel_monitoring_description">Shown the whole time Sentinel is monitoring this phone.</string>

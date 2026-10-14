@@ -12,6 +12,10 @@
     <string name="status_starting">عم تشتغل…</string>
     <string name="status_on">المراقبة شغّالة.</string>
     <string name="stats">الاتصالات: %1$d. المفتوحة هلأ: %2$d. ما زبط الاتصال: %3$d.</string>
+    <string name="recent_title">آخر الاتصالات</string>
+    <string name="flow_open">%1$s متصل بـ %2$s:%3$d (لسا مفتوح)</string>
+    <string name="flow_closed">%1$s اتصل بـ %2$s:%3$d</string>
+    <string name="unknown_app">تطبيق مش معروف</string>
 
     <string name="channel_monitoring">المراقبة</string>
     <string name="channel_monitoring_description">بيظهر طول ما Sentinel عم يراقب هالموبايل.</string>

@@ -9,8 +9,11 @@ import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.malekhasan.sentinel.core.FlowProto
+import io.github.malekhasan.sentinel.core.FlowRecord
 import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -81,6 +84,7 @@ class MonitoringTest {
 
         // TCP through the engine and its protected upstream socket.
         val (host, port) = testServer()
+        val connectedAt = System.currentTimeMillis()
         Socket().use { socket ->
             socket.connect(InetSocketAddress(host, port), 10_000)
             socket.soTimeout = 10_000
@@ -88,6 +92,17 @@ class MonitoringTest {
             val status = socket.getInputStream().bufferedReader().readLine()
             assertTrue("unexpected reply: $status", status?.startsWith("HTTP/1.") == true)
         }
+
+        // CM-01: the connection is recorded with its app within 1 s of being opened.
+        fun ours(flow: FlowRecord) = flow.proto == FlowProto.TCP &&
+            flow.remoteIp == host && flow.remotePort.toInt() == port
+        waitFor(
+            "the connection to be recorded",
+            timeoutMillis = maxOf(0L, connectedAt + 1_000 - System.currentTimeMillis()),
+        ) { Monitor.recentFlows().any(::ours) }
+        val recorded = Monitor.recentFlows().first(::ours)
+        assertEquals("owner of the connection", Process.myUid(), recorded.uid)
+        assertEquals(context.packageName, AppNames(context).packageFor(recorded.uid))
 
         // DNS to the tunnel's resolver reaches the real network's resolver. Any answer
         // with our query id proves the path; the name's existence does not matter.
@@ -102,6 +117,11 @@ class MonitoringTest {
             notifications.activeNotifications.none { it.id == SentinelVpnService.NOTIFICATION_ID }
         }
         assertEquals("a stop the user asked for is not a gap", gapsBefore, GapLog.recent(context, 1_000).size)
+        // Every recorded flow is closed once the engine has stopped.
+        assertTrue(
+            "flows left open: ${Monitor.recentFlows().filter { it.endedMs == null }}",
+            Monitor.recentFlows().all { it.endedMs != null },
+        )
     }
 
     private fun serviceIntent(action: String) =
@@ -155,12 +175,12 @@ class MonitoringTest {
         ).use { it.readBytes() }
     }
 
+    /** Checks [condition] at once, then every 100 ms until [timeoutMillis] has passed. */
     private fun waitFor(what: String, timeoutMillis: Long = 10_000, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutMillis
-        while (System.currentTimeMillis() < deadline) {
-            if (condition()) return
+        while (!condition()) {
+            if (System.currentTimeMillis() >= deadline) fail("timed out waiting for $what")
             Thread.sleep(100)
         }
-        fail("timed out waiting for $what")
     }
 }

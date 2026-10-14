@@ -3,6 +3,7 @@ package io.github.malekhasan.sentinel
 
 import io.github.malekhasan.sentinel.core.Engine
 import io.github.malekhasan.sentinel.core.EngineSnapshot
+import io.github.malekhasan.sentinel.core.FlowRecord
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,9 +18,26 @@ object Monitor {
     @Volatile
     private var engine: Engine? = null
 
+    /** Flows of the current session by id, oldest first, bounded. Until the encrypted
+     *  store exists (Sprint 2), this is the only record. */
+    private val flows = object : LinkedHashMap<ULong, FlowRecord>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ULong, FlowRecord>?) =
+            size > RECENT_FLOWS
+    }
+
     internal fun starting() {
+        // Flow ids start again at 1 with every engine.
+        synchronized(flows) { flows.clear() }
         mutableStatus.value = Status.STARTING
     }
+
+    /** New and finished flows from the engine (called on an engine thread). */
+    internal fun flowsUpdated(records: List<FlowRecord>) {
+        synchronized(flows) { records.forEach { flows[it.id] = it } }
+    }
+
+    /** The most recent flows of this session, newest first. */
+    fun recentFlows(): List<FlowRecord> = synchronized(flows) { flows.values.reversed() }
 
     internal fun started(engine: Engine) {
         this.engine = engine
@@ -30,6 +48,8 @@ object Monitor {
         engine = null
         mutableStatus.value = Status.OFF
     }
+
+    private const val RECENT_FLOWS = 500
 
     /** Live engine counters, or null when monitoring is off. */
     fun snapshot(): EngineSnapshot? = engine?.let { runCatching { it.snapshot() }.getOrNull() }

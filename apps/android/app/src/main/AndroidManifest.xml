@@ -12,6 +12,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Name the app behind each connection, and check installed apps against the
+         stalkerware list (ID-13). Declared to Google Play as a device-security use
+         (PLAY-POLICY.md, AM-14). -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <!-- allowBackup=false: the local database holds sensitive history and must not
          leave the phone through cloud backups (SRS NF-11, §15.2). -->

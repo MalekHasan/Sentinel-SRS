@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.malekhasan.sentinel.core.EngineSnapshot
+import io.github.malekhasan.sentinel.core.FlowRecord
 import io.github.malekhasan.sentinel.core.coreVersion
 import java.text.DateFormat
 import java.util.Date
@@ -128,14 +129,18 @@ fun SentinelTheme(content: @Composable () -> Unit) {
 fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
+    val appNames = remember { AppNames(context) }
     var snapshot by remember { mutableStateOf<EngineSnapshot?>(null) }
+    var flows by remember { mutableStateOf(emptyList<FlowRecord>()) }
     var gaps by remember { mutableStateOf(emptyList<GapLog.Gap>()) }
 
     LaunchedEffect(visible, status) {
         gaps = withContext(Dispatchers.IO) { GapLog.recent(context, 5) }
         snapshot = null
+        flows = Monitor.recentFlows().take(RECENT_SHOWN)
         while (visible && status == Monitor.Status.ON) {
             snapshot = Monitor.snapshot()
+            flows = Monitor.recentFlows().take(RECENT_SHOWN)
             delay(1_000)
         }
     }
@@ -176,6 +181,13 @@ fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, on
             }
         }
 
+        if (flows.isNotEmpty()) {
+            Text(stringResource(R.string.recent_title), style = MaterialTheme.typography.titleSmall)
+            flows.forEach { flow ->
+                Text(describeFlow(flow, appNames), style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
         if (gaps.isNotEmpty()) {
             Text(stringResource(R.string.gaps_title), style = MaterialTheme.typography.titleSmall)
             gaps.forEach { gap -> Text(describeGap(gap), style = MaterialTheme.typography.bodySmall) }
@@ -186,6 +198,21 @@ fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, on
             style = MaterialTheme.typography.labelMedium,
         )
     }
+}
+
+/** Flows listed on the main screen; the full live view is Sprint 3 (CM-03). */
+private const val RECENT_SHOWN = 20
+
+@Composable
+private fun describeFlow(flow: FlowRecord, appNames: AppNames): String {
+    val app = appNames.packageFor(flow.uid) ?: stringResource(R.string.unknown_app)
+    val destination = flow.hostname ?: flow.remoteIp
+    return stringResource(
+        if (flow.endedMs == null) R.string.flow_open else R.string.flow_closed,
+        app,
+        destination,
+        flow.remotePort.toInt(),
+    )
 }
 
 @Composable
