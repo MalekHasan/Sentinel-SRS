@@ -7,7 +7,7 @@ package io.github.malekhasan.sentinel
  * and does not set the sentence's. Without them, an Arabic sentence that starts with a
  * Latin package name is laid out left to right, and the parts around it are reordered.
  */
-fun isolate(text: String): String = "⁨$text⁩"
+fun isolate(text: String): String = "\u2068$text\u2069"
 
 /** A destination and its port as one unit; IPv6 addresses go in brackets. */
 fun hostAndPort(host: String, port: Int): String =
