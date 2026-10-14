@@ -102,7 +102,16 @@ class MonitoringTest {
         ) { Monitor.recentFlows().any(::ours) }
         val recorded = Monitor.recentFlows().first(::ours)
         assertEquals("owner of the connection", Process.myUid(), recorded.uid)
-        assertEquals(context.packageName, AppNames(context).packageFor(recorded.uid))
+        assertEquals(context.packageName, recorded.app)
+
+        // ... and stored in the encrypted history with its app (ADR-0009).
+        val history = History.get(context)
+        fun stored() = history.recentFlows(50u).filter {
+            it.proto == FlowProto.TCP && it.remoteIp == host && it.remotePort.toInt() == port
+        }
+        waitFor("the connection to be in the history", timeoutMillis = 1_000) {
+            stored().any { it.app == context.packageName }
+        }
 
         // DNS to the tunnel's resolver reaches the real network's resolver. Any answer
         // with our query id proves the path; the name's existence does not matter.
@@ -117,11 +126,12 @@ class MonitoringTest {
             notifications.activeNotifications.none { it.id == SentinelVpnService.NOTIFICATION_ID }
         }
         assertEquals("a stop the user asked for is not a gap", gapsBefore, GapLog.recent(context, 1_000).size)
-        // Every recorded flow is closed once the engine has stopped.
+        // Every recorded flow is closed once the engine has stopped, in the history too.
         assertTrue(
             "flows left open: ${Monitor.recentFlows().filter { it.endedMs == null }}",
             Monitor.recentFlows().all { it.endedMs != null },
         )
+        assertTrue("the stored flow is not closed", stored().all { it.endedMs != null })
     }
 
     private fun serviceIntent(action: String) =

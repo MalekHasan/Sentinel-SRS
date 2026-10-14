@@ -18,8 +18,8 @@ object Monitor {
     @Volatile
     private var engine: Engine? = null
 
-    /** Flows of the current session by id, oldest first, bounded. Until the encrypted
-     *  store exists (Sprint 2), this is the only record. */
+    /** Flows of the current session by id, oldest first, bounded: the live view. The
+     *  durable record is the encrypted [History]. */
     private val flows = object : LinkedHashMap<ULong, FlowRecord>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ULong, FlowRecord>?) =
             size > RECENT_FLOWS

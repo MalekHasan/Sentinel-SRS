@@ -18,6 +18,12 @@
     <string name="flow_closed">%1$s → %2$s:%3$d</string>
     <string name="unknown_app">Unknown app</string>
 
+    <string name="wipe_action">Delete history</string>
+    <string name="wipe_title">Delete the whole history?</string>
+    <string name="wipe_text">This deletes every connection and gap recorded on this phone, and the key that protects them. It cannot be undone.</string>
+    <string name="wipe_confirm">Delete</string>
+    <string name="wipe_cancel">Cancel</string>
+
     <string name="channel_monitoring">Monitoring</string>
     <string name="channel_monitoring_description">Shown the whole time Sentinel is monitoring this phone.</string>
     <string name="notification_title">Sentinel is monitoring this phone</string>

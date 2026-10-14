@@ -13,6 +13,7 @@ use sentinel_vpn::{DnsForward, EngineConfig, EngineStats, Protect, TunDevice};
 use tokio::sync::oneshot;
 
 use crate::flows::{FlowEvents, FlowObserver};
+use crate::history::HistoryStore;
 
 /// Implemented by the `VpnService`: calls `VpnService.protect(fd)` so the engine's own
 /// sockets bypass the tunnel. Returns false if Android refused.
@@ -37,6 +38,8 @@ pub struct EngineSnapshot {
     pub flows_active: u64,
     pub flows_blocked: u64,
     pub upstream_failures: u64,
+    /// Flow batches that could not be written to the history.
+    pub history_failures: u64,
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -53,6 +56,7 @@ pub enum EngineError {
 #[derive(uniffi::Object)]
 pub struct Engine {
     stats: Arc<EngineStats>,
+    events: Arc<FlowEvents>,
     dns: Arc<DnsForward>,
     running: Arc<AtomicBool>,
     stop: Mutex<Option<oneshot::Sender<()>>>,
@@ -73,7 +77,7 @@ impl Engine {
     /// `ParcelFileDescriptor.detachFd()`, and do not close it in Kotlin. `tunnel_dns`
     /// lists the resolver addresses given to `VpnService.Builder.addDnsServer`; DNS sent
     /// there goes to the resolvers set with [`Engine::set_upstream_dns`]. `flows`
-    /// receives every flow, with its owner (CM-01).
+    /// receives every flow, with its owner (CM-01), and `history`, if given, stores it.
     #[uniffi::constructor]
     pub fn start(
         tun_fd: i32,
@@ -81,6 +85,7 @@ impl Engine {
         protector: Arc<dyn SocketProtector>,
         listener: Arc<dyn EngineListener>,
         flows: Arc<dyn FlowObserver>,
+        history: Option<Arc<HistoryStore>>,
     ) -> Result<Arc<Self>, EngineError> {
         if tun_fd < 0 {
             return Err(EngineError::InvalidDescriptor { fd: tun_fd });
@@ -118,11 +123,13 @@ impl Engine {
         };
         let running = Arc::new(AtomicBool::new(true));
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
-        let events = Arc::new(FlowEvents::new(flows));
+        // The start time names this run in the history; flow ids restart at 1 each run.
+        let events = Arc::new(FlowEvents::new(flows, history, now_ms()));
 
         let thread = {
             let stats = Arc::clone(&stats);
             let running = Arc::clone(&running);
+            let events = Arc::clone(&events);
             std::thread::Builder::new()
                 .name("sentinel-engine-main".into())
                 .spawn(move || {
@@ -155,6 +162,7 @@ impl Engine {
 
         Ok(Arc::new(Engine {
             stats,
+            events,
             dns,
             running,
             stop: Mutex::new(Some(stop_tx)),
@@ -195,6 +203,7 @@ impl Engine {
             flows_active: self.stats.flows_active(),
             flows_blocked: self.stats.flows_blocked(),
             upstream_failures: self.stats.upstream_failures(),
+            history_failures: self.events.history_failures(),
         }
     }
 }
@@ -245,7 +254,7 @@ mod tests {
 
     use socket2::{Domain, Socket, Type};
 
-    use crate::flows::{FlowProto, FlowRecord};
+    use crate::flows::{FlowOwner, FlowProto, FlowRecord};
 
     struct CountingProtector(AtomicUsize);
     impl SocketProtector for CountingProtector {
@@ -265,26 +274,31 @@ mod tests {
     /// One `owner_uid` question: protocol, local address and port, remote address and port.
     type OwnerQuestion = (FlowProto, String, u16, String, u16);
 
-    /// Says every flow belongs to UID 10123, and passes on each batch it receives.
+    /// Says every flow belongs to UID 10123 (`org.example.owner`), and passes on each
+    /// batch it receives.
     struct RecordingFlows {
         asked: Mutex<Vec<OwnerQuestion>>,
         batches: Mutex<mpsc::Sender<Vec<FlowRecord>>>,
     }
     const OWNER: i32 = 10_123;
+    const OWNER_APP: &str = "org.example.owner";
     impl FlowObserver for RecordingFlows {
-        fn owner_uid(
+        fn owner(
             &self,
             proto: FlowProto,
             local_ip: String,
             local_port: u16,
             remote_ip: String,
             remote_port: u16,
-        ) -> i32 {
+        ) -> FlowOwner {
             self.asked
                 .lock()
                 .unwrap()
                 .push((proto, local_ip, local_port, remote_ip, remote_port));
-            OWNER
+            FlowOwner {
+                uid: OWNER,
+                app: Some(OWNER_APP.to_owned()),
+            }
         }
         fn flows(&self, records: Vec<FlowRecord>) {
             let _ = self.batches.lock().unwrap().send(records);
@@ -329,6 +343,7 @@ mod tests {
             Arc::clone(&protector) as Arc<dyn SocketProtector>,
             Arc::new(ChannelListener(Mutex::new(tx))),
             Arc::clone(&flows) as Arc<dyn FlowObserver>,
+            None,
         )
         .unwrap();
         Started {
@@ -421,6 +436,7 @@ mod tests {
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::clone(&listener) as Arc<dyn EngineListener>,
             recording_flows().0,
+            None,
         )
         .unwrap();
         *listener.0.lock().unwrap() = Some(Arc::clone(&engine));
@@ -439,6 +455,7 @@ mod tests {
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::new(ChannelListener(Mutex::new(tx))),
             recording_flows().0,
+            None,
         );
         assert!(matches!(
             result,
@@ -457,6 +474,7 @@ mod tests {
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::new(ChannelListener(Mutex::new(tx))),
             recording_flows().0,
+            None,
         );
         assert!(matches!(
             result,
@@ -525,6 +543,7 @@ mod tests {
             ("127.0.0.1", port)
         );
         assert_eq!(started.uid, OWNER);
+        assert_eq!(started.app.as_deref(), Some(OWNER_APP));
         assert_eq!(started.ended_ms, None);
         assert_eq!(
             flows.asked.lock().unwrap()[0],
@@ -567,5 +586,56 @@ mod tests {
         assert_eq!((ended.bytes_up, ended.bytes_down), (2, 2));
         assert_eq!(ended.uid, OWNER);
         assert!(!ended.blocked);
+    }
+
+    /// With a history, every flow is stored, encrypted, with its app and final counts.
+    #[test]
+    fn writes_flows_to_the_history() {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path.clone(), vec![3; 32]).unwrap();
+
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let (flows, batches) = recording_flows();
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            flows,
+            Some(Arc::clone(&history)),
+        )
+        .unwrap();
+        peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
+        let echoed = (&peer).read(&mut [0u8; 2048]).expect("no echo");
+        assert!(echoed > 0);
+        // The start is in the history after the first batch.
+        batches.recv_timeout(Duration::from_secs(1)).unwrap();
+        let stored = history.recent_flows(10).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].app.as_deref(), Some(OWNER_APP));
+        assert_eq!(stored[0].ended_ms, None);
+
+        engine.stop();
+        let stored = history.recent_flows(10).unwrap();
+        assert_eq!(stored.len(), 1, "start and end are one row");
+        let flow = &stored[0];
+        assert_eq!(
+            (flow.remote_ip.as_str(), flow.remote_port),
+            ("127.0.0.1", port)
+        );
+        assert!(flow.ended_ms.is_some());
+        assert_eq!((flow.bytes_up, flow.bytes_down), (2, 2));
+        assert_eq!(engine.snapshot().history_failures, 0);
     }
 }

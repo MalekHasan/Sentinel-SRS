@@ -15,10 +15,12 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import android.system.OsConstants
+import android.util.Log
 import io.github.malekhasan.sentinel.core.Engine
 import io.github.malekhasan.sentinel.core.EngineException
 import io.github.malekhasan.sentinel.core.EngineListener
 import io.github.malekhasan.sentinel.core.FlowObserver
+import io.github.malekhasan.sentinel.core.FlowOwner
 import io.github.malekhasan.sentinel.core.FlowProto
 import io.github.malekhasan.sentinel.core.FlowRecord
 import io.github.malekhasan.sentinel.core.SocketProtector
@@ -80,8 +82,15 @@ class SentinelVpnService : VpnService() {
             return
         }
         val listener = Listener()
+        // Monitoring without a history is still monitoring: the engine runs either way.
+        val history = try {
+            History.get(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "the history is not available; flows will not be stored", e)
+            null
+        }
         val started = try {
-            Engine.start(tunnel.detachFd(), listOf(TUNNEL_DNS), Protector(), listener, Flows())
+            Engine.start(tunnel.detachFd(), listOf(TUNNEL_DNS), Protector(), listener, Flows(), history)
         } catch (e: EngineException) {
             fail(getString(R.string.gap_start_failed, e.message.orEmpty()))
             return
@@ -94,6 +103,16 @@ class SentinelVpnService : VpnService() {
         }.also { it.start() }
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
+        if (history != null) {
+            // Roll old flows into daily totals (SRS §13.2), off the main thread.
+            Thread({
+                try {
+                    history.applyRetention(System.currentTimeMillis(), History.KEEP_DAYS)
+                } catch (e: Exception) {
+                    Log.w(TAG, "retention failed", e)
+                }
+            }, "sentinel-retention").start()
+        }
     }
 
     private fun tunnelBuilder(): Builder {
@@ -208,9 +227,21 @@ class SentinelVpnService : VpnService() {
     /** Called on engine threads. */
     private inner class Flows : FlowObserver {
         private val connectivity = getSystemService(ConnectivityManager::class.java)
+        private val appNames = AppNames(this@SentinelVpnService)
+
+        override fun owner(
+            proto: FlowProto,
+            localIp: String,
+            localPort: UShort,
+            remoteIp: String,
+            remotePort: UShort,
+        ): FlowOwner {
+            val uid = ownerUid(proto, localIp, localPort, remoteIp, remotePort)
+            return FlowOwner(uid, appNames.packageFor(uid))
+        }
 
         /** Only the active VPN app may ask Android who owns a connection (API 29+). */
-        override fun ownerUid(
+        private fun ownerUid(
             proto: FlowProto,
             localIp: String,
             localPort: UShort,
@@ -245,6 +276,7 @@ class SentinelVpnService : VpnService() {
     }
 
     companion object {
+        private const val TAG = "SentinelVpn"
         const val ACTION_START = "io.github.malekhasan.sentinel.action.START"
         const val ACTION_STOP = "io.github.malekhasan.sentinel.action.STOP"
         const val NOTIFICATION_ID = 1

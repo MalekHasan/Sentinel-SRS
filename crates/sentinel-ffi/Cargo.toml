@@ -22,6 +22,7 @@ required-features = ["cli"]
 cli = ["uniffi/cli"]
 
 [dependencies]
+log = "0.4.34"
 sentinel-store = { version = "0.0.0", path = "../sentinel-store" }
 sentinel-vpn = { path = "../sentinel-vpn" }
 thiserror = "2.0.21"

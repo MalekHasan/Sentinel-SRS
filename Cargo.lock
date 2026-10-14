@@ -1096,6 +1096,7 @@ name = "sentinel-ffi"
 version = "0.0.0"
 dependencies = [
  "etherparse 0.20.3",
+ "log",
  "sentinel-store",
  "sentinel-vpn",
  "socket2",

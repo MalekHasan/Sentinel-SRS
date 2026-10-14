@@ -2,6 +2,7 @@
 package io.github.malekhasan.sentinel
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
@@ -19,17 +20,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -38,7 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.malekhasan.sentinel.core.EngineSnapshot
-import io.github.malekhasan.sentinel.core.FlowRecord
+import io.github.malekhasan.sentinel.core.HistoryFlow
 import io.github.malekhasan.sentinel.core.coreVersion
 import java.text.DateFormat
 import java.util.Date
@@ -129,20 +133,46 @@ fun SentinelTheme(content: @Composable () -> Unit) {
 fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
-    val appNames = remember { AppNames(context) }
     var snapshot by remember { mutableStateOf<EngineSnapshot?>(null) }
-    var flows by remember { mutableStateOf(emptyList<FlowRecord>()) }
+    var flows by remember { mutableStateOf(emptyList<HistoryFlow>()) }
     var gaps by remember { mutableStateOf(emptyList<GapLog.Gap>()) }
+    var confirmWipe by remember { mutableStateOf(false) }
+    // Bumped after a wipe so the lists reload.
+    var generation by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(visible, status) {
-        gaps = withContext(Dispatchers.IO) { GapLog.recent(context, 5) }
+    LaunchedEffect(visible, status, generation) {
+        suspend fun reload() {
+            flows = withContext(Dispatchers.IO) { recentFlows(context) }
+            gaps = withContext(Dispatchers.IO) { GapLog.recent(context, 5) }
+        }
         snapshot = null
-        flows = Monitor.recentFlows().take(RECENT_SHOWN)
+        reload()
         while (visible && status == Monitor.Status.ON) {
             snapshot = Monitor.snapshot()
-            flows = Monitor.recentFlows().take(RECENT_SHOWN)
+            reload()
             delay(1_000)
         }
+    }
+
+    if (confirmWipe) {
+        AlertDialog(
+            onDismissRequest = { confirmWipe = false },
+            title = { Text(stringResource(R.string.wipe_title)) },
+            text = { Text(stringResource(R.string.wipe_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmWipe = false
+                    // Refused if monitoring started meanwhile; the button then hides.
+                    runCatching { History.wipe(context) }
+                    generation++
+                }) { Text(stringResource(R.string.wipe_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmWipe = false }) {
+                    Text(stringResource(R.string.wipe_cancel))
+                }
+            },
+        )
     }
 
     Column(
@@ -184,13 +214,21 @@ fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, on
         if (flows.isNotEmpty()) {
             Text(stringResource(R.string.recent_title), style = MaterialTheme.typography.titleSmall)
             flows.forEach { flow ->
-                Text(describeFlow(flow, appNames), style = MaterialTheme.typography.bodySmall)
+                Text(describeFlow(flow), style = MaterialTheme.typography.bodySmall)
             }
         }
 
         if (gaps.isNotEmpty()) {
             Text(stringResource(R.string.gaps_title), style = MaterialTheme.typography.titleSmall)
             gaps.forEach { gap -> Text(describeGap(gap), style = MaterialTheme.typography.bodySmall) }
+        }
+
+        // The engine writes to the history while it runs, so it can only be deleted
+        // while monitoring is off.
+        if (status == Monitor.Status.OFF && (flows.isNotEmpty() || gaps.isNotEmpty())) {
+            OutlinedButton(onClick = { confirmWipe = true }) {
+                Text(stringResource(R.string.wipe_action))
+            }
         }
 
         Text(
@@ -201,11 +239,18 @@ fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, on
 }
 
 /** Flows listed on the main screen; the full live view is Sprint 3 (CM-03). */
-private const val RECENT_SHOWN = 20
+private const val RECENT_SHOWN = 20u
+
+private fun recentFlows(context: Context): List<HistoryFlow> =
+    try {
+        History.get(context).recentFlows(RECENT_SHOWN)
+    } catch (e: Exception) {
+        emptyList()
+    }
 
 @Composable
-private fun describeFlow(flow: FlowRecord, appNames: AppNames): String {
-    val app = appNames.packageFor(flow.uid) ?: stringResource(R.string.unknown_app)
+private fun describeFlow(flow: HistoryFlow): String {
+    val app = flow.app ?: stringResource(R.string.unknown_app)
     val destination = flow.hostname ?: flow.remoteIp
     return stringResource(
         if (flow.endedMs == null) R.string.flow_open else R.string.flow_closed,
