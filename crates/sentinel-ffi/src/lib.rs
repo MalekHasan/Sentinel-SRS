@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The Sentinel core as seen from Kotlin.
 //!
-//! A0 Spike 2: proves the path Rust → UniFFI → Kotlin → Android app works on every
-//! supported ABI. The real API (engine control, flows, alerts) grows from here in Phase A.
+//! The API grows with Phase A: engine control now, then flows, alerts and storage.
+
+mod engine;
+
+pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
 
 uniffi::setup_scaffolding!();
 

@@ -60,6 +60,7 @@ pub async fn run_smoltcp(
     });
 
     // Packets between the tunnel and the stack.
+    let closed = device.closed();
     let (mut dev_rx, mut dev_tx) = tokio::io::split(device);
     let (mut stack_tx, mut stack_rx) = stack.split();
     let inbound = tokio::spawn(async move {
@@ -125,10 +126,16 @@ pub async fn run_smoltcp(
         });
     }
 
-    while let Some((stream, app, remote)) = tcp.next().await {
-        tokio::spawn(relay::tcp(Arc::clone(&ctx), stream, app, remote));
+    let accept_loop = async {
+        while let Some((stream, app, remote)) = tcp.next().await {
+            tokio::spawn(relay::tcp(Arc::clone(&ctx), stream, app, remote));
+        }
+        inbound.await.map_err(io::Error::other)?
+    };
+    tokio::select! {
+        result = accept_loop => result,
+        reason = closed.wait() => Err(io::Error::new(io::ErrorKind::BrokenPipe, reason)),
     }
-    inbound.await.map_err(io::Error::other)?
 }
 
 /// One UDP flow from the shared stack socket, as a datagram-per-read stream.

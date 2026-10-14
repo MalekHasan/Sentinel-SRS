@@ -24,7 +24,9 @@ netstack-smoltcp = { version = "0.2.4", optional = true }
 smoltcp = ["dep:netstack-smoltcp", "dep:futures"]
 
 [dev-dependencies]
+etherparse = "0.20"
 libc = "0.2.190"
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
 
 [lints]
 workspace = true

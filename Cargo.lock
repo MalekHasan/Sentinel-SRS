@@ -955,7 +955,11 @@ dependencies = [
 name = "sentinel-ffi"
 version = "0.0.0"
 dependencies = [
+ "etherparse 0.20.3",
  "sentinel-vpn",
+ "socket2",
+ "thiserror",
+ "tokio",
  "uniffi",
 ]
 
@@ -963,6 +967,7 @@ dependencies = [
 name = "sentinel-vpn"
 version = "0.0.0"
 dependencies = [
+ "etherparse 0.20.3",
  "futures",
  "ipstack",
  "libc",

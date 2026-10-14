@@ -74,6 +74,8 @@ impl EngineStats {
 
 /// Run the engine until the tunnel closes or the future is dropped.
 ///
+/// Returns an error of kind `BrokenPipe` when the tunnel closes or fails (for example
+/// when the user revokes the VPN), so the app can record a monitoring gap (SP-03).
 /// Dropping the future (or aborting its task) stops all flows. If this process dies,
 /// Android tears down the tunnel and traffic flows outside it: the engine fails open
 /// (SRS NF-07), and the app records a monitoring gap.
@@ -94,6 +96,7 @@ pub async fn run(
         tcp.read_buffer_size = size as usize;
     }
     stack_config.with_tcp_config(tcp);
+    let closed = device.closed();
     let mut stack = IpStack::new(stack_config, device);
 
     let ctx = Arc::new(Ctx {
@@ -105,21 +108,27 @@ pub async fn run(
         next_id: AtomicU64::new(1),
     });
 
-    loop {
-        match stack.accept().await.map_err(io::Error::from)? {
-            IpStackStream::Tcp(stream) => {
-                let (src, dst) = (stream.local_addr(), stream.peer_addr());
-                tokio::spawn(relay::tcp(Arc::clone(&ctx), stream, src, dst));
-            }
-            IpStackStream::Udp(stream) => {
-                let (src, dst) = (stream.local_addr(), stream.peer_addr());
-                tokio::spawn(relay::udp(Arc::clone(&ctx), stream, src, dst));
-            }
-            IpStackStream::UnknownTransport(_) | IpStackStream::UnknownNetwork(_) => {
-                ctx.stats
-                    .unsupported_packets
-                    .fetch_add(1, Ordering::Relaxed);
+    let accept_loop = async {
+        loop {
+            match stack.accept().await.map_err(io::Error::from)? {
+                IpStackStream::Tcp(stream) => {
+                    let (src, dst) = (stream.local_addr(), stream.peer_addr());
+                    tokio::spawn(relay::tcp(Arc::clone(&ctx), stream, src, dst));
+                }
+                IpStackStream::Udp(stream) => {
+                    let (src, dst) = (stream.local_addr(), stream.peer_addr());
+                    tokio::spawn(relay::udp(Arc::clone(&ctx), stream, src, dst));
+                }
+                IpStackStream::UnknownTransport(_) | IpStackStream::UnknownNetwork(_) => {
+                    ctx.stats
+                        .unsupported_packets
+                        .fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
+    };
+    tokio::select! {
+        result = accept_loop => result,
+        reason = closed.wait() => Err(io::Error::new(io::ErrorKind::BrokenPipe, reason)),
     }
 }

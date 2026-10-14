@@ -29,7 +29,7 @@ mod sni;
 #[cfg(feature = "smoltcp")]
 mod stack_smoltcp;
 
-pub use device::TunDevice;
+pub use device::{TunClosed, TunDevice};
 pub use dns::{DnsAnswer, DnsCache, parse_dns_response};
 pub use engine::{EngineConfig, EngineStats, run};
 pub use flow::{FlowCounters, FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
