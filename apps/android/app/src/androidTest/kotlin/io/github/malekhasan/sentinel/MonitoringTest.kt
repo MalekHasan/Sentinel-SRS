@@ -1,14 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
-import android.Manifest
 import android.app.NotificationManager
-import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.net.VpnService
-import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -23,48 +16,30 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+
+/** Connections in the CM-01 acceptance run. */
+private const val CONNECTIONS = 20
 
 /**
  * Sprint 1 end to end, on a device: start the VPN, relay real traffic through the Rust
  * engine, forward DNS to the network's resolver, and stop cleanly.
  *
- * Needs an HTTP server reachable from the device, by default on the test machine's
- * loopback (10.0.2.2:8765 from the emulator). CI starts one; locally run
- * `python3 -m http.server 8765 --bind 127.0.0.1` first, or pass another address with
- * `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=host:port`.
+ * Needs the HTTP server described at [testServer].
  */
-/** Connections in the CM-01 acceptance run. */
-private const val CONNECTIONS = 20
-
 @RunWith(AndroidJUnit4::class)
 class MonitoringTest {
-    private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    private val context = instrumentation.targetContext
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val notifications = context.getSystemService(NotificationManager::class.java)
 
     @Before
-    fun grantPermissions() {
-        // What the user's "OK" in Android's VPN consent dialog grants.
-        shell("appops set ${context.packageName} ACTIVATE_VPN allow")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            instrumentation.uiAutomation.grantRuntimePermission(
-                context.packageName, Manifest.permission.POST_NOTIFICATIONS,
-            )
-        }
-        assertNull("VPN consent should be granted", VpnService.prepare(context))
-    }
+    fun grantPermissions() = grantMonitoringPermissions()
 
     @After
-    fun stopMonitoring() {
-        context.startService(serviceIntent(SentinelVpnService.ACTION_STOP))
-        waitFor("monitoring to stop") { Monitor.status.value == Monitor.Status.OFF }
-    }
+    fun stop() = stopMonitoring()
 
     @Test
     fun relaysTrafficAndDnsThenStopsCleanly() {
@@ -115,8 +90,7 @@ class MonitoringTest {
         val snapshot = checkNotNull(Monitor.snapshot()) { "no engine counters while on" }
         assertTrue("flows seen: ${snapshot.flowsTotal}", snapshot.flowsTotal >= 2uL)
 
-        context.startService(serviceIntent(SentinelVpnService.ACTION_STOP))
-        waitFor("monitoring to stop") { Monitor.status.value == Monitor.Status.OFF }
+        stopMonitoring()
         waitFor("the notification to go") {
             notifications.activeNotifications.none { it.id == SentinelVpnService.NOTIFICATION_ID }
         }
@@ -165,29 +139,6 @@ class MonitoringTest {
         assertEquals("connections in the history", CONNECTIONS, stored)
     }
 
-    /** Start the VPN and wait until this app's own traffic goes through it. */
-    private fun startMonitoring() {
-        context.startForegroundService(serviceIntent(SentinelVpnService.ACTION_START))
-        waitFor("monitoring to start") { Monitor.status.value == Monitor.Status.ON }
-        // Sentinel's own app is inside the tunnel too, so this test's sockets use it.
-        val connectivity = context.getSystemService(ConnectivityManager::class.java)
-        waitFor("the tunnel to become this app's network") {
-            connectivity.getNetworkCapabilities(connectivity.activeNetwork)
-                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-        }
-    }
-
-    private fun serviceIntent(action: String) =
-        Intent(context, SentinelVpnService::class.java).setAction(action)
-
-    private fun testServer(): Pair<String, Int> {
-        val value = InstrumentationRegistry.getArguments()
-            .getString("sentinelTestServer", "10.0.2.2:8765")
-        val host = value.substringBeforeLast(':')
-        val port = value.substringAfterLast(':').toInt()
-        return host to port
-    }
-
     /** Sends an A query to the tunnel's resolver, retrying while the network is found. */
     private fun dnsAnswered(name: String): Boolean {
         val resolver = InetAddress.getByName(SentinelVpnService.TUNNEL_DNS)
@@ -221,19 +172,4 @@ class MonitoringTest {
         }
         write(byteArrayOf(0, 0, 1, 0, 1)) // end of name, type A, class IN
     }.toByteArray()
-
-    private fun shell(command: String) {
-        ParcelFileDescriptor.AutoCloseInputStream(
-            instrumentation.uiAutomation.executeShellCommand(command),
-        ).use { it.readBytes() }
-    }
-
-    /** Checks [condition] at once, then every 100 ms until [timeoutMillis] has passed. */
-    private fun waitFor(what: String, timeoutMillis: Long = 10_000, condition: () -> Boolean) {
-        val deadline = System.currentTimeMillis() + timeoutMillis
-        while (!condition()) {
-            if (System.currentTimeMillis() >= deadline) fail("timed out waiting for $what")
-            Thread.sleep(100)
-        }
-    }
 }

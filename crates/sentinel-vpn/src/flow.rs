@@ -40,11 +40,14 @@ impl FlowCounters {
         self.down.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn add_up(&self, n: usize) {
+    /// Counts bytes the app sent. Public so that other stacks, and tests, can feed the
+    /// same live view.
+    pub fn add_up(&self, n: usize) {
         self.up.fetch_add(n as u64, Ordering::Relaxed);
     }
 
-    pub(crate) fn add_down(&self, n: usize) {
+    /// Counts bytes the app received.
+    pub fn add_down(&self, n: usize) {
         self.down.fetch_add(n as u64, Ordering::Relaxed);
     }
 }

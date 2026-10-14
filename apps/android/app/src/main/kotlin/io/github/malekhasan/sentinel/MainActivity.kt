@@ -9,6 +9,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -70,14 +72,21 @@ class MainActivity : ComponentActivity() {
         // Calls into the Rust core through UniFFI: proves the native library loads.
         val version = coreVersion()
         setContent {
+            var showLive by rememberSaveable { mutableStateOf(false) }
             SentinelTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    MonitorScreen(
-                        coreVersion = version,
-                        visible = visible.value,
-                        onStart = ::requestStart,
-                        onStop = ::stopMonitoring,
-                    )
+                    if (showLive) {
+                        BackHandler { showLive = false }
+                        LiveConnectionsScreen(visible = visible.value, onBack = { showLive = false })
+                    } else {
+                        MonitorScreen(
+                            coreVersion = version,
+                            visible = visible.value,
+                            onStart = ::requestStart,
+                            onStop = ::stopMonitoring,
+                            onShowLive = { showLive = true },
+                        )
+                    }
                 }
             }
         }
@@ -130,7 +139,13 @@ fun SentinelTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
+fun MonitorScreen(
+    coreVersion: String,
+    visible: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onShowLive: () -> Unit,
+) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
     var snapshot by remember { mutableStateOf<EngineSnapshot?>(null) }
@@ -207,6 +222,7 @@ fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, on
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
+                Button(onClick = onShowLive) { Text(stringResource(R.string.live_action)) }
                 OutlinedButton(onClick = onStop) { Text(stringResource(R.string.action_stop)) }
             }
         }
@@ -238,7 +254,7 @@ fun MonitorScreen(coreVersion: String, visible: Boolean, onStart: () -> Unit, on
     }
 }
 
-/** Flows listed on the main screen; the full live view is Sprint 3 (CM-03). */
+/** Flows listed on the main screen; open connections by app are in the live view. */
 private const val RECENT_SHOWN = 20u
 
 private fun recentFlows(context: Context): List<HistoryFlow> =

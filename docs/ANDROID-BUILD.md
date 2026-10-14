@@ -24,13 +24,13 @@ cd apps/android
 ./gradlew connectedDebugAndroidTest   # needs a device or emulator, see below
 ```
 
-`MonitoringTest` starts the VPN and sends a request through the engine to an HTTP server on the test machine, which the emulator reaches as `10.0.2.2`. Start one first:
+`MonitoringTest` and `LiveViewTest` start the VPN and connect through the engine to an HTTP server on the test machine, which the emulator reaches as `10.0.2.2`. Start it first:
 
 ```sh
-python3 -m http.server 8765 --bind 127.0.0.1
+python3 apps/android/scripts/test-server.py
 ```
 
-On a real phone, run the server on a computer the phone can reach and pass its address with `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=192.168.1.10:8765`. The test grants itself the VPN consent through `appops` and needs no tapping.
+It is Python's `http.server` with a listen backlog large enough for the 500 connections `LiveViewTest` opens at once. On a real phone, run it with `--bind 0.0.0.0` on a computer the phone can reach and pass its address with `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=192.168.1.10:8765`. The tests grant themselves the VPN consent through `appops` and need no tapping.
 
 Two Gradle tasks run before the Android build. Both are skipped when nothing under `crates/` or `third_party/` changed.
 

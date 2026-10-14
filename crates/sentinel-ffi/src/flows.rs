@@ -63,6 +63,23 @@ pub struct FlowOwner {
     pub app: Option<String>,
 }
 
+/// One app's open connections right now, for the live view (SRS CM-03).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LiveApp {
+    pub uid: i32,
+    pub app: Option<String>,
+    pub open_flows: u32,
+    /// Bytes carried so far by the open flows.
+    pub bytes_up: u64,
+    pub bytes_down: u64,
+    /// The destinations with the most traffic, hostname if known, at most
+    /// [`LIVE_DESTINATIONS`].
+    pub top_destinations: Vec<String>,
+}
+
+/// Destinations listed per app in the live view.
+pub const LIVE_DESTINATIONS: usize = 5;
+
 /// Implemented by the app.
 #[uniffi::export(with_foreign)]
 pub trait FlowObserver: Send + Sync {
@@ -154,6 +171,13 @@ impl FlowEvents {
             }
         }
         self.foreign.flows(batch);
+    }
+
+    /// Open flows grouped by app, busiest first: the live view (CM-03). Byte counts
+    /// are read from the relays' live counters, so they grow while flows run.
+    pub(crate) fn live_apps(&self) -> Vec<LiveApp> {
+        let open = lock(&self.open);
+        group_live(open.values().map(|(flow, owner)| (flow, owner)))
     }
 
     fn push(&self, record: FlowRecord) {
@@ -259,6 +283,157 @@ fn proto(proto: Proto) -> FlowProto {
     }
 }
 
+/// Group open flows by owner. Apps are ordered by bytes carried, then by open flows,
+/// then by name, so the order is stable between refreshes when nothing changes.
+fn group_live<'a>(flows: impl Iterator<Item = (&'a FlowInfo, &'a FlowOwner)>) -> Vec<LiveApp> {
+    struct Group {
+        live: LiveApp,
+        destinations: HashMap<String, u64>,
+    }
+    let mut groups: HashMap<(i32, Option<String>), Group> = HashMap::new();
+    for (flow, owner) in flows {
+        let up = flow.counters.bytes_up();
+        let down = flow.counters.bytes_down();
+        let group = groups
+            .entry((owner.uid, owner.app.clone()))
+            .or_insert_with(|| Group {
+                live: LiveApp {
+                    uid: owner.uid,
+                    app: owner.app.clone(),
+                    open_flows: 0,
+                    bytes_up: 0,
+                    bytes_down: 0,
+                    top_destinations: Vec::new(),
+                },
+                destinations: HashMap::new(),
+            });
+        group.live.open_flows += 1;
+        group.live.bytes_up += up;
+        group.live.bytes_down += down;
+        let destination = flow
+            .hostname
+            .clone()
+            .unwrap_or_else(|| flow.dst.ip().to_string());
+        *group.destinations.entry(destination).or_default() += up + down;
+    }
+    let mut apps: Vec<LiveApp> = groups
+        .into_values()
+        .map(|mut group| {
+            let mut destinations: Vec<_> = group.destinations.into_iter().collect();
+            destinations.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            group.live.top_destinations = destinations
+                .into_iter()
+                .take(LIVE_DESTINATIONS)
+                .map(|(name, _)| name)
+                .collect();
+            group.live
+        })
+        .collect();
+    apps.sort_by(|a, b| {
+        (b.bytes_up + b.bytes_down)
+            .cmp(&(a.bytes_up + a.bytes_down))
+            .then_with(|| b.open_flows.cmp(&a.open_flows))
+            .then_with(|| a.app.cmp(&b.app))
+            .then_with(|| a.uid.cmp(&b.uid))
+    });
+    apps
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sentinel_vpn::FlowCounters;
+
+    fn flow(id: u64, dst: &str, hostname: Option<&str>) -> FlowInfo {
+        FlowInfo {
+            id,
+            proto: Proto::Tcp,
+            src: "10.215.173.1:40000".parse().unwrap(),
+            dst: dst.parse().unwrap(),
+            hostname: hostname.map(str::to_owned),
+            hostname_source: hostname.map(|_| HostnameSource::Dns),
+            started_ms: 0,
+            counters: Arc::new(FlowCounters::default()),
+        }
+    }
+
+    fn owner(uid: i32, app: &str) -> FlowOwner {
+        FlowOwner {
+            uid,
+            app: Some(app.to_owned()),
+        }
+    }
+
+    #[test]
+    fn groups_open_flows_by_app_busiest_first() {
+        let video = owner(10_001, "org.example.video");
+        let chat = owner(10_002, "org.example.chat");
+        let flows = [
+            (
+                flow(1, "203.0.113.5:443", Some("cdn.example")),
+                video.clone(),
+                900,
+                9_000,
+            ),
+            (
+                flow(2, "203.0.113.6:443", Some("api.example")),
+                video.clone(),
+                100,
+                100,
+            ),
+            (
+                flow(3, "203.0.113.5:443", Some("cdn.example")),
+                video.clone(),
+                0,
+                1_000,
+            ),
+            (flow(4, "198.51.100.7:5222", None), chat.clone(), 10, 20),
+        ];
+        for (f, _, up, down) in &flows {
+            f.counters.add_up(*up);
+            f.counters.add_down(*down);
+        }
+        let apps = group_live(flows.iter().map(|(f, o, _, _)| (f, o)));
+        assert_eq!(apps.len(), 2);
+        let first = &apps[0];
+        assert_eq!(first.app.as_deref(), Some("org.example.video"));
+        assert_eq!(first.open_flows, 3);
+        assert_eq!((first.bytes_up, first.bytes_down), (1_000, 10_100));
+        assert_eq!(first.top_destinations, vec!["cdn.example", "api.example"]);
+        let second = &apps[1];
+        assert_eq!((second.uid, second.open_flows), (10_002, 1));
+        assert_eq!(
+            second.top_destinations,
+            vec!["198.51.100.7"],
+            "address when no name"
+        );
+    }
+
+    #[test]
+    fn lists_at_most_five_destinations() {
+        let app = owner(10_003, "org.example.browser");
+        let flows: Vec<_> = (0..8u64)
+            .map(|i| {
+                let f = flow(i, &format!("192.0.2.{}:443", i + 1), None);
+                f.counters.add_down(usize::try_from(i).unwrap() * 10);
+                f
+            })
+            .collect();
+        let apps = group_live(flows.iter().map(|f| (f, &app)));
+        assert_eq!(apps[0].open_flows, 8);
+        assert_eq!(
+            apps[0].top_destinations,
+            vec![
+                "192.0.2.8",
+                "192.0.2.7",
+                "192.0.2.6",
+                "192.0.2.5",
+                "192.0.2.4"
+            ]
+        );
+    }
 }

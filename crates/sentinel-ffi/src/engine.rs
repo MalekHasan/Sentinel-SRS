@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sentinel_vpn::{DnsForward, EngineConfig, EngineStats, Protect, TunDevice};
 use tokio::sync::oneshot;
 
-use crate::flows::{FlowEvents, FlowObserver};
+use crate::flows::{FlowEvents, FlowObserver, LiveApp};
 use crate::history::HistoryStore;
 
 /// Implemented by the `VpnService`: calls `VpnService.protect(fd)` so the engine's own
@@ -194,6 +194,12 @@ impl Engine {
             .map(|ip| SocketAddr::new(ip, 53))
             .collect();
         self.dns.set_upstream(servers);
+    }
+
+    /// Open connections grouped by app, busiest first (SRS CM-03). Cheap enough to call
+    /// every second while the live view is on screen.
+    pub fn live_apps(&self) -> Vec<LiveApp> {
+        self.events.live_apps()
     }
 
     pub fn snapshot(&self) -> EngineSnapshot {
@@ -641,6 +647,42 @@ mod tests {
         assert!(flow.ended_ms.is_some());
         assert_eq!((flow.bytes_up, flow.bytes_down), (2, 2));
         assert_eq!(engine.snapshot().history_failures, 0);
+    }
+
+    /// The live view (CM-03) shows open flows by app with their bytes so far, and
+    /// forgets them once they end.
+    #[test]
+    fn live_view_groups_open_flows_by_app() {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let Started { engine, peer, .. } = start_on_socketpair();
+        assert!(engine.live_apps().is_empty());
+
+        for src_port in [40_001, 40_002] {
+            peer.send(&udp_packet_from(src_port, [127, 0, 0, 1], port))
+                .unwrap();
+            let echoed = (&peer).read(&mut [0u8; 2048]).expect("no echo");
+            assert!(echoed > 0);
+        }
+        let apps = engine.live_apps();
+        assert_eq!(apps.len(), 1, "both flows belong to one app: {apps:?}");
+        let app = &apps[0];
+        assert_eq!((app.uid, app.app.as_deref()), (OWNER, Some(OWNER_APP)));
+        assert_eq!(app.open_flows, 2);
+        assert_eq!((app.bytes_up, app.bytes_down), (4, 4));
+        assert_eq!(app.top_destinations, vec!["127.0.0.1"]);
+
+        engine.stop();
+        assert!(
+            engine.live_apps().is_empty(),
+            "no flow is open after a stop"
+        );
     }
 
     /// Notes when each flow is first reported, by the app's source port.

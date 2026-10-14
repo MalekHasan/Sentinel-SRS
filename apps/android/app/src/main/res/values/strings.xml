@@ -17,6 +17,19 @@
     <string name="flow_open">%1$s → %2$s:%3$d (open)</string>
     <string name="flow_closed">%1$s → %2$s:%3$d</string>
     <string name="unknown_app">Unknown app</string>
+    <string name="back">Back</string>
+
+    <string name="live_action">Live connections</string>
+    <string name="live_title">Live connections</string>
+    <string name="live_explainer">Apps with connections open right now, busiest first. Updated every second.</string>
+    <string name="live_empty">No app has a connection open right now.</string>
+    <string name="live_off">Monitoring is off. Start it to see live connections.</string>
+    <plurals name="live_open_flows">
+        <item quantity="one">%d open connection</item>
+        <item quantity="other">%d open connections</item>
+    </plurals>
+    <string name="live_traffic">Sent %1$s, received %2$s so far</string>
+    <string name="live_destinations">Busiest destinations: %1$s</string>
 
     <string name="wipe_action">Delete history</string>
     <string name="wipe_title">Delete the whole history?</string>

@@ -4,6 +4,7 @@ package io.github.malekhasan.sentinel
 import io.github.malekhasan.sentinel.core.Engine
 import io.github.malekhasan.sentinel.core.EngineSnapshot
 import io.github.malekhasan.sentinel.core.FlowRecord
+import io.github.malekhasan.sentinel.core.LiveApp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,4 +54,9 @@ object Monitor {
 
     /** Live engine counters, or null when monitoring is off. */
     fun snapshot(): EngineSnapshot? = engine?.let { runCatching { it.snapshot() }.getOrNull() }
+
+    /** Open connections grouped by app, busiest first (CM-03); empty when monitoring is
+     *  off. */
+    fun liveApps(): List<LiveApp> =
+        engine?.let { runCatching { it.liveApps() }.getOrNull() }.orEmpty()
 }

@@ -2,6 +2,8 @@
 package io.github.malekhasan.sentinel
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -12,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap
 class AppNames(context: Context) {
     private val packages = context.packageManager
     private val cache = ConcurrentHashMap<Int, String>()
+    private val labels = ConcurrentHashMap<String, String>()
 
     /**
      * The package that owns [uid], or Android's name for a shared or system UID (for
@@ -25,6 +28,25 @@ class AppNames(context: Context) {
                 owners?.size == 1 -> owners[0]
                 else -> packages.getNameForUid(uid) ?: owners?.minOrNull() ?: "uid $uid"
             }
+        }
+    }
+
+    /**
+     * The name the user knows [packageName] by, or [packageName] itself when it is not
+     * an installed app (a shared or system UID). Asks the package manager once per
+     * package, so call it off the main thread.
+     */
+    fun labelFor(packageName: String): String = labels.getOrPut(packageName) {
+        try {
+            val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packages.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                packages.getApplicationInfo(packageName, 0)
+            }
+            packages.getApplicationLabel(info).toString()
+        } catch (e: PackageManager.NameNotFoundException) {
+            packageName
         }
     }
 }

@@ -16,6 +16,23 @@
     <string name="flow_open">%1$s متصل بـ %2$s:%3$d (لسا مفتوح)</string>
     <string name="flow_closed">%1$s اتصل بـ %2$s:%3$d</string>
     <string name="unknown_app">تطبيق مش معروف</string>
+    <string name="back">رجوع</string>
+
+    <string name="live_action">الاتصالات هلأ</string>
+    <string name="live_title">الاتصالات المفتوحة هلأ</string>
+    <string name="live_explainer">التطبيقات اللي عندها اتصالات مفتوحة هلأ، الأكتر استخداماً أول إشي. بتتحدّث كل ثانية.</string>
+    <string name="live_empty">ما في ولا تطبيق عنده اتصال مفتوح هلأ.</string>
+    <string name="live_off">المراقبة مطفية. شغّلها عشان تشوف الاتصالات هلأ.</string>
+    <plurals name="live_open_flows">
+        <item quantity="zero">ولا اتصال مفتوح</item>
+        <item quantity="one">اتصال واحد مفتوح</item>
+        <item quantity="two">اتصالين مفتوحين</item>
+        <item quantity="few">%d اتصالات مفتوحة</item>
+        <item quantity="many">%d اتصال مفتوح</item>
+        <item quantity="other">%d اتصال مفتوح</item>
+    </plurals>
+    <string name="live_traffic">بعت %1$s واستلم %2$s لهلأ</string>
+    <string name="live_destinations">أكتر أماكن بيتصل فيها: %1$s</string>
 
     <string name="wipe_action">امسح السجل</string>
     <string name="wipe_title">بدك تمسح السجل كله؟</string>
