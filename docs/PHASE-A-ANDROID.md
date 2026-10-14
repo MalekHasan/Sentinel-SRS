@@ -135,7 +135,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 ### Sprint 1 — Tunnel that works
 
 - [ ] VPN consent flow, foreground service and persistent notification (§15.3: always visible)
-- [ ] Rust engine: TCP and UDP relay over protected sockets, IPv4 and IPv6, DNS forwarding. Done so far: engine start and stop over FFI with tunnel-closure detection, UDP over IPv4 and IPv6 tested without root, smoltcp as the default stack with flow control and no idle polling, ipstack half-close fixed. Still to do: IPv6 in the lab
+- [ ] Rust engine: TCP and UDP relay over protected sockets, IPv4 and IPv6, DNS forwarding. Done so far: engine start and stop over FFI with tunnel-closure detection, UDP over IPv4 and IPv6 tested without root, smoltcp as the default stack with flow control and no idle polling, ipstack half-close fixed, TCP and UDP over IPv6 in the CI lab. Still to do: the Android `VpnService` that starts the engine
 - [ ] Fail open and record a gap when the engine stops (NF-07, SP-03)
 - [ ] Benchmarks in CI and on one real phone: latency (NF-04) and battery (NF-03), tracked every sprint from now on
 

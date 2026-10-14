@@ -8,7 +8,7 @@ Runs real traffic through `sentinel-vpn` on one Linux machine, the same way Andr
                                                                                         10.88.0.1 / .2 / .53
 ```
 
-The socket mark stands in for `VpnService.protect()`: a policy-routing rule sends marked sockets around the tunnel.
+The socket mark stands in for `VpnService.protect()`: a policy-routing rule sends marked sockets around the tunnel. IPv6 uses the same layout (servers on `fd88::1` and `fd88::2`, veth `fd99::/64`, apps on `fd11::1`).
 
 ## Run
 
@@ -18,7 +18,7 @@ sudo TCP_BUFFER=16384 crates/sentinel-vpn/lab/run-lab.sh /tmp/lab-out-2   # anot
 sudo STACK=ipstack crates/sentinel-vpn/lab/run-lab.sh /tmp/lab-out-3      # comparison stack
 ```
 
-Needs root, `iproute2` (with `tc`), `iperf3` and `python3`. Set `SKIP_BUILD=1` if `linux_lab` is already built (CI builds it first, without root, with `--features ipstack` so both stacks are available).
+Needs root, `iproute2` (with `tc`), `iperf3` and `python3`. The IPv6 checks are skipped, with a message, on a kernel without IPv6; set `SENTINEL_REQUIRE_IPV6=1` (as CI does) to make that an error instead. Set `SKIP_BUILD=1` if `linux_lab` is already built (CI builds it first, without root, with `--features ipstack` so both stacks are available).
 
 ## What it measures
 
@@ -30,6 +30,7 @@ Needs root, `iproute2` (with `tc`), `iperf3` and `python3`. Set `SKIP_BUILD=1` i
 | Memory with 500 open connections (SRS CM-03), and engine memory after each phase | `hold.py`, `run-lab.sh` |
 | Backpressure: a 6 s upload while `tc` limits the upstream to 20 Mbit/s | `run-lab.sh` |
 | Correctness: SNI and DNS hostnames, blocking by name, flows that end, half-close | `bench.py`, `report.py` |
+| IPv6: TCP and UDP echo, SNI, and a hostname from an AAAA answer, each checked direct and through the engine | `bench.py`, `report.py` |
 
 `report.py` prints Markdown tables and exits non-zero if a correctness check fails. The backpressure check fails if the app could send more than 3 times what the server received, or if the engine grew by 50 MB or more during the slow upload: a stack without flow control buffers the difference in memory.
 

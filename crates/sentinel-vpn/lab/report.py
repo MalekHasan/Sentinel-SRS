@@ -60,6 +60,17 @@ checks["sni_attributed"] = any(f.get("host") == "sni-check.lab.test" and f.get("
 checks["sni_blocked"] = any(f.get("host") == "blocked.lab.test" and f.get("verdict") == "block" for f in flows)
 checks["dns_attributed"] = any(f.get("host") == "web.lab.test" and f.get("host_src") == "dns" for f in flows)
 checks["dns_answers_seen"] = sum(1 for f in flows if f.get("event") == "dns")
+if engine.get("ipv6"):
+    # Direct IPv6 must work too, or the failure is in the lab, not the engine.
+    checks["direct_ipv6_ok"] = all(v for k, v in direct["checks"].items() if "6" in k)
+    checks["sni6_attributed"] = any(
+        f.get("host") == "sni6-check.lab.test" and f.get("host_src") == "sni"
+        and f.get("dst", "").startswith("[fd88::1]") for f in flows)
+    checks["dns6_attributed"] = any(
+        f.get("host") == "web6.lab.test" and f.get("host_src") == "dns"
+        and f.get("dst", "").startswith("[fd88::2]") for f in flows)
+else:
+    print("IPv6: SKIPPED, this machine has no IPv6 (CI requires it)")
 # Backpressure: the app must be slowed to roughly the real link speed, and the engine
 # must not buffer the difference in memory.
 checks["slow_upload_backpressure"] = slow_sent <= 3 * slow_recv and slow_growth_mb < 50

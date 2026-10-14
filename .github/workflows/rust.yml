@@ -58,4 +58,4 @@ jobs:
       - run: sudo apt-get update -q && sudo apt-get install -y -q iperf3 iproute2
       - run: cargo build --release --locked -p sentinel-vpn --features ipstack --example linux_lab
       - name: Run lab (smoltcp, the default stack)
-        run: sudo SKIP_BUILD=1 STACK=smoltcp crates/sentinel-vpn/lab/run-lab.sh "$RUNNER_TEMP/lab-smoltcp"
+        run: sudo SKIP_BUILD=1 STACK=smoltcp SENTINEL_REQUIRE_IPV6=1 crates/sentinel-vpn/lab/run-lab.sh "$RUNNER_TEMP/lab-smoltcp"

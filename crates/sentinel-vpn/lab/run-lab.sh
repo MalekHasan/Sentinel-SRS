@@ -10,6 +10,7 @@
 #
 # The socket mark plays the role of VpnService.protect(): marked sockets use routing
 # table 100, which bypasses the tunnel. Needs root, iproute2, iperf3 and python3.
+# IPv6 uses the same layout: servers on fd88::/64, veth fd99::/64, apps on fd11::1.
 #
 # Usage: STACK=smoltcp|ipstack [TCP_BUFFER=bytes] [SKIP_BUILD=1] crates/sentinel-vpn/lab/run-lab.sh [output-dir]
 set -euo pipefail
@@ -39,6 +40,19 @@ cleanup() {
 trap cleanup EXIT
 cleanup
 
+# IPv6 (SRS CM-01). Skipped only on a kernel without IPv6 (some containers boot with
+# ipv6.disable=1). CI sets SENTINEL_REQUIRE_IPV6=1, so the IPv6 checks can never pass
+# there by being skipped.
+if [[ -e /proc/sys/net/ipv6 ]]; then
+  export LAB_IPV6=1
+elif [[ -n "${SENTINEL_REQUIRE_IPV6:-}" ]]; then
+  echo "IPv6 is required here (SENTINEL_REQUIRE_IPV6) but this kernel has none" >&2
+  exit 1
+else
+  export LAB_IPV6=0
+  echo "SKIPPING IPv6: this kernel has none" >&2
+fi
+
 if [[ -z "${SKIP_BUILD:-}" ]]; then
   (cd "$ROOT" && cargo build -q --release -p sentinel-vpn --features ipstack --example linux_lab)
 fi
@@ -66,6 +80,17 @@ $CLI ip rule add fwmark 1 lookup 100 pref 100
 # Phase 1: direct routing.
 $CLI ip route add 10.88.0.0/24 via 10.99.0.1 dev vcli
 
+# The same over IPv6: servers on fd88::1 and fd88::2, apps on fd11::1.
+if [[ $LAB_IPV6 == 1 ]]; then
+  $SRV ip -6 addr add fd99::1/64 dev vsrv nodad
+  for a in fd88::1 fd88::2; do $SRV ip -6 addr add "$a/128" dev lo; done
+  $CLI ip -6 addr add fd99::2/64 dev vcli nodad
+  $CLI ip -6 addr add fd11::1/64 dev sntun0 nodad
+  $CLI ip -6 route add fd88::/64 via fd99::1 dev vcli table 100
+  $CLI ip -6 rule add fwmark 1 lookup 100 pref 100
+  $CLI ip -6 route add fd88::/64 via fd99::1 dev vcli
+fi
+
 $SRV python3 "$LAB/servers.py" >"$OUT/servers.log" 2>&1 &
 SERVERS_PID=$!
 $SRV iperf3 -s -B 10.88.0.1 -D -I "$OUT/iperf3.pid"
@@ -87,6 +112,7 @@ iperf direct-down -R
 
 echo "== through engine ($STACK) =="
 $CLI ip route replace 10.88.0.0/24 dev sntun0
+if [[ $LAB_IPV6 == 1 ]]; then $CLI ip -6 route replace fd88::/64 dev sntun0; fi
 $CLI "$BIN" --tun sntun0 --mark 1 --threads 2 --stack "$STACK" ${TCP_BUFFER:+--tcp-buffer "$TCP_BUFFER"} \
   --block-host blocked.lab.test >"$OUT/flows.jsonl" 2>"$OUT/engine.log" &
 ENGINE_PID=$!

@@ -6,13 +6,16 @@ Prints one JSON object. The same script runs once with direct routing and once t
 the engine, so the difference is the engine's cost.
 """
 import json
+import os
 import socket
 import struct
 import sys
 import time
 
 TARGET = "10.88.0.1"
+TARGET6 = "fd88::1"
 RESOLVER = "10.88.0.53"
+IPV6 = os.environ.get("LAB_IPV6") == "1"
 
 
 def pct(samples, p):
@@ -81,17 +84,23 @@ def udp_round_trips(n=3000, size=64):
     return r
 
 
-def dns_query(name, qid=1):
+def dns_query(name, qid=1, qtype=1):
     q = struct.pack("!HHHHHH", qid, 0x0100, 1, 0, 0, 0)
     for label in name.split("."):
         q += bytes([len(label)]) + label.encode()
-    return q + b"\x00" + struct.pack("!HH", 1, 1)
+    return q + b"\x00" + struct.pack("!HH", qtype, 1)
 
 
 def resolve(name, sock):
     sock.send(dns_query(name))
     reply = sock.recv(512)
     return socket.inet_ntoa(reply[-4:])
+
+
+def resolve6(name, sock):
+    sock.send(dns_query(name, qtype=28))
+    reply = sock.recv(512)
+    return socket.inet_ntop(socket.AF_INET6, reply[-16:])
 
 
 def dns_lookups(n=300):
@@ -172,6 +181,52 @@ def checks():
     return results
 
 
+def passes(check):
+    """Run one check; a network error counts as a failure, not a crash."""
+    try:
+        return bool(check())
+    except OSError:
+        return False
+
+
+def checks6():
+    """The same paths over IPv6 (SRS CM-01). The lab script reads the flow log."""
+
+    def tcp_echo():
+        with socket.create_connection((TARGET6, 7007), timeout=5) as s:
+            s.sendall(b"six")
+            return recv_exact(s, 3) == b"six"
+
+    def udp_echo():
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as s:
+            s.settimeout(2)
+            s.connect((TARGET6, 7007))
+            s.send(b"six")
+            return s.recv(64) == b"six"
+
+    def sni():
+        hello = client_hello("sni6-check.lab.test")
+        with socket.create_connection((TARGET6, 7007), timeout=5) as s:
+            s.sendall(hello)
+            return recv_exact(s, len(hello)) == hello
+
+    def dns_then_connect():
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as r:
+            r.settimeout(2)
+            r.connect((RESOLVER, 53))
+            ip = resolve6("web6.lab.test", r)
+        with socket.create_connection((ip, 7007), timeout=5) as s:
+            s.sendall(b"hello6")
+            return recv_exact(s, 6) == b"hello6"
+
+    return {
+        "tcp6_echo_ok": passes(tcp_echo),
+        "udp6_echo_ok": passes(udp_echo),
+        "sni6_echo_ok": passes(sni),
+        "dns6_flow_ok": passes(dns_then_connect),
+    }
+
+
 if __name__ == "__main__":
     label = sys.argv[1] if len(sys.argv) > 1 else "run"
     report = {
@@ -182,5 +237,8 @@ if __name__ == "__main__":
         "dns_lookup": dns_lookups(),
         "server_first_banner": server_first(),
         "checks": checks(),
+        "ipv6": IPV6,
     }
+    if IPV6:
+        report["checks"].update(checks6())
     print(json.dumps(report))
