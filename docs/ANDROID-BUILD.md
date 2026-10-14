@@ -21,8 +21,16 @@ Set `ANDROID_NDK_HOME` to the NDK folder, for example `~/Android/Sdk/ndk/28.2.13
 cd apps/android
 ./gradlew assembleDebug           # APK in app/build/outputs/apk/debug/
 ./gradlew lintDebug
-./gradlew connectedDebugAndroidTest   # needs a device or emulator
+./gradlew connectedDebugAndroidTest   # needs a device or emulator, see below
 ```
+
+`MonitoringTest` starts the VPN and sends a request through the engine to an HTTP server on the test machine, which the emulator reaches as `10.0.2.2`. Start one first:
+
+```sh
+python3 -m http.server 8765 --bind 127.0.0.1
+```
+
+On a real phone, run the server on a computer the phone can reach and pass its address with `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=192.168.1.10:8765`. The test grants itself the VPN consent through `appops` and needs no tapping.
 
 Two Gradle tasks run before the Android build. Both are skipped when nothing under `crates/` or `third_party/` changed.
 
@@ -36,4 +44,7 @@ Two Gradle tasks run before the Android build. Both are skipped when nothing und
 `.github/workflows/android.yml` runs on every push:
 
 - **build, lint:** builds the debug APK and runs lint; the APK is uploaded as an artifact.
-- **instrumented tests:** starts an x86_64 emulator (API 34) and runs `CoreBindingTest`, which loads the Rust library and calls it through UniFFI.
+- **instrumented tests:** starts an x86_64 emulator (API 34) and runs the device tests, then lists each test case and its result:
+  - `CoreBindingTest` loads the Rust library and calls it through UniFFI;
+  - `MonitoringTest` runs the VPN end to end (see above; CI starts the HTTP server);
+  - `GapLogTest` checks the monitoring-gap file.

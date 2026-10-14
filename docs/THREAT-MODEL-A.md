@@ -80,17 +80,17 @@ Status: **Done** = implemented and tested in A0; **Sprint N** = planned; **Accep
 
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
-| D1 | Engine crash cuts the phone off | Android routes outside the tunnel when the service dies; the gap is recorded and shown (NF-07, SP-03) | Done (fail-open by design); gap recording is Sprint 1 |
+| D1 | Engine crash cuts the phone off | Android routes outside the tunnel when the service dies; the gap is recorded and shown (NF-07, SP-03), including a process that was killed or crashed (ADR-0008) | Done |
 | D2 | An app opens thousands of flows, or uploads faster than the upstream, to exhaust memory | Bounded DNS cache; idle timeouts; fixed 32 KiB TCP buffers with real flow control (smoltcp), checked by the lab's backpressure test; bounded UDP queues | Partly done; a cap on concurrent flows is Sprint 9 |
 | D3 | Malformed packets crash the parsers | Bounds-checked SNI parser, tested with truncated, corrupted and random input; DNS parsing through `simple-dns`; fuzzing | Done (unit tests); fuzzing is Sprint 10 |
-| D4 | Another VPN app takes the tunnel (always-on VPN) | Detected as a monitoring gap and shown to the user | Sprint 1 |
+| D4 | Another VPN app takes the tunnel (always-on VPN) | `onRevoke` records a monitoring gap, shown on the main screen | Done; an alert is Sprint 5 |
 | D5 | Battery drain makes users uninstall | Idle wake-ups measured in CI (ADR-0006) | Done (host); phone is Sprint 1 |
 
 ### Elevation of privilege
 
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
-| E1 | Another app binds to our VpnService | Service protected by `BIND_VPN_SERVICE`; only the main activity is exported | Sprint 1 |
+| E1 | Another app binds to, starts or stops our VpnService | Service not exported and protected by `BIND_VPN_SERVICE`; only the main activity is exported | Done |
 | E2 | A malicious feed entry triggers an automatic action | Feed carries data only; automatic actions are off by default (SRS §9) | Done (design) |
 | E3 | Memory-safety bugs in native code | Rust everywhere; `unsafe` denied workspace-wide except reviewed lines with SAFETY comments | Done |
 

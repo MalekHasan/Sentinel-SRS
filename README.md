@@ -2,7 +2,7 @@
 
 See every network connection and sensor access on devices you own, trace where data goes, block suspicious activity, and check phones for known stalkerware and state-grade spyware.
 
-**Status:** Phase A0 (foundations). We start with **Sentinel for Android**, then move to other devices and systems one at a time: the desktop Phone Check, then the home-network gateway, then Windows.
+**Status:** Phase A, Sprint 1: the Android tunnel works end to end (monitoring with a visible notification, monitoring gaps recorded). We start with **Sentinel for Android**, then move to other devices and systems one at a time: the desktop Phone Check, then the home-network gateway, then Windows.
 
 ## Documents
 

@@ -134,10 +134,10 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 
 ### Sprint 1 — Tunnel that works
 
-- [ ] VPN consent flow, foreground service and persistent notification (§15.3: always visible)
-- [ ] Rust engine: TCP and UDP relay over protected sockets, IPv4 and IPv6, DNS forwarding. Done so far: engine start and stop over FFI with tunnel-closure detection, UDP over IPv4 and IPv6 tested without root, smoltcp as the default stack with flow control and no idle polling, ipstack half-close fixed, TCP and UDP over IPv6 in the CI lab. Still to do: the Android `VpnService` that starts the engine
-- [ ] Fail open and record a gap when the engine stops (NF-07, SP-03)
-- [ ] Benchmarks in CI and on one real phone: latency (NF-04) and battery (NF-03), tracked every sprint from now on
+- [x] VPN consent flow, foreground service and persistent notification (§15.3: always visible). Tested end to end on an Android 14 emulator in CI ([ADR-0008](adr/0008-android-tunnel-setup.md))
+- [x] Rust engine: TCP and UDP relay over protected sockets, IPv4 and IPv6, DNS forwarding. smoltcp as the default stack with flow control and no idle polling ([ADR-0006](adr/0006-android-packet-engine.md)); DNS forwarded to the current network's resolvers ([ADR-0008](adr/0008-android-tunnel-setup.md)); IPv4 and IPv6 checked in the CI lab and without root
+- [x] Fail open and record a gap when the engine stops (NF-07, SP-03): engine failure, VPN revoked or taken over, tunnel not opened, process killed or crashed. Tested: the gap file, and that a stop the user asked for is not a gap. Not yet tested on a device: the revoke and process-exit paths (Sprint 9 hardening)
+- [ ] Benchmarks in CI and on one real phone: latency (NF-04) and battery (NF-03), tracked every sprint from now on. The host lab runs in CI; the phone part needs a real phone (ADR-0006, "Still open")
 
 ### Sprint 2 — Flows and storage
 
