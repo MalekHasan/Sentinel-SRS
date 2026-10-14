@@ -1,15 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::io;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
-
-use ipstack::{IpStack, IpStackConfig, IpStackStream, TcpConfig};
-
-use crate::dns::DnsCache;
-use crate::relay::{self, Ctx};
-use crate::{Observer, Protect, TunDevice};
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -24,8 +16,9 @@ pub struct EngineConfig {
     /// How long to wait for the rest of a ClientHello split across TCP segments.
     pub sni_wait: Duration,
     pub dns_cache_capacity: usize,
-    /// Per-connection TCP buffer towards the app, in bytes. `None` keeps the stack's
-    /// default (ipstack: 16 KiB; smoltcp: about 320 KiB, allocated up front).
+    /// Per-connection TCP buffer towards the app, in bytes, each direction. The window
+    /// faces the app over a local tunnel with a tiny round-trip time, so small buffers
+    /// keep throughput while bounding memory (ADR-0006). `None` keeps the stack default.
     pub tcp_buffer: Option<u32>,
 }
 
@@ -38,7 +31,7 @@ impl Default for EngineConfig {
             connect_timeout: Duration::from_secs(10),
             sni_wait: Duration::from_millis(500),
             dns_cache_capacity: 20_000,
-            tcp_buffer: None,
+            tcp_buffer: Some(32 * 1024),
         }
     }
 }
@@ -69,66 +62,5 @@ impl EngineStats {
     /// ICMP and other non-TCP/UDP packets, which this prototype does not forward.
     pub fn unsupported_packets(&self) -> u64 {
         self.unsupported_packets.load(Ordering::Relaxed)
-    }
-}
-
-/// Run the engine until the tunnel closes or the future is dropped.
-///
-/// Returns an error of kind `BrokenPipe` when the tunnel closes or fails (for example
-/// when the user revokes the VPN), so the app can record a monitoring gap (SP-03).
-/// Dropping the future (or aborting its task) stops all flows. If this process dies,
-/// Android tears down the tunnel and traffic flows outside it: the engine fails open
-/// (SRS NF-07), and the app records a monitoring gap.
-pub async fn run(
-    device: TunDevice,
-    protect: Arc<dyn Protect>,
-    observer: Arc<dyn Observer>,
-    config: EngineConfig,
-    stats: Arc<EngineStats>,
-) -> io::Result<()> {
-    let mut stack_config = IpStackConfig::default();
-    stack_config.mtu(config.mtu)?;
-    stack_config.udp_timeout(config.udp_idle_timeout);
-    let mut tcp = TcpConfig::default();
-    tcp.timeout = config.tcp_idle_timeout;
-    if let Some(size) = config.tcp_buffer {
-        tcp.max_unacked_bytes = size;
-        tcp.read_buffer_size = size as usize;
-    }
-    stack_config.with_tcp_config(tcp);
-    let closed = device.closed();
-    let mut stack = IpStack::new(stack_config, device);
-
-    let ctx = Arc::new(Ctx {
-        protect,
-        observer,
-        dns: DnsCache::new(config.dns_cache_capacity),
-        config,
-        stats,
-        next_id: AtomicU64::new(1),
-    });
-
-    let accept_loop = async {
-        loop {
-            match stack.accept().await.map_err(io::Error::from)? {
-                IpStackStream::Tcp(stream) => {
-                    let (src, dst) = (stream.local_addr(), stream.peer_addr());
-                    tokio::spawn(relay::tcp(Arc::clone(&ctx), stream, src, dst));
-                }
-                IpStackStream::Udp(stream) => {
-                    let (src, dst) = (stream.local_addr(), stream.peer_addr());
-                    tokio::spawn(relay::udp(Arc::clone(&ctx), stream, src, dst));
-                }
-                IpStackStream::UnknownTransport(_) | IpStackStream::UnknownNetwork(_) => {
-                    ctx.stats
-                        .unsupported_packets
-                        .fetch_add(1, Ordering::Relaxed);
-                }
-            }
-        }
-    };
-    tokio::select! {
-        result = accept_loop => result,
-        reason = closed.wait() => Err(io::Error::new(io::ErrorKind::BrokenPipe, reason)),
     }
 }

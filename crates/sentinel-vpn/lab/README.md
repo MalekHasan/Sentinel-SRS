@@ -13,11 +13,12 @@ The socket mark stands in for `VpnService.protect()`: a policy-routing rule send
 ## Run
 
 ```sh
-sudo STACK=ipstack crates/sentinel-vpn/lab/run-lab.sh /tmp/lab-out
-sudo STACK=smoltcp TCP_BUFFER=65536 crates/sentinel-vpn/lab/run-lab.sh /tmp/lab-out-2
+sudo crates/sentinel-vpn/lab/run-lab.sh /tmp/lab-out                      # default: smoltcp, 32 KiB buffers
+sudo TCP_BUFFER=16384 crates/sentinel-vpn/lab/run-lab.sh /tmp/lab-out-2   # another buffer size
+sudo STACK=ipstack crates/sentinel-vpn/lab/run-lab.sh /tmp/lab-out-3      # comparison stack
 ```
 
-Needs root, `iproute2`, `iperf3` and `python3`. Set `SKIP_BUILD=1` if `linux_lab` is already built (CI builds it first, without root).
+Needs root, `iproute2` (with `tc`), `iperf3` and `python3`. Set `SKIP_BUILD=1` if `linux_lab` is already built (CI builds it first, without root, with `--features ipstack` so both stacks are available).
 
 ## What it measures
 
@@ -26,10 +27,11 @@ Needs root, `iproute2`, `iperf3` and `python3`. Set `SKIP_BUILD=1` if `linux_lab
 | Latency: new connections, round trips, DNS, server-first protocols | `bench.py` |
 | Throughput and engine CPU, upload and download | `iperf3` |
 | Idle cost: wake-ups and CPU over 10 s without traffic | `run-lab.sh` |
-| Memory with 500 open connections (SRS CM-03) | `hold.py` |
+| Memory with 500 open connections (SRS CM-03), and engine memory after each phase | `hold.py`, `run-lab.sh` |
+| Backpressure: a 6 s upload while `tc` limits the upstream to 20 Mbit/s | `run-lab.sh` |
 | Correctness: SNI and DNS hostnames, blocking by name, flows that end, half-close | `bench.py`, `report.py` |
 
-`report.py` prints Markdown tables and exits non-zero if a correctness check fails.
+`report.py` prints Markdown tables and exits non-zero if a correctness check fails. The backpressure check fails if the app could send more than 3 times what the server received, or if the engine grew by 50 MB or more during the slow upload: a stack without flow control buffers the difference in memory.
 
 ## Files
 

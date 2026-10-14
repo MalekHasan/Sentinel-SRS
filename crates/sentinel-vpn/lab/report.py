@@ -47,6 +47,12 @@ if phases:
 print("Engine memory:", " ".join(open(os.path.join(out, "engine-memory.txt")).read().split()))
 print("UDP lost (direct / engine):", direct["udp_round_trip_64B"]["lost"], "/", engine["udp_round_trip_64B"]["lost"])
 
+slow = load("iperf-engine-slow-up.json")["end"]
+slow_sent = slow["sum_sent"]["bits_per_second"] / 1e6
+slow_recv = slow["sum_received"]["bits_per_second"] / 1e6
+slow_growth_mb = (cpu["slow_upload_rss_kb_max"] - cpu["slow_upload_rss_kb_before"]) / 1024
+print(f"Slow upstream (20 Mbit/s) upload: app sent at {slow_sent:.1f} Mbit/s, server got {slow_recv:.1f} Mbit/s, engine memory grew {slow_growth_mb:.1f} MB")
+
 flows = [json.loads(l) for l in open(os.path.join(out, "flows.jsonl")) if l.strip()]
 checks = dict(engine["checks"])
 checks["flows_logged"] = len(flows)
@@ -54,6 +60,9 @@ checks["sni_attributed"] = any(f.get("host") == "sni-check.lab.test" and f.get("
 checks["sni_blocked"] = any(f.get("host") == "blocked.lab.test" and f.get("verdict") == "block" for f in flows)
 checks["dns_attributed"] = any(f.get("host") == "web.lab.test" and f.get("host_src") == "dns" for f in flows)
 checks["dns_answers_seen"] = sum(1 for f in flows if f.get("event") == "dns")
+# Backpressure: the app must be slowed to roughly the real link speed, and the engine
+# must not buffer the difference in memory.
+checks["slow_upload_backpressure"] = slow_sent <= 3 * slow_recv and slow_growth_mb < 50
 print()
 print("Checks:", json.dumps(checks))
 ok = all(v for k, v in checks.items() if isinstance(v, bool))

@@ -56,6 +56,6 @@ jobs:
         run: rustup toolchain install || rustup show
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update -q && sudo apt-get install -y -q iperf3 iproute2
-      - run: cargo build --release --locked -p sentinel-vpn --features smoltcp --example linux_lab
-      - name: Run lab (ipstack)
-        run: sudo SKIP_BUILD=1 STACK=ipstack crates/sentinel-vpn/lab/run-lab.sh "$RUNNER_TEMP/lab-ipstack"
+      - run: cargo build --release --locked -p sentinel-vpn --features ipstack --example linux_lab
+      - name: Run lab (smoltcp, the default stack)
+        run: sudo SKIP_BUILD=1 STACK=smoltcp crates/sentinel-vpn/lab/run-lab.sh "$RUNNER_TEMP/lab-smoltcp"

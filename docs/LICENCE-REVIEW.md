@@ -35,8 +35,9 @@ Checked automatically by `cargo deny` in CI (`deny.toml` allows only GPL-compati
 
 | Component | Licence | Notes |
 | --- | --- | --- |
-| ipstack 1.0.1 (vendored in `third_party/ipstack`) | Apache-2.0 | Modified (see `PATCHES.md`); keep the LICENSE file and state the changes, as Apache-2.0 §4 requires |
-| smoltcp, netstack-smoltcp (optional feature) | 0BSD; MIT or Apache-2.0 | Not shipped by default |
+| netstack-smoltcp 0.2.4 (vendored in `third_party/netstack-smoltcp`) | MIT or Apache-2.0 | Modified (see `PATCHES.md`); keep both licence files and state the changes |
+| smoltcp | 0BSD | |
+| ipstack 1.0.1 (vendored in `third_party/ipstack`, optional feature) | Apache-2.0 | Modified (see `PATCHES.md`); not shipped in the app |
 | simple-dns | MIT | |
 | UniFFI | MPL-2.0 | Compatible with GPLv3 |
 | ed25519-dalek, sha2, serde, tokio, rustix, socket2 | BSD-3, MIT, Apache-2.0 | |

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Alternative engine on smoltcp (through `netstack-smoltcp`), for the Spike 1
-//! comparison. Same relays and observer as the ipstack engine; only the stack differs.
+//! The engine on smoltcp (through a patched `netstack-smoltcp`): the default stack
+//! (ADR-0006). smoltcp has real TCP flow control, so an app is slowed to the speed of
+//! the network instead of the engine buffering its data.
 
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -14,6 +15,7 @@ use futures::{SinkExt, StreamExt};
 use netstack_smoltcp::StackBuilder;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
 use crate::dns::DnsCache;
 use crate::relay::{self, Ctx};
@@ -25,8 +27,14 @@ type Sessions = Arc<Mutex<HashMap<FlowKey, (u64, mpsc::Sender<Vec<u8>>)>>>;
 /// Datagrams queued per UDP flow before new ones are dropped (UDP may lose packets).
 const UDP_QUEUE: usize = 256;
 
-/// Run the engine on smoltcp until the tunnel closes. See [`crate::run`].
-pub async fn run_smoltcp(
+/// Run the engine until the tunnel closes or the future is dropped.
+///
+/// Returns an error of kind `BrokenPipe` when the tunnel closes or fails (for example
+/// when the user revokes the VPN), so the app can record a monitoring gap (SP-03).
+/// Dropping the future (or aborting its task) stops all flows. If this process dies,
+/// Android tears down the tunnel and traffic flows outside it: the engine fails open
+/// (SRS NF-07), and the app records a monitoring gap.
+pub async fn run(
     device: TunDevice,
     protect: Arc<dyn Protect>,
     observer: Arc<dyn Observer>,
@@ -47,7 +55,17 @@ pub async fn run_smoltcp(
     let runner = runner.ok_or_else(|| missing("the TCP runner"))?;
     let udp = udp.ok_or_else(|| missing("the UDP socket"))?;
     let mut tcp = tcp.ok_or_else(|| missing("the TCP listener"))?;
-    tokio::spawn(runner);
+
+    // Every task the engine starts belongs to a `JoinSet` owned by this future, so
+    // dropping the future aborts them all and releases the tunnel. Each long-lived task
+    // returns its name; if one ends, the engine is broken and `run` returns.
+    let mut tasks = JoinSet::new();
+    tasks.spawn(async move {
+        if let Err(e) = runner.await {
+            log::warn!("netstack-smoltcp runner failed: {e}");
+        }
+        "TCP runner"
+    });
 
     let mtu = usize::from(config.mtu);
     let ctx = Arc::new(Ctx {
@@ -59,44 +77,50 @@ pub async fn run_smoltcp(
         next_id: AtomicU64::new(1),
     });
 
-    // Packets between the tunnel and the stack.
+    // Packets between the tunnel and the stack. A failed tunnel read or write marks
+    // the device closed, which `closed` below reports.
     let closed = device.closed();
     let (mut dev_rx, mut dev_tx) = tokio::io::split(device);
     let (mut stack_tx, mut stack_rx) = stack.split();
-    let inbound = tokio::spawn(async move {
+    tasks.spawn(async move {
         let mut buf = vec![0u8; mtu + 64];
-        loop {
-            let n = dev_rx.read(&mut buf).await?;
-            if n == 0 {
-                return Ok::<(), io::Error>(());
-            }
-            stack_tx.send(buf[..n].to_vec()).await?;
-        }
+        while let Ok(n) = dev_rx.read(&mut buf).await
+            && n > 0
+            && stack_tx.send(buf[..n].to_vec()).await.is_ok()
+        {}
+        "tunnel reader"
     });
-    tokio::spawn(async move {
-        while let Some(Ok(packet)) = stack_rx.next().await {
-            if dev_tx.write(&packet).await.is_err() {
-                break;
-            }
-        }
+    tasks.spawn(async move {
+        while let Some(Ok(packet)) = stack_rx.next().await
+            && dev_tx.write(&packet).await.is_ok()
+        {}
+        "tunnel writer"
     });
 
     // UDP: one shared socket from the stack; we keep our own flow table.
     let (mut udp_rx, mut udp_tx) = udp.split();
     let (to_app_tx, mut to_app_rx) = mpsc::channel::<(Vec<u8>, SocketAddr, SocketAddr)>(1024);
-    tokio::spawn(async move {
-        while let Some(msg) = to_app_rx.recv().await {
-            if udp_tx.send(msg).await.is_err() {
-                break;
-            }
-        }
+    tasks.spawn(async move {
+        while let Some(msg) = to_app_rx.recv().await
+            && udp_tx.send(msg).await.is_ok()
+        {}
+        "UDP writer"
     });
-    let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
-    let next_session = Arc::new(AtomicU64::new(1));
     {
         let ctx = Arc::clone(&ctx);
-        tokio::spawn(async move {
-            while let Some((data, app, remote)) = udp_rx.next().await {
+        tasks.spawn(async move {
+            let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+            let mut next_session = 1u64;
+            // Owned by this task, so aborting it aborts the UDP flows too.
+            let mut flows = JoinSet::new();
+            loop {
+                let (data, app, remote) = tokio::select! {
+                    datagram = udp_rx.next() => match datagram {
+                        Some(datagram) => datagram,
+                        None => break,
+                    },
+                    Some(_) = flows.join_next(), if !flows.is_empty() => continue,
+                };
                 let key = (app, remote);
                 let existing = sessions
                     .lock()
@@ -109,7 +133,8 @@ pub async fn run_smoltcp(
                 }
                 let (tx, rx) = mpsc::channel(UDP_QUEUE);
                 let _ = tx.try_send(data);
-                let id = next_session.fetch_add(1, Ordering::Relaxed);
+                let id = next_session;
+                next_session += 1;
                 if let Ok(mut map) = sessions.lock() {
                     map.insert(key, (id, tx));
                 }
@@ -121,20 +146,34 @@ pub async fn run_smoltcp(
                     sessions: Arc::clone(&sessions),
                     id,
                 };
-                tokio::spawn(relay::udp(Arc::clone(&ctx), flow, app, remote));
+                flows.spawn(relay::udp(Arc::clone(&ctx), flow, app, remote));
             }
+            "UDP dispatcher"
         });
     }
 
-    let accept_loop = async {
-        while let Some((stream, app, remote)) = tcp.next().await {
-            tokio::spawn(relay::tcp(Arc::clone(&ctx), stream, app, remote));
+    let mut relays = JoinSet::new();
+    let closed = closed.wait();
+    tokio::pin!(closed);
+    loop {
+        tokio::select! {
+            // Report a closed tunnel in preference to the tasks that ended because of it.
+            biased;
+            reason = &mut closed => {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, reason));
+            }
+            Some(ended) = tasks.join_next() => {
+                let name = ended.unwrap_or("engine");
+                return Err(io::Error::other(format!("the engine's {name} task stopped")));
+            }
+            accepted = tcp.next() => match accepted {
+                Some((stream, app, remote)) => {
+                    relays.spawn(relay::tcp(Arc::clone(&ctx), stream, app, remote));
+                }
+                None => return Err(io::Error::other("the TCP listener closed")),
+            },
+            Some(_) = relays.join_next(), if !relays.is_empty() => {}
         }
-        inbound.await.map_err(io::Error::other)?
-    };
-    tokio::select! {
-        result = accept_loop => result,
-        reason = closed.wait() => Err(io::Error::new(io::ErrorKind::BrokenPipe, reason)),
     }
 }
 

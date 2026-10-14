@@ -5,7 +5,7 @@
 //! Normally started by `crates/sentinel-vpn/lab/run-lab.sh`, inside a network namespace:
 //!
 //! ```sh
-//! linux_lab --tun sntun0 --mark 1 [--threads 2] [--stack ipstack|smoltcp] [--block-host blocked.lab.test]
+//! linux_lab --tun sntun0 --mark 1 [--threads 2] [--stack smoltcp|ipstack] [--block-host blocked.lab.test]
 //! ```
 //!
 //! Prints one JSON line per finished flow and per DNS answer on stdout, and engine
@@ -50,7 +50,7 @@ mod lab {
             mark: 1,
             threads: 2,
             block_hosts: HashSet::new(),
-            stack: "ipstack".into(),
+            stack: "smoltcp".into(),
             tcp_buffer: None,
         };
         let mut it = std::env::args().skip(1);
@@ -197,19 +197,19 @@ mod lab {
                 std::process::id()
             );
             let protect = Arc::new(SoMark(args.mark));
-            let config = EngineConfig {
-                tcp_buffer: args.tcp_buffer,
-                ..EngineConfig::default()
-            };
+            let mut config = EngineConfig::default();
+            if args.tcp_buffer.is_some() {
+                config.tcp_buffer = args.tcp_buffer;
+            }
             match args.stack.as_str() {
-                "ipstack" => run(device, protect, observer, config, stats).await,
-                #[cfg(feature = "smoltcp")]
-                "smoltcp" => {
-                    sentinel_vpn::run_smoltcp(device, protect, observer, config, stats).await
+                "smoltcp" => run(device, protect, observer, config, stats).await,
+                #[cfg(feature = "ipstack")]
+                "ipstack" => {
+                    sentinel_vpn::run_ipstack(device, protect, observer, config, stats).await
                 }
                 other => Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("unknown --stack {other} (smoltcp needs --features smoltcp)"),
+                    format!("unknown --stack {other} (ipstack needs --features ipstack)"),
                 )),
             }
         })

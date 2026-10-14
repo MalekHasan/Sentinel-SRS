@@ -120,7 +120,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 - [ ] Owner decisions D1–D8 from [PLAN.md §8](PLAN.md#8-decisions-needed-from-the-project-owners). D2 (GPL) and D4 (name kept for now) are decided; D1, D3, D5–D8 are open
 - [x] Licence review, desk part: [LICENCE-REVIEW.md](LICENCE-REVIEW.md)
 - [ ] Licence review, confirmations L1–L3 with the data maintainers (before Sprints 4 and 7)
-- [x] **Spike 1: packet engine (host part).** Rust engine built on `ipstack` and `smoltcp`, measured in a Linux lab that CI runs on every push. Decision: Rust engine on a patched `ipstack` ([ADR-0006](adr/0006-android-packet-engine.md)).
+- [x] **Spike 1: packet engine (host part).** Rust engine built on `ipstack` and `smoltcp`, measured in a Linux lab that CI runs on every push. Decision in A0: Rust engine on a patched `ipstack`; revised in Sprint 1 to smoltcp, because ipstack has no flow control ([ADR-0006](adr/0006-android-packet-engine.md)).
 - [ ] **Spike 1: packet engine (phone part).** Measure latency, battery, throughput and memory on a real phone once Spike 2 can start the tunnel (ADR-0006, "Still open").
 - [x] **Spike 2: build pipeline.** UniFFI bindings and `cargo-ndk` builds for arm64-v8a, armeabi-v7a and x86_64 inside Gradle (AGP 9.4, built-in Kotlin, Compose). CI builds the APK, runs lint, and runs `CoreBindingTest` on an Android 14 emulator, which loads the Rust library and calls it ([ANDROID-BUILD.md](ANDROID-BUILD.md))
 - [ ] F-Droid: confirm F-Droid's build server can build the app from source (Rust toolchain, cargo-ndk, Gradle wrapper)
@@ -135,7 +135,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 ### Sprint 1 — Tunnel that works
 
 - [ ] VPN consent flow, foreground service and persistent notification (§15.3: always visible)
-- [ ] Rust engine: TCP and UDP relay over protected sockets, IPv4 and IPv6, DNS forwarding
+- [ ] Rust engine: TCP and UDP relay over protected sockets, IPv4 and IPv6, DNS forwarding. Done so far: engine start and stop over FFI with tunnel-closure detection, UDP over IPv4 and IPv6 tested without root, smoltcp as the default stack with flow control and no idle polling, ipstack half-close fixed. Still to do: IPv6 in the lab
 - [ ] Fail open and record a gap when the engine stops (NF-07, SP-03)
 - [ ] Benchmarks in CI and on one real phone: latency (NF-04) and battery (NF-03), tracked every sprint from now on
 
@@ -191,6 +191,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 ### Sprint 9 — Hardening and "should" items
 
 - [ ] Performance and battery tuning to meet NF-03 and NF-04 on the reference phones
+- [ ] Cap on concurrent flows per app and in total (THREAT-MODEL-A D2)
 - [ ] Per-brand battery-optimisation guidance; heartbeat and gap display (SP-03)
 - [ ] Should items, in order: DL-04, DL-05, JSON/CSV export, DL-02, DL-06
 

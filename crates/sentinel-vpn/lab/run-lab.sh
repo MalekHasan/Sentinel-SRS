@@ -11,14 +11,14 @@
 # The socket mark plays the role of VpnService.protect(): marked sockets use routing
 # table 100, which bypasses the tunnel. Needs root, iproute2, iperf3 and python3.
 #
-# Usage: STACK=ipstack|smoltcp [TCP_BUFFER=bytes] [SKIP_BUILD=1] crates/sentinel-vpn/lab/run-lab.sh [output-dir]
+# Usage: STACK=smoltcp|ipstack [TCP_BUFFER=bytes] [SKIP_BUILD=1] crates/sentinel-vpn/lab/run-lab.sh [output-dir]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 LAB="$ROOT/crates/sentinel-vpn/lab"
 OUT="${1:-$(mktemp -d)}"
 BIN="$ROOT/target/release/examples/linux_lab"
-STACK="${STACK:-ipstack}"
+STACK="${STACK:-smoltcp}"
 TCP_BUFFER="${TCP_BUFFER:-}"
 CLI="ip netns exec snscli"
 SRV="ip netns exec snsrv"
@@ -40,7 +40,7 @@ trap cleanup EXIT
 cleanup
 
 if [[ -z "${SKIP_BUILD:-}" ]]; then
-  (cd "$ROOT" && cargo build -q --release -p sentinel-vpn --features smoltcp --example linux_lab)
+  (cd "$ROOT" && cargo build -q --release -p sentinel-vpn --features ipstack --example linux_lab)
 fi
 
 ip netns add snsrv
@@ -114,12 +114,25 @@ HOLD_PID=$!
 sleep 4
 r1=$(rss_kb "$ENGINE_PID")
 wait "$HOLD_PID"
+# Slow upstream (SRS NF-03, D2 in the threat model): an app uploads through the engine
+# while the real network carries only 20 Mbit/s, as on mobile data. The engine must
+# slow the app down instead of buffering the upload in memory.
+$CLI tc qdisc add dev vcli root tbf rate 20mbit burst 32kbit latency 50ms
+s0=$(rss_kb "$ENGINE_PID"); s_max=$s0
+$CLI iperf3 -c 10.88.0.1 -t 6 -J >"$OUT/iperf-engine-slow-up.json" &
+SLOW_PID=$!
+while kill -0 "$SLOW_PID" 2>/dev/null; do
+  r=$(rss_kb "$ENGINE_PID"); (( r > s_max )) && s_max=$r
+  sleep 0.5
+done
+$CLI tc qdisc del dev vcli root
 grep -E "VmHWM|VmRSS" "/proc/$ENGINE_PID/status" >"$OUT/engine-memory.txt"
 cat >"$OUT/engine-cpu.json" <<JSON
 {"up_cpu_ticks": $((t1 - t0)), "down_cpu_ticks": $((t2 - t1)), "clk_tck": $(getconf CLK_TCK),
  "idle_wakeups_10s": $((w1 - w0)), "idle_cpu_ticks_10s": $((c1 - c0)),
  "rss_kb_before_500": $r0, "rss_kb_with_500": $r1,
- "rss_kb_phases": {"start": $m_start, "after_bench": $m_bench, "after_upload": $m_up, "after_download": $m_down}}
+ "rss_kb_phases": {"start": $m_start, "after_bench": $m_bench, "after_upload": $m_up, "after_download": $m_down},
+ "slow_upload_rss_kb_before": $s0, "slow_upload_rss_kb_max": $s_max}
 JSON
 sleep 1
 

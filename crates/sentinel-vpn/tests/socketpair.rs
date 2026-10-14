@@ -219,3 +219,19 @@ async fn engine_ends_when_the_tunnel_closes() {
     let err = result.expect_err("a closed tunnel must end the engine with an error");
     assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
 }
+
+/// Dropping the engine (here: aborting its task) must stop every task it started and
+/// release the tunnel, not leave flows running in the background.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn aborting_the_engine_releases_the_tunnel() {
+    let h = start(Recorder::default());
+    assert_udp_round_trip(&h, APP_V4.into(), udp_echo(Ipv4Addr::LOCALHOST.into())).await;
+    h.engine.abort();
+    // Once nothing holds the tunnel end, the peer reads end-of-file (0 bytes).
+    for _ in 0..10 {
+        if h.recv().await.is_some_and(|packet| packet.is_empty()) {
+            return;
+        }
+    }
+    panic!("the tunnel is still open after the engine was dropped");
+}

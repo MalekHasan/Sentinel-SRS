@@ -81,7 +81,7 @@ Status: **Done** = implemented and tested in A0; **Sprint N** = planned; **Accep
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
 | D1 | Engine crash cuts the phone off | Android routes outside the tunnel when the service dies; the gap is recorded and shown (NF-07, SP-03) | Done (fail-open by design); gap recording is Sprint 1 |
-| D2 | An app opens thousands of flows to exhaust memory | Bounded DNS cache; idle timeouts; bound ipstack's channels | Partly done; channels are Sprint 9 |
+| D2 | An app opens thousands of flows, or uploads faster than the upstream, to exhaust memory | Bounded DNS cache; idle timeouts; fixed 32 KiB TCP buffers with real flow control (smoltcp), checked by the lab's backpressure test; bounded UDP queues | Partly done; a cap on concurrent flows is Sprint 9 |
 | D3 | Malformed packets crash the parsers | Bounds-checked SNI parser, tested with truncated, corrupted and random input; DNS parsing through `simple-dns`; fuzzing | Done (unit tests); fuzzing is Sprint 10 |
 | D4 | Another VPN app takes the tunnel (always-on VPN) | Detected as a monitoring gap and shown to the user | Sprint 1 |
 | D5 | Battery drain makes users uninstall | Idle wake-ups measured in CI (ADR-0006) | Done (host); phone is Sprint 1 |

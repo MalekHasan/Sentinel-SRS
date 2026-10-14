@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Userspace packet engine for the Android `VpnService` tunnel.
 //!
-//! Status: **A0 Spike 1 prototype.** It answers one question: can a Rust userspace
-//! TCP/IP stack relay a phone's traffic fast and reliably enough (SRS NF-04, NF-03),
-//! while giving us the metadata Phase A needs (CM-01, CM-02)? Results are in
-//! `docs/adr/0006-android-packet-engine.md`.
+//! Built on smoltcp (through a patched `netstack-smoltcp`); the stack choice and its
+//! measurements are in `docs/adr/0006-android-packet-engine.md`.
 //!
 //! How it works:
 //!
 //! 1. Android hands us the tunnel as a file descriptor ([`TunDevice`]).
-//! 2. [`ipstack`] terminates every TCP and UDP flow from the apps inside this process.
+//! 2. A userspace TCP/IP stack (smoltcp) terminates every TCP and UDP flow from the
+//!    apps inside this process.
 //! 3. For each flow we open a real socket to the original destination. That socket is
 //!    *protected* ([`Protect`]) so its traffic leaves through the normal network instead
 //!    of looping back into the tunnel.
@@ -26,16 +25,18 @@ mod flow;
 mod protect;
 mod relay;
 mod sni;
-#[cfg(feature = "smoltcp")]
+#[cfg(feature = "ipstack")]
+mod stack_ipstack;
 mod stack_smoltcp;
 
 pub use device::{TunClosed, TunDevice};
 pub use dns::{DnsAnswer, DnsCache, parse_dns_response};
-pub use engine::{EngineConfig, EngineStats, run};
+pub use engine::{EngineConfig, EngineStats};
 pub use flow::{FlowCounters, FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub use protect::SoMark;
 pub use protect::{NoProtect, Protect};
 pub use sni::{ClientHelloScan, scan_client_hello};
-#[cfg(feature = "smoltcp")]
-pub use stack_smoltcp::run_smoltcp;
+#[cfg(feature = "ipstack")]
+pub use stack_ipstack::run_ipstack;
+pub use stack_smoltcp::run;
