@@ -315,8 +315,12 @@ mod tests {
     }
 
     fn udp_packet(dst: [u8; 4], dst_port: u16) -> Vec<u8> {
+        udp_packet_from(40_000, dst, dst_port)
+    }
+
+    fn udp_packet_from(src_port: u16, dst: [u8; 4], dst_port: u16) -> Vec<u8> {
         let builder =
-            etherparse::PacketBuilder::ipv4([10, 111, 0, 1], dst, 64).udp(40_000, dst_port);
+            etherparse::PacketBuilder::ipv4([10, 111, 0, 1], dst, 64).udp(src_port, dst_port);
         let mut packet = Vec::new();
         builder.write(&mut packet, b"hi").unwrap();
         packet
@@ -636,6 +640,113 @@ mod tests {
         );
         assert!(flow.ended_ms.is_some());
         assert_eq!((flow.bytes_up, flow.bytes_down), (2, 2));
+        assert_eq!(engine.snapshot().history_failures, 0);
+    }
+
+    /// Notes when each flow is first reported, by the app's source port.
+    #[derive(Default)]
+    struct TimedFlows {
+        first_seen: Mutex<std::collections::HashMap<u16, std::time::Instant>>,
+        records: Mutex<Vec<FlowRecord>>,
+    }
+    impl FlowObserver for TimedFlows {
+        fn owner(&self, _: FlowProto, _: String, _: u16, _: String, _: u16) -> FlowOwner {
+            FlowOwner {
+                uid: OWNER,
+                app: Some(OWNER_APP.to_owned()),
+            }
+        }
+        fn flows(&self, records: Vec<FlowRecord>) {
+            let now = std::time::Instant::now();
+            let mut seen = self.first_seen.lock().unwrap();
+            for record in &records {
+                seen.entry(record.local_port).or_insert(now);
+            }
+            self.records.lock().unwrap().extend(records);
+        }
+    }
+
+    /// CM-01 acceptance: every flow in the run reaches the app with its owner within
+    /// 1 s of its first packet, and every flow ends up in the history.
+    #[test]
+    fn every_flow_is_reported_within_a_second() {
+        const FLOWS: u16 = 200;
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let echo_port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![4; 32]).unwrap();
+
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        // Read the echoes, so the tunnel never backs up.
+        let reader = peer.try_clone().unwrap();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 2048];
+            while (&reader).read(&mut buf).is_ok_and(|n| n > 0) {}
+        });
+        let (tx, _stopped) = mpsc::channel();
+        let timed = Arc::new(TimedFlows::default());
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            Arc::clone(&timed) as Arc<dyn FlowObserver>,
+            Some(Arc::clone(&history)),
+        )
+        .unwrap();
+
+        let mut sent = std::collections::HashMap::new();
+        for i in 0..FLOWS {
+            let port = 41_000 + i;
+            sent.insert(port, std::time::Instant::now());
+            peer.send(&udp_packet_from(port, [127, 0, 0, 1], echo_port))
+                .unwrap();
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while timed.first_seen.lock().unwrap().len() < usize::from(FLOWS)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let seen = timed.first_seen.lock().unwrap().clone();
+        let mut late: Vec<_> = sent
+            .iter()
+            .filter(|(port, at)| {
+                seen.get(port)
+                    .is_none_or(|first| first.duration_since(**at) >= Duration::from_secs(1))
+            })
+            .map(|(port, _)| *port)
+            .collect();
+        late.sort_unstable();
+        assert!(
+            late.is_empty(),
+            "{} of {FLOWS} flows missing or reported after 1 s: {late:?}",
+            late.len()
+        );
+        assert!(
+            timed
+                .records
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|r| r.uid == OWNER && r.app.as_deref() == Some(OWNER_APP)),
+            "every record carries its owner"
+        );
+
+        engine.stop();
+        let stored = history.recent_flows(u32::from(FLOWS) * 2).unwrap();
+        assert_eq!(stored.len(), usize::from(FLOWS), "one history row per flow");
+        assert!(
+            stored.iter().all(|f| f.ended_ms.is_some()),
+            "every flow ended"
+        );
         assert_eq!(engine.snapshot().history_failures, 0);
     }
 }

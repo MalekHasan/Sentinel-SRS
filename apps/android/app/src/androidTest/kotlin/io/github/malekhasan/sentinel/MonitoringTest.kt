@@ -39,6 +39,9 @@ import org.junit.runner.RunWith
  * `python3 -m http.server 8765 --bind 127.0.0.1` first, or pass another address with
  * `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=host:port`.
  */
+/** Connections in the CM-01 acceptance run. */
+private const val CONNECTIONS = 20
+
 @RunWith(AndroidJUnit4::class)
 class MonitoringTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -66,21 +69,13 @@ class MonitoringTest {
     @Test
     fun relaysTrafficAndDnsThenStopsCleanly() {
         val gapsBefore = GapLog.recent(context, 1_000).size
-        context.startForegroundService(serviceIntent(SentinelVpnService.ACTION_START))
-        waitFor("monitoring to start") { Monitor.status.value == Monitor.Status.ON }
+        startMonitoring()
 
         // §15.3: monitoring is never hidden.
         assertTrue(
             "the monitoring notification must be showing",
             notifications.activeNotifications.any { it.id == SentinelVpnService.NOTIFICATION_ID },
         )
-
-        // Sentinel's own app is inside the tunnel too, so this test's sockets use it.
-        val connectivity = context.getSystemService(ConnectivityManager::class.java)
-        waitFor("the tunnel to become this app's network") {
-            connectivity.getNetworkCapabilities(connectivity.activeNetwork)
-                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-        }
 
         // TCP through the engine and its protected upstream socket.
         val (host, port) = testServer()
@@ -132,6 +127,54 @@ class MonitoringTest {
             Monitor.recentFlows().all { it.endedMs != null },
         )
         assertTrue("the stored flow is not closed", stored().all { it.endedMs != null })
+    }
+
+    /**
+     * CM-01 acceptance on a device: every connection in a run is recorded with its app
+     * within 1 s of being opened, and every one is in the encrypted history.
+     */
+    @Test
+    fun everyConnectionIsRecordedWithinASecond() {
+        History.wipe(context)
+        startMonitoring()
+        val (host, port) = testServer()
+        repeat(CONNECTIONS) { n ->
+            Socket().use { socket ->
+                val openedAt = System.currentTimeMillis()
+                socket.connect(InetSocketAddress(host, port), 10_000)
+                socket.soTimeout = 10_000
+                socket.getOutputStream().write("GET / HTTP/1.0\r\n\r\n".toByteArray())
+                socket.getInputStream().bufferedReader().readLine()
+                // The engine sees the app's own address and port inside the tunnel.
+                val localPort = socket.localPort
+                waitFor(
+                    "connection ${n + 1} of $CONNECTIONS to be recorded",
+                    timeoutMillis = maxOf(0L, openedAt + 1_000 - System.currentTimeMillis()),
+                ) {
+                    Monitor.recentFlows().any {
+                        it.proto == FlowProto.TCP && it.localPort.toInt() == localPort &&
+                            it.uid == Process.myUid()
+                    }
+                }
+            }
+        }
+        val stored = History.get(context).recentFlows(1_000u).count {
+            it.proto == FlowProto.TCP && it.remoteIp == host && it.remotePort.toInt() == port &&
+                it.app == context.packageName
+        }
+        assertEquals("connections in the history", CONNECTIONS, stored)
+    }
+
+    /** Start the VPN and wait until this app's own traffic goes through it. */
+    private fun startMonitoring() {
+        context.startForegroundService(serviceIntent(SentinelVpnService.ACTION_START))
+        waitFor("monitoring to start") { Monitor.status.value == Monitor.Status.ON }
+        // Sentinel's own app is inside the tunnel too, so this test's sockets use it.
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        waitFor("the tunnel to become this app's network") {
+            connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        }
     }
 
     private fun serviceIntent(action: String) =
