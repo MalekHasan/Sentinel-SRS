@@ -4,6 +4,7 @@ package io.github.malekhasan.sentinel
 import android.icu.text.ListFormatter
 import android.os.SystemClock
 import android.text.format.Formatter
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -47,7 +48,7 @@ fun liveRowKey(app: LiveApp): String = "${app.uid}:${app.app}"
 
 /** Open connections grouped by app, busiest first (SRS CM-03). */
 @Composable
-fun LiveConnectionsScreen(visible: Boolean, onBack: () -> Unit) {
+fun LiveConnectionsScreen(visible: Boolean, onBack: () -> Unit, onOpenApp: (String) -> Unit) {
     val context = LocalContext.current
     val names = remember(context) { AppNames(context) }
     val status by Monitor.status.collectAsState()
@@ -64,11 +65,16 @@ fun LiveConnectionsScreen(visible: Boolean, onBack: () -> Unit) {
             delay(REFRESH_MILLIS - (SystemClock.uptimeMillis() - started))
         }
     }
-    LiveConnections(status, rows, onBack)
+    LiveConnections(status, rows, onBack, onOpenApp)
 }
 
 @Composable
-fun LiveConnections(status: Monitor.Status, rows: List<LiveRow>, onBack: () -> Unit) {
+fun LiveConnections(
+    status: Monitor.Status,
+    rows: List<LiveRow>,
+    onBack: () -> Unit,
+    onOpenApp: (String) -> Unit,
+) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -91,16 +97,22 @@ fun LiveConnections(status: Monitor.Status, rows: List<LiveRow>, onBack: () -> U
             }
             Text(stringResource(explanation), style = MaterialTheme.typography.bodyMedium)
         }
-        items(rows, key = { liveRowKey(it.app) }) { row -> LiveAppRow(row) }
+        items(rows, key = { liveRowKey(it.app) }) { row -> LiveAppRow(row, onOpenApp) }
     }
 }
 
 @Composable
-private fun LiveAppRow(row: LiveRow) {
+private fun LiveAppRow(row: LiveRow, onOpenApp: (String) -> Unit) {
     val context = LocalContext.current
     val app = row.app
     val packageName = app.app
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // Connections whose owner is unknown have no app to open.
+            .clickable(enabled = packageName != null) { packageName?.let(onOpenApp) },
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
         Text(
             row.label ?: stringResource(R.string.unknown_app),
             style = MaterialTheme.typography.titleSmall,

@@ -104,7 +104,7 @@ class LiveViewTest {
             )
         }
         compose.setContent {
-            SentinelTheme { LiveConnections(Monitor.Status.ON, rows, onBack = {}) }
+            SentinelTheme { LiveConnections(Monitor.Status.ON, rows, onBack = {}, onOpenApp = {}) }
         }
         compose.onNodeWithText("App 0").assertIsDisplayed()
         compose.onNodeWithTag(LIVE_LIST_TAG).performScrollToKey(liveRowKey(rows.last().app))

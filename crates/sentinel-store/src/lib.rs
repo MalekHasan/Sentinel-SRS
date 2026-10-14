@@ -87,6 +87,36 @@ pub struct DailyTotal {
     pub bytes_down: i64,
 }
 
+/// What the history holds about one app: the app detail screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSummary {
+    pub app: String,
+    /// When the app was first seen using the network, Unix milliseconds. A wipe resets
+    /// it.
+    pub first_seen: i64,
+    pub flows: i64,
+    pub bytes_up: i64,
+    pub bytes_down: i64,
+    /// Destinations in the whole history, including those beyond the limit asked for.
+    pub destination_count: u32,
+    /// Most data sent first.
+    pub destinations: Vec<DestinationTotal>,
+}
+
+/// One app's traffic to one destination, over the whole history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DestinationTotal {
+    /// Hostname if known, otherwise the remote address.
+    pub destination: String,
+    pub flows: i64,
+    pub bytes_up: i64,
+    pub bytes_down: i64,
+    /// Unix milliseconds. Flows already rolled up into daily totals keep only their
+    /// day, so they count from the start of that day (UTC).
+    pub first_seen: i64,
+    pub last_seen: i64,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     /// The key does not open this database, or the file is not a Sentinel database.
@@ -276,6 +306,58 @@ impl Store {
         let removed = tx.execute("DELETE FROM flow WHERE started < ?1", [cutoff])?;
         tx.commit()?;
         Ok(removed)
+    }
+
+    /// Everything the history holds about `app`, with at most `limit` destinations,
+    /// most data sent first. Rolled-up days count too. `None` if the app was never
+    /// seen. Open flows count with the bytes stored when they started.
+    pub fn app_summary(&self, app: &str, limit: u32) -> Result<Option<AppSummary>> {
+        let conn = lock(&self.conn);
+        let Some((id, first_seen)) = conn
+            .query_row(
+                "SELECT id, first_seen FROM app WHERE platform = ?1 AND identifier = ?2",
+                params![PLATFORM, app],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let mut stmt = conn.prepare(
+            "SELECT destination, sum(flows), sum(up), sum(down), min(first), max(last)
+             FROM (
+                 SELECT coalesce(hostname, remote_ip) AS destination, 1 AS flows,
+                        bytes_up AS up, bytes_down AS down, started AS first,
+                        coalesce(ended, started) AS last
+                 FROM flow WHERE app_id = ?1
+                 UNION ALL
+                 SELECT destination, flows, bytes_up, bytes_down, day * ?2, day * ?2
+                 FROM flow_daily WHERE app_id = ?1
+             )
+             GROUP BY destination
+             ORDER BY sum(up) DESC, sum(up) + sum(down) DESC, destination",
+        )?;
+        let all = stmt
+            .query_map(params![id, DAY_MS], |r| {
+                Ok(DestinationTotal {
+                    destination: r.get(0)?,
+                    flows: r.get(1)?,
+                    bytes_up: r.get(2)?,
+                    bytes_down: r.get(3)?,
+                    first_seen: r.get(4)?,
+                    last_seen: r.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(Some(AppSummary {
+            app: app.to_owned(),
+            first_seen,
+            flows: all.iter().map(|d| d.flows).sum(),
+            bytes_up: all.iter().map(|d| d.bytes_up).sum(),
+            bytes_down: all.iter().map(|d| d.bytes_down).sum(),
+            destination_count: u32::try_from(all.len()).unwrap_or(u32::MAX),
+            destinations: all.into_iter().take(limit as usize).collect(),
+        }))
     }
 
     /// Daily totals, newest day first.

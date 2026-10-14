@@ -647,6 +647,13 @@ mod tests {
         assert!(flow.ended_ms.is_some());
         assert_eq!((flow.bytes_up, flow.bytes_down), (2, 2));
         assert_eq!(engine.snapshot().history_failures, 0);
+
+        // The app detail view reads the same flow back per destination.
+        let app = history.app_summary(OWNER_APP.into(), 10).unwrap().unwrap();
+        assert_eq!((app.flows, app.bytes_up, app.bytes_down), (1, 2, 2));
+        assert_eq!(app.destinations.len(), 1);
+        assert_eq!(app.destinations[0].destination, "127.0.0.1");
+        assert_eq!(app.first_seen_ms, flow.started_ms);
     }
 
     /// The live view (CM-03) shows open flows by app with their bytes so far, and

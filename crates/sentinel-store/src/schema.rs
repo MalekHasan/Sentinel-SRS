@@ -60,7 +60,10 @@ CREATE TABLE monitoring_gap (
 );
 ";
 
-const STEPS: &[&str] = &[V1];
+/// The app detail screen reads one app's daily totals.
+const V2: &str = "CREATE INDEX flow_daily_by_app ON flow_daily (app_id, day);";
+
+const STEPS: &[&str] = &[V1, V2];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -75,4 +78,39 @@ pub(crate) fn migrate(conn: &Connection) -> Result<()> {
         tx.commit()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upgrades_a_version_1_database_and_keeps_its_data() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V1).unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+        conn.execute(
+            "INSERT INTO monitoring_gap (started, reason) VALUES (1, 'kept')",
+            [],
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, STEPS.len() as i64);
+        let index: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'flow_daily_by_app'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index, 1);
+        let reason: String = conn
+            .query_row("SELECT reason FROM monitoring_gap", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(reason, "kept");
+    }
 }

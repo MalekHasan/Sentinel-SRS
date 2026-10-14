@@ -13,6 +13,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -73,18 +74,31 @@ class MainActivity : ComponentActivity() {
         val version = coreVersion()
         setContent {
             var showLive by rememberSaveable { mutableStateOf(false) }
+            // The app whose detail is open, over whichever screen opened it.
+            var openApp by rememberSaveable { mutableStateOf<String?>(null) }
             SentinelTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    if (showLive) {
-                        BackHandler { showLive = false }
-                        LiveConnectionsScreen(visible = visible.value, onBack = { showLive = false })
-                    } else {
-                        MonitorScreen(
+                    val detail = openApp
+                    when {
+                        detail != null -> {
+                            BackHandler { openApp = null }
+                            AppDetailScreen(app = detail, visible = visible.value, onBack = { openApp = null })
+                        }
+                        showLive -> {
+                            BackHandler { showLive = false }
+                            LiveConnectionsScreen(
+                                visible = visible.value,
+                                onBack = { showLive = false },
+                                onOpenApp = { openApp = it },
+                            )
+                        }
+                        else -> MonitorScreen(
                             coreVersion = version,
                             visible = visible.value,
                             onStart = ::requestStart,
                             onStop = ::stopMonitoring,
                             onShowLive = { showLive = true },
+                            onOpenApp = { openApp = it },
                         )
                     }
                 }
@@ -145,6 +159,7 @@ fun MonitorScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onShowLive: () -> Unit,
+    onOpenApp: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
@@ -230,7 +245,12 @@ fun MonitorScreen(
         if (flows.isNotEmpty()) {
             Text(stringResource(R.string.recent_title), style = MaterialTheme.typography.titleSmall)
             flows.forEach { flow ->
-                Text(describeFlow(flow), style = MaterialTheme.typography.bodySmall)
+                val app = flow.app
+                Text(
+                    describeFlow(flow),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.clickable(enabled = app != null) { app?.let(onOpenApp) },
+                )
             }
         }
 

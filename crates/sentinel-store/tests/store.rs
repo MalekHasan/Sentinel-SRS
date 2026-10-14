@@ -6,7 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use sentinel_store::{
-    DailyTotal, FlowEvent, FlowRow, Gap, HostnameSource, Proto, Store, StoreError, wipe,
+    AppSummary, DailyTotal, DestinationTotal, FlowEvent, FlowRow, Gap, HostnameSource, Proto,
+    Store, StoreError, wipe,
 };
 
 const KEY: [u8; 32] = [7; 32];
@@ -205,6 +206,86 @@ fn old_flows_are_rolled_up_into_daily_totals() {
         .find(|t| t.destination == "x.example")
         .unwrap();
     assert_eq!((x.flows, x.bytes_up), (3, 115));
+}
+
+#[test]
+fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let app = "org.example.a";
+    let old_day = NOW - 40 * DAY;
+    let mut events = Vec::new();
+    for (i, (owner, host, at, up, down)) in [
+        (app, "x.example", old_day, 10, 100), // rolled up below
+        (app, "x.example", NOW - DAY, 5, 50), // same destination, still detailed
+        (app, "y.example", NOW - 2 * DAY, 1_000, 1),
+        ("org.example.b", "y.example", NOW, 9, 9), // another app
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut row = flow(owner, host, at);
+        row.ended = Some(at + 1_000);
+        row.bytes_up = up;
+        row.bytes_down = down;
+        events.push(event(i as u64, row));
+    }
+    // Still open, with no name: listed by address, with what was stored at its start.
+    let mut open = flow(app, "z.example", NOW);
+    open.hostname = None;
+    open.hostname_src = None;
+    events.push(event(9, open));
+    store.record_flows(1, &events).unwrap();
+    store.apply_retention(NOW, 30).unwrap();
+
+    let summary = store.app_summary(app, 10).unwrap().unwrap();
+    assert_eq!(
+        summary,
+        AppSummary {
+            app: app.to_owned(),
+            first_seen: old_day,
+            flows: 4,
+            bytes_up: 1_015,
+            bytes_down: 151,
+            destination_count: 3,
+            destinations: vec![
+                DestinationTotal {
+                    destination: "y.example".to_owned(),
+                    flows: 1,
+                    bytes_up: 1_000,
+                    bytes_down: 1,
+                    first_seen: NOW - 2 * DAY,
+                    last_seen: NOW - 2 * DAY + 1_000,
+                },
+                DestinationTotal {
+                    destination: "x.example".to_owned(),
+                    flows: 2,
+                    bytes_up: 15,
+                    bytes_down: 150,
+                    // The rolled-up flow keeps only its day.
+                    first_seen: old_day / DAY * DAY,
+                    last_seen: NOW - DAY + 1_000,
+                },
+                DestinationTotal {
+                    destination: "93.184.215.14".to_owned(),
+                    flows: 1,
+                    bytes_up: 0,
+                    bytes_down: 0,
+                    first_seen: NOW,
+                    last_seen: NOW,
+                },
+            ],
+        }
+    );
+
+    let top = store.app_summary(app, 1).unwrap().unwrap();
+    assert_eq!(
+        top.destination_count, 3,
+        "the count covers every destination"
+    );
+    assert_eq!(top.destinations.len(), 1);
+    assert_eq!(top.bytes_up, 1_015, "the totals too");
+    assert_eq!(store.app_summary("org.example.never", 10).unwrap(), None);
 }
 
 #[test]

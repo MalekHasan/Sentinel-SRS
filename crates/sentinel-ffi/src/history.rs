@@ -56,6 +56,35 @@ pub struct HistoryGap {
     pub reason: String,
 }
 
+/// What the history holds about one app (the app detail screen).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HistoryApp {
+    pub app: String,
+    /// When the app was first seen using the network. A wipe resets it.
+    pub first_seen_ms: i64,
+    pub flows: i64,
+    pub bytes_up: i64,
+    pub bytes_down: i64,
+    /// Destinations in the whole history, including those not listed.
+    pub destination_count: u32,
+    /// Most data sent first.
+    pub destinations: Vec<HistoryDestination>,
+}
+
+/// One app's traffic to one destination, over the whole history.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HistoryDestination {
+    /// Hostname if known, otherwise the remote address.
+    pub destination: String,
+    pub flows: i64,
+    pub bytes_up: i64,
+    pub bytes_down: i64,
+    /// Flows older than the retention period keep only their day: they count from the
+    /// start of that day (UTC).
+    pub first_seen_ms: i64,
+    pub last_seen_ms: i64,
+}
+
 #[derive(uniffi::Object)]
 pub struct HistoryStore {
     pub(crate) store: Store,
@@ -104,6 +133,35 @@ impl HistoryStore {
                 }
             })
             .collect())
+    }
+
+    /// Everything the history holds about `app` (a package name), with at most `limit`
+    /// destinations, most data sent first. `None` if the app was never seen. Flows
+    /// still open count with the bytes they had when they started.
+    pub fn app_summary(&self, app: String, limit: u32) -> Result<Option<HistoryApp>, HistoryError> {
+        Ok(self
+            .store
+            .app_summary(&app, limit)?
+            .map(|summary| HistoryApp {
+                app: summary.app,
+                first_seen_ms: summary.first_seen,
+                flows: summary.flows,
+                bytes_up: summary.bytes_up,
+                bytes_down: summary.bytes_down,
+                destination_count: summary.destination_count,
+                destinations: summary
+                    .destinations
+                    .into_iter()
+                    .map(|d| HistoryDestination {
+                        destination: d.destination,
+                        flows: d.flows,
+                        bytes_up: d.bytes_up,
+                        bytes_down: d.bytes_down,
+                        first_seen_ms: d.first_seen,
+                        last_seen_ms: d.last_seen,
+                    })
+                    .collect(),
+            }))
     }
 
     /// Start a monitoring gap, unless one is already open. `started_ms` is `None` when

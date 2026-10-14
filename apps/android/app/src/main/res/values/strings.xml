@@ -31,6 +31,22 @@
     <string name="live_traffic">Sent %1$s, received %2$s so far</string>
     <string name="live_destinations">Busiest destinations: %1$s</string>
 
+    <string name="traffic">Sent %1$s, received %2$s</string>
+    <plurals name="connections">
+        <item quantity="one">%d connection</item>
+        <item quantity="other">%d connections</item>
+    </plurals>
+    <plurals name="history_connections">
+        <item quantity="one">%d connection in the history</item>
+        <item quantity="other">%d connections in the history</item>
+    </plurals>
+    <string name="app_detail_first_seen">First seen by Sentinel: %1$s</string>
+    <string name="app_detail_open_note">Connections still open add their data when they end.</string>
+    <string name="app_detail_nothing">Nothing about this app is in the history yet.</string>
+    <string name="app_detail_destinations_title">Destinations, most data sent first</string>
+    <string name="app_detail_destinations_shown">Destinations shown: %1$d of %2$d.</string>
+    <string name="app_detail_last_seen">Last seen %1$s</string>
+
     <string name="wipe_action">Delete history</string>
     <string name="wipe_title">Delete the whole history?</string>
     <string name="wipe_text">This deletes every connection and gap recorded on this phone, and the key that protects them. It cannot be undone.</string>

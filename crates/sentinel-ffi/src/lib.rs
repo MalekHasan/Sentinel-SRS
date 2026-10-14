@@ -10,7 +10,10 @@ mod history;
 
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
 pub use flows::{FlowObserver, FlowOwner, FlowProto, FlowRecord, LiveApp, NameSource};
-pub use history::{HistoryError, HistoryFlow, HistoryGap, HistoryStore, wipe_history};
+pub use history::{
+    HistoryApp, HistoryDestination, HistoryError, HistoryFlow, HistoryGap, HistoryStore,
+    wipe_history,
+};
 
 uniffi::setup_scaffolding!();
 
