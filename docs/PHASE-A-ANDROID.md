@@ -149,7 +149,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 ### Sprint 3 — Live view
 
 - [x] Connections screen grouped by app, refreshed every second, smooth at 500 concurrent flows (CM-03). The engine groups its open flows by app with live byte counts and the five busiest destinations; the screen refreshes every second, only while it is on screen. On the Android 14 emulator in CI: 500 connections held open at once all show under their app within 1 s, a refresh at that load stays under 50 ms (90th percentile of 50 refreshes), and the list renders 500 app rows and scrolls to the last. Frame timing on a real phone belongs with the phone benchmarks
-- [ ] App detail: destinations, data sent, first seen
+- [x] App detail: destinations, data sent, first seen. Opens from the live view or a recent connection; reads the encrypted history, daily roll-ups included, with each destination's connections, bytes sent and received, and last seen, most data sent first. Data of a connection still open is added when it ends, and the screen says so. On the Android 14 emulator in CI: three requests through the tunnel are totalled to the byte under this app, and tapping a live row opens its app
 - [ ] "While screen off" counters (CM-06)
 - [ ] Arabic and English strings, RTL check on every screen
 
