@@ -39,6 +39,9 @@ Checked automatically by `cargo deny` in CI (`deny.toml` allows only GPL-compati
 | smoltcp | 0BSD | |
 | ipstack 1.0.1 (vendored in `third_party/ipstack`, optional feature) | Apache-2.0 | Modified (see `PATCHES.md`); not shipped in the app |
 | simple-dns | MIT | |
+| SQLCipher 4 community edition (bundled through `libsqlite3-sys`) | BSD-3-Clause | Binary releases must reproduce the copyright notice and disclaimer, for example on the app's licences screen |
+| OpenSSL 3 (vendored through `openssl-src`, used by SQLCipher) | Apache-2.0 | Compatible with GPLv3; ship its licence and notice |
+| rusqlite, libsqlite3-sys, zeroize | MIT; MIT or Apache-2.0 | |
 | UniFFI | MPL-2.0 | Compatible with GPLv3 |
 | ed25519-dalek, sha2, serde, tokio, rustix, socket2 | BSD-3, MIT, Apache-2.0 | |
 | JNA (Android) | Apache-2.0 or LGPL-2.1+, at our choice | Use under Apache-2.0 |

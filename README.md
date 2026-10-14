@@ -26,6 +26,7 @@ See every network connection and sensor access on devices you own, trace where d
 | `apps/android` | Android app (Kotlin, Jetpack Compose) |
 | `crates/sentinel-vpn` | Packet engine for the Android tunnel, with its test lab |
 | `crates/sentinel-feed`, `tools/feed-tool` | Signed indicator feed and its signing tool |
+| `crates/sentinel-store` | Encrypted local history (SQLCipher) |
 | `crates/sentinel-ffi` | Kotlin bindings to the Rust core (UniFFI) |
 | `third_party/netstack-smoltcp`, `third_party/ipstack` | Vendored userspace TCP/IP stacks with our fixes (smoltcp is the default) |
 
