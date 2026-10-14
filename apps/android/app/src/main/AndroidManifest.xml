@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- The engine opens the real (protected) connections for every app. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -29,12 +30,20 @@
         </activity>
 
         <!-- Not exported: only Android itself (which holds BIND_VPN_SERVICE) can bind
-             it, and only this app can start or stop it (THREAT-MODEL-A E1). -->
+             it, and only this app can start or stop it (THREAT-MODEL-A E1).
+
+             ForegroundServicePermission is suppressed because lint knows only half of
+             the rule: Android accepts systemExempted with FOREGROUND_SERVICE_SYSTEM_EXEMPTED
+             plus either an exact-alarm permission or the ACTIVATE_VPN app op, which the
+             user grants in the VPN consent dialog. Lint cannot see app ops. Exact-alarm
+             permissions are for alarm apps and must not be requested here.
+             MonitoringTest starts this service on Android 14 to prove the type works. -->
         <service
             android:name=".SentinelVpnService"
             android:exported="false"
             android:foregroundServiceType="systemExempted"
-            android:permission="android.permission.BIND_VPN_SERVICE">
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            tools:ignore="ForegroundServicePermission">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
