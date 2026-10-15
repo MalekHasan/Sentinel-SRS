@@ -133,7 +133,8 @@ class FirewallModeTest {
 
     /**
      * Starts the probe, which opens one connection to [host]:[port] and logs what it got,
-     * and returns that line once the history has recorded the connection.
+     * and returns that line once the history has recorded the connection as ended. A
+     * rule changed while it is still open would decide it again (ADR-0015).
      */
     private fun runProbe(host: String, port: Int): String {
         val before = probeFlows(host, port).size
@@ -144,7 +145,9 @@ class FirewallModeTest {
             said = shell("logcat -d -s SentinelProbe:I").lines().lastOrNull { "$host:$port " in it }
             said != null
         }
-        waitFor("the probe's connection to be recorded") { probeFlows(host, port).size > before }
+        waitFor("the probe's connection to be recorded as ended") {
+            probeFlows(host, port).let { flows -> flows.size > before && flows.all { it.endedMs != null } }
+        }
         return checkNotNull(said)
     }
 

@@ -7,12 +7,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.FlowProto
 import io.github.malekhasan.sentinel.core.FlowRecord
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.SocketTimeoutException
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -136,30 +132,5 @@ class MonitoringTest {
                 it.app == context.packageName
         }
         assertEquals("connections in the history", CONNECTIONS, stored)
-    }
-
-    /** Sends an A query to the tunnel's resolver, retrying while the network is found. */
-    private fun dnsAnswered(name: String): Boolean {
-        val resolver = InetAddress.getByName(SentinelVpnService.TUNNEL_DNS)
-        repeat(5) { attempt ->
-            val id = 0x5e00 + attempt
-            val query = dnsQuery(id, name)
-            // A new socket per try: a new source port, like a real resolver.
-            DatagramSocket().use { socket ->
-                socket.soTimeout = 2_000
-                socket.send(DatagramPacket(query, query.size, resolver, 53))
-                val buffer = ByteArray(512)
-                val reply = DatagramPacket(buffer, buffer.size)
-                try {
-                    socket.receive(reply)
-                } catch (timeout: SocketTimeoutException) {
-                    return@use
-                }
-                val replyId = (buffer[0].toInt() and 0xFF shl 8) or (buffer[1].toInt() and 0xFF)
-                val isResponse = buffer[2].toInt() and 0x80 != 0
-                if (reply.length >= 12 && replyId == id && isResponse) return true
-            }
-        }
-        return false
     }
 }

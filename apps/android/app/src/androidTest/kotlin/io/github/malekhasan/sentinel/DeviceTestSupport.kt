@@ -11,9 +11,12 @@ import android.os.ParcelFileDescriptor
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 
@@ -40,6 +43,38 @@ internal fun startMonitoring() {
     waitFor("monitoring to start") { Monitor.status.value == Monitor.Status.ON }
     // Sentinel's own app is inside the tunnel too, so the tests' sockets use it.
     waitFor("the tunnel to become this app's network") { onTunnel() }
+    // Android lists the tunnel as this app's network a moment before it routes the app's
+    // traffic into it. Its resolver's address exists only inside the tunnel, so an answer
+    // from it proves the traffic goes through.
+    waitFor("the tunnel to carry this app's traffic") { dnsAnswered("localhost", tries = 1, timeoutMillis = 500) }
+}
+
+/**
+ * Whether the tunnel's resolver answers a lookup of [name], in up to [tries] queries.
+ * Any answer with the query's id proves the path; the name's existence does not matter.
+ */
+internal fun dnsAnswered(name: String, tries: Int = 5, timeoutMillis: Int = 2_000): Boolean {
+    val resolver = InetAddress.getByName(SentinelVpnService.TUNNEL_DNS)
+    repeat(tries) { attempt ->
+        val id = 0x5e00 + attempt
+        val query = dnsQuery(id, name)
+        // A new socket per try: a new source port, like a real resolver.
+        DatagramSocket().use { socket ->
+            socket.soTimeout = timeoutMillis
+            socket.send(DatagramPacket(query, query.size, resolver, 53))
+            val buffer = ByteArray(512)
+            val reply = DatagramPacket(buffer, buffer.size)
+            try {
+                socket.receive(reply)
+            } catch (timeout: SocketTimeoutException) {
+                return@use
+            }
+            val replyId = (buffer[0].toInt() and 0xFF shl 8) or (buffer[1].toInt() and 0xFF)
+            val isResponse = buffer[2].toInt() and 0x80 != 0
+            if (reply.length >= 12 && replyId == id && isResponse) return true
+        }
+    }
+    return false
 }
 
 /**
