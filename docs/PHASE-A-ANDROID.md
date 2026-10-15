@@ -169,7 +169,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 
 ### Sprint 6 — Blocking
 
-- [ ] Rules by app, domain and IP (CM-10 subset); rule-engine unit tests for each field
+- [x] Rules by app, domain and IP (CM-10 subset); rule-engine unit tests for each field. A rule names an app, a destination (a domain and the names below it, or an address range), or both, and allows or blocks; the most specific rule decides and blocking wins a tie ([ADR-0015](adr/0015-firewall-rules.md)). The core decides and the engine asks at three moments, each with only what it knows for sure: a new connection (app and address), its TLS server name, and a DNS lookup through the tunnel, which a blocked name answers with "no such name". A name learned only from an earlier DNS answer is never matched, because many sites share addresses. Rules are kept in the encrypted history (schema 11), and blocked connections are stored as blocked. Rule-engine tests cover each field and each rule of decision. On the Android 14 emulator in CI: an address rule stops this app's request five times over, with monitoring restarted in between, and lets it through once removed; a domain rule stops a TLS connection by its server name; a domain rule makes the tunnel's resolver answer "no such name" (50 device tests, none failed). Company, country, port and direction rules come later
 - [ ] Monitor and Block-unknown modes, switching within 1 s (CM-08)
 - [ ] Block from an alert or the app detail screen (RA-01); one-tap isolation (RA-03)
 - [ ] Every action journalled with undo (SRS §9 rules)
