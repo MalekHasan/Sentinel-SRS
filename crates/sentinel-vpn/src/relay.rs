@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpSocket, TcpStream, UdpSocket};
 use tokio::time::{Instant, timeout_at};
 
-use crate::dns::{DnsCache, parse_dns_response};
+use crate::dns::{DnsCache, name_error_reply, parse_dns_query, parse_dns_response};
 use crate::engine::{EngineConfig, EngineStats};
 use crate::flow::{FlowCounters, FlowInfo, FlowTotals, HostnameSource, Proto, Verdict, now_ms};
 use crate::sni::{ClientHelloScan, scan_client_hello};
@@ -278,13 +278,21 @@ where
         }
     };
     let (mut client_rx, mut client_tx) = tokio::io::split(client);
-    let idle = if flow.dst.port() == DNS_PORT {
+    let is_dns = flow.dst.port() == DNS_PORT;
+    let idle = if is_dns {
         DNS_IDLE
     } else {
         ctx.config.udp_idle_timeout
     };
-    let to_server = udp_to_server(&mut client_rx, &upstream, &flow.counters, idle);
-    let to_client = udp_to_client(&upstream, &mut client_tx, &ctx, &flow);
+    // Answers the engine writes itself: "no such name" for a blocked lookup.
+    let (replies_tx, replies_rx) = tokio::sync::mpsc::channel(16);
+    let lookups = is_dns.then(|| Lookups {
+        ctx: &ctx,
+        flow: &flow,
+        replies: replies_tx,
+    });
+    let to_server = udp_to_server(&mut client_rx, &upstream, &flow.counters, idle, lookups);
+    let to_client = udp_to_client(&upstream, &mut client_tx, &ctx, &flow, replies_rx);
     // UDP has no half-close: the flow ends when either side stops.
     tokio::select! {
         _ = to_server => {}
@@ -293,11 +301,37 @@ where
     ctx.finish(&flow, Verdict::Allow);
 }
 
+/// The lookups of a DNS flow, each asked about before it is sent.
+struct Lookups<'a> {
+    ctx: &'a Ctx,
+    flow: &'a FlowInfo,
+    replies: tokio::sync::mpsc::Sender<Vec<u8>>,
+}
+
+impl Lookups<'_> {
+    /// True if the query was blocked: it was answered "no such name" and must not be
+    /// sent.
+    fn blocked(&self, query: &[u8]) -> bool {
+        let Some(qname) = parse_dns_query(query) else {
+            return false;
+        };
+        if self.ctx.observer.dns_query(self.flow, &qname) != Verdict::Block {
+            return false;
+        }
+        if let Some(reply) = name_error_reply(query) {
+            // A full queue means the app is not reading: its resolver retries.
+            let _ = self.replies.try_send(reply);
+        }
+        true
+    }
+}
+
 async fn udp_to_server<R: AsyncRead + Unpin>(
     client: &mut R,
     upstream: &UdpSocket,
     counters: &FlowCounters,
     idle: Duration,
+    lookups: Option<Lookups<'_>>,
 ) -> io::Result<()> {
     let mut buf = vec![0u8; usize::from(u16::MAX)];
     loop {
@@ -307,6 +341,9 @@ async fn udp_to_server<R: AsyncRead + Unpin>(
             .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
         if n == 0 {
             return Ok(());
+        }
+        if lookups.as_ref().is_some_and(|l| l.blocked(&buf[..n])) {
+            continue;
         }
         upstream.send(&buf[..n]).await?;
         counters.add_up(n);
@@ -318,18 +355,28 @@ async fn udp_to_client<W: AsyncWrite + Unpin>(
     client: &mut W,
     ctx: &Ctx,
     flow: &FlowInfo,
+    mut replies: tokio::sync::mpsc::Receiver<Vec<u8>>,
 ) -> io::Result<()> {
     let is_dns = flow.dst.port() == DNS_PORT;
     let mut buf = vec![0u8; usize::from(u16::MAX)];
     loop {
-        let n = upstream.recv(&mut buf).await?;
-        if is_dns && let Some(answer) = parse_dns_response(&buf[..n]) {
-            ctx.dns.insert(&answer);
-            let ips: Vec<_> = answer.ips.iter().map(|(ip, _)| *ip).collect();
-            ctx.observer.dns_answer(flow, &answer.qname, &ips);
+        tokio::select! {
+            // Both are cancel-safe: a datagram is either received whole or not at all.
+            received = upstream.recv(&mut buf) => {
+                let n = received?;
+                if is_dns && let Some(answer) = parse_dns_response(&buf[..n]) {
+                    ctx.dns.insert(&answer);
+                    let ips: Vec<_> = answer.ips.iter().map(|(ip, _)| *ip).collect();
+                    ctx.observer.dns_answer(flow, &answer.qname, &ips);
+                }
+                client.write_all(&buf[..n]).await?;
+                flow.counters.add_down(n);
+            }
+            Some(reply) = replies.recv() => {
+                // Written here, not sent upstream: nothing crossed the network.
+                client.write_all(&reply).await?;
+            }
         }
-        client.write_all(&buf[..n]).await?;
-        flow.counters.add_down(n);
     }
 }
 

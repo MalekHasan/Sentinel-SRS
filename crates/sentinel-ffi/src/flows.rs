@@ -338,6 +338,14 @@ impl Observer for FlowEvents {
         self.verdict(app.as_deref(), Some(flow.dst.ip()), Some(hostname))
     }
 
+    fn dns_query(&self, flow: &FlowInfo, qname: &str) -> Verdict {
+        let app = lock(&self.open)
+            .get(&flow.id)
+            .and_then(|(_, owner)| owner.app.clone());
+        // The address is the resolver's, not the destination's: only names count here.
+        self.verdict(app.as_deref(), None, Some(qname))
+    }
+
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
         let owner = lock(&self.open).remove(&flow.id).map_or(
             FlowOwner {
@@ -964,6 +972,29 @@ mod tests {
         // A name from an earlier DNS answer is not matched: it may be another site's.
         let guessed = flow(4, "203.0.113.5:2", Some("ads.example"));
         assert_eq!(events.flow_started(&guessed), Verdict::Allow);
+        // Lookups are decided by the app that sends them and the name, not the
+        // resolver's address.
+        let unowned = at(7, "198.51.100.53:2");
+        assert_eq!(
+            events.dns_query(&unowned, "x.ads.example"),
+            Verdict::Block,
+            "a domain rule for every app, whoever asks"
+        );
+        assert_eq!(
+            events.dns_query(&unowned, "ok.ads.example"),
+            Verdict::Block,
+            "the chat app's exception needs the chat app"
+        );
+        assert_eq!(
+            events.dns_query(&unowned, "chat.example"),
+            Verdict::Allow,
+            "the range rule needs an address, and a lookup has none"
+        );
+        let lookup = at(8, "203.0.113.53:2");
+        events.flow_started(&lookup);
+        assert_eq!(events.dns_query(&lookup, "x.ads.example"), Verdict::Block);
+        assert_eq!(events.dns_query(&lookup, "ok.ads.example"), Verdict::Allow);
+        assert_eq!(events.dns_query(&lookup, "chat.example"), Verdict::Allow);
 
         // Taking a rule back applies to the next connection.
         assert!(history.remove_firewall_rule(maps).unwrap());

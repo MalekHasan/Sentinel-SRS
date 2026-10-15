@@ -49,7 +49,12 @@ Names are the hard part. The engine learns a name for an address from the DNS an
   - a name from an earlier DNS answer is not matched, and taking a rule back applies to the next connection;
   - blocked connections are stored as blocked, and without a history nothing is blocked;
   - through the real packet engine, an app's blocked datagram never reaches the server.
-- The DNS and device tests are added with those parts.
+- `sentinel-vpn`:
+  - a query's name is read, and answers or garbage are not queries;
+  - the "no such name" reply repeats the query's id and question and names no address;
+  - through the engine, a blocked lookup is answered at once and never reaches the resolver, while other lookups are forwarded as before.
+- `sentinel-ffi`: a lookup is decided by the app that sends it and the name looked up, never by the resolver's address. A domain rule for every app blocks it whoever asks, and an app's exception needs that app.
+- The device tests are added with the Android part.
 
 ## Consequences
 

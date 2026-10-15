@@ -129,6 +129,12 @@ pub trait Observer: Send + Sync + 'static {
         Verdict::Allow
     }
 
+    /// A DNS query for `qname` is about to be sent. Returning [`Verdict::Block`] answers
+    /// it at once with "no such name" instead, and nothing is sent.
+    fn dns_query(&self, _flow: &FlowInfo, _qname: &str) -> Verdict {
+        Verdict::Allow
+    }
+
     /// A DNS response passed through the tunnel.
     fn dns_answer(&self, _flow: &FlowInfo, _qname: &str, _ips: &[IpAddr]) {}
 

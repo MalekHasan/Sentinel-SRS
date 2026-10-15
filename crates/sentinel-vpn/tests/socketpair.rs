@@ -28,12 +28,21 @@ const APP_PORT: u16 = 40_000;
 #[derive(Default)]
 struct Recorder {
     block_port: Option<u16>,
+    block_name: Option<&'static str>,
     ended: Mutex<Vec<(FlowInfo, FlowTotals)>>,
 }
 
 impl Observer for Recorder {
     fn flow_started(&self, flow: &FlowInfo) -> Verdict {
         if Some(flow.dst.port()) == self.block_port {
+            Verdict::Block
+        } else {
+            Verdict::Allow
+        }
+    }
+
+    fn dns_query(&self, _flow: &FlowInfo, qname: &str) -> Verdict {
+        if Some(qname) == self.block_name {
             Verdict::Block
         } else {
             Verdict::Allow
@@ -293,5 +302,59 @@ async fn dns_to_the_tunnel_resolver_follows_the_network() {
     ));
     assert!(h.recv().await.is_none(), "port 853 must not be relayed");
     assert_eq!(h.stats.upstream_failures(), 1);
+    h.engine.abort();
+}
+
+fn dns_query(id: u16, name: &str) -> Vec<u8> {
+    let mut packet = simple_dns::Packet::new_query(id);
+    packet.questions.push(simple_dns::Question::new(
+        simple_dns::Name::new_unchecked(name),
+        simple_dns::TYPE::A.into(),
+        simple_dns::CLASS::IN.into(),
+        false,
+    ));
+    packet.build_bytes_vec().unwrap()
+}
+
+/// A lookup the observer blocks is answered "no such name" by the engine at once and
+/// never reaches the resolver; other lookups are forwarded as before (ADR-0015).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_blocked_lookup_is_answered_no_such_name() {
+    let tunnel_dns = SocketAddr::new(Ipv4Addr::new(10, 111, 0, 53).into(), 53);
+    let forward = Arc::new(DnsForward::new(vec![tunnel_dns.ip()]));
+    // The resolver echoes what it gets after "R", so a forwarded query shows.
+    forward.set_upstream(vec![udp_echo_tagged(Ipv4Addr::LOCALHOST.into(), b"R")]);
+    let h = start_with(
+        Recorder {
+            block_name: Some("ads.example"),
+            ..Recorder::default()
+        },
+        EngineConfig {
+            dns_forward: Some(Arc::clone(&forward)),
+            ..EngineConfig::default()
+        },
+    );
+
+    let app = SocketAddr::new(APP_V4.into(), 40_010);
+    h.send(&udp_packet_from(
+        app,
+        tunnel_dns,
+        &dns_query(7, "ads.example"),
+    ));
+    let (src, dst, payload) = parse_udp(&h.recv().await.expect("no answer"));
+    assert_eq!((src, dst), (tunnel_dns, app));
+    let answer = simple_dns::Packet::parse(&payload).expect("a DNS answer, not the echo");
+    assert_eq!(answer.id(), 7);
+    assert_eq!(answer.rcode(), simple_dns::RCODE::NameError);
+    assert!(
+        h.recv().await.is_none(),
+        "nothing came back from the resolver"
+    );
+
+    let other = SocketAddr::new(APP_V4.into(), 40_011);
+    let allowed = dns_query(8, "chat.example");
+    h.send(&udp_packet_from(other, tunnel_dns, &allowed));
+    let (_, _, payload) = parse_udp(&h.recv().await.expect("no answer"));
+    assert_eq!(payload, [b"R".as_slice(), &allowed].concat(), "forwarded");
     h.engine.abort();
 }
