@@ -75,8 +75,8 @@ class NetworkWatch(private val context: Context, private val history: HistorySto
             dnsServers = properties.dnsServers.mapNotNull { it.hostAddress },
             privateDns = properties.privateDnsServerName,
             networkProxy = properties.httpProxy?.let { describe(it) },
-            // A proxy for the whole phone, or else the network's own.
-            proxy = connectivity.getProxyForNetwork(network)?.let { describe(it) },
+            // A proxy for the whole phone, or else the one apps get from their network.
+            proxy = connectivity.defaultProxy?.let { describe(it) },
         )
         if (state == reported) return
         reported = state

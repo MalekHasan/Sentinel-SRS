@@ -12,7 +12,7 @@ CM-07 lists five things to watch, written with Windows in mind. On a phone witho
 | --- | --- | --- |
 | DNS servers | Each network has its own, given by the router or the carrier. Joining another network changes them, which is normal | `LinkProperties.getDnsServers()` of a network, with a callback on change |
 | Private DNS (DNS over TLS) | One setting for the whole phone: off, automatic, or a named provider. A named provider sees every name the phone looks up | `LinkProperties.getPrivateDnsServerName()` gives the named provider on every network. "Off" and "automatic" look the same to an app |
-| Proxy settings | A proxy for the whole phone (set with `adb`, by a device policy, or by an app that was given a system permission), or one set on a Wi-Fi network | `ConnectivityManager.getProxyForNetwork()` (the whole phone's proxy wins), `LinkProperties.getHttpProxy()` (the network's own), and Android's proxy-change broadcast |
+| Proxy settings | A proxy for the whole phone (set with `adb`, by a device policy, or by an app that was given a system permission), or one set on a Wi-Fi network | `ConnectivityManager.getDefaultProxy()` (the whole phone's proxy, or else the one apps get from their network), `LinkProperties.getHttpProxy()` (the network's own), and Android's proxy-change broadcast |
 | VPN state | Sentinel is the VPN. Another VPN app can take over, or the user can switch it off | `VpnService.onRevoke()`, which already records a monitoring gap and raises "monitoring stopped" (SP-03, [ADR-0012](0012-alerts.md)) |
 | Hosts file | `/system/etc/hosts` is on the read-only system partition: changing it needs root | Readable, but nothing announces a change |
 | Network profile | Windows' public or private network. Android has no such setting | — |
