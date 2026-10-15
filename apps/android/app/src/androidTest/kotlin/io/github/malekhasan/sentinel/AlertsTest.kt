@@ -9,8 +9,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -24,6 +28,7 @@ import io.github.malekhasan.sentinel.core.AlertEvidence
 import io.github.malekhasan.sentinel.core.AlertFeedback
 import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
+import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -216,6 +221,81 @@ class AlertsTest {
             context.getString(R.string.alert_evidence_destinations, listed) + " " +
                 context.resources.getQuantityString(R.plurals.alert_evidence_more_destinations, 1, 1),
         )
+    }
+
+    /** CM-08: a new app that Block-unknown stopped says so, and can be let through. */
+    @Test
+    fun aBlockedNewAppCanBeAllowedFromItsAlert() {
+        val chosen = mutableListOf<AlertAction>()
+        compose.setContent {
+            SentinelTheme {
+                AlertDetail(
+                    details = AlertDetails(
+                        HistoryAlert(
+                            id = 10,
+                            rule = AlertRule.FIRST_NETWORK_USE,
+                            severity = AlertSeverity.INFO,
+                            createdMs = now,
+                            evidence = listOf(
+                                AlertEvidence.App(app = "org.example.new"),
+                                AlertEvidence.Destinations(destinations = listOf("api.example"), more = 0u),
+                                AlertEvidence.NewAppBlocked,
+                            ),
+                            actions = listOf(
+                                AlertAction.AllowApp(app = "org.example.new"),
+                                AlertAction.OpenApp(app = "org.example.new"),
+                            ),
+                            open = true,
+                        ),
+                        mapOf("org.example.new" to "New App"),
+                    ),
+                    onBack = {},
+                    onAction = { chosen += it },
+                    onDismiss = {},
+                )
+            }
+        }
+        fun shows(text: String) = compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+        shows(context.getString(R.string.alert_first_network_use_blocked_title))
+        shows(context.getString(R.string.alert_first_network_use_blocked_text))
+        shows(context.getString(R.string.alert_evidence_new_app_blocked))
+        shows(context.getString(R.string.alert_action_allow_app, isolate("New App"))).performClick()
+        assertEquals(listOf<AlertAction>(AlertAction.AllowApp(app = "org.example.new")), chosen)
+    }
+
+    /** CM-08: the main screen offers both firewall modes and says which is in force. */
+    @Test
+    fun theMainScreenOffersTheFirewallModes() {
+        val chosen = mutableListOf<FirewallMode>()
+        compose.setContent {
+            SentinelTheme {
+                MonitorContent(
+                    coreVersion = "0.0.1",
+                    status = Monitor.Status.OFF,
+                    snapshot = null,
+                    flows = emptyList(),
+                    gaps = emptyList(),
+                    away = emptyList(),
+                    alerts = emptyList(),
+                    onStart = {},
+                    onStop = {},
+                    onShowLive = {},
+                    onOpenApp = {},
+                    onOpenAlert = {},
+                    onWipe = {},
+                    firewallMode = FirewallMode.MONITOR,
+                    onFirewallMode = { chosen += it },
+                )
+            }
+        }
+        val monitor = context.getString(R.string.firewall_mode_monitor)
+        val blockNew = context.getString(R.string.firewall_mode_block_unknown)
+        compose.onNodeWithText(context.getString(R.string.firewall_title)).performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText(monitor) and isSelectable()).performScrollTo().assertIsSelected()
+        compose.onNodeWithText(context.getString(R.string.firewall_mode_block_unknown_text))
+            .performScrollTo().assertIsDisplayed()
+        compose.onNode(hasText(blockNew) and isSelectable()).assertIsNotSelected().performClick()
+        assertEquals(listOf(FirewallMode.BLOCK_UNKNOWN), chosen)
     }
 
     /** CM-07: a changed setting shows its value before and after, and opens the settings. */

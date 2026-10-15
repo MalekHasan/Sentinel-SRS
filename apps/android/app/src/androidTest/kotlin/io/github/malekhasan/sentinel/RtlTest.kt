@@ -36,6 +36,7 @@ import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.CategoryFact
 import io.github.malekhasan.sentinel.core.CompanyFact
+import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.FlowProto
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.HistoryApp
@@ -111,6 +112,7 @@ class RtlTest {
                     onOpenApp = {},
                     onOpenAlert = {},
                     onWipe = {},
+                    firewallMode = FirewallMode.BLOCK_UNKNOWN,
                 )
             }
         }
@@ -131,6 +133,11 @@ class RtlTest {
             Formatter.formatShortFileSize(arabic, 100),
         )
         assertRightToLeft(compose.onNodeWithText(awayLine, useUnmergedTree = true))
+
+        // The firewall's modes (CM-08).
+        compose.onNodeWithText(arabic.getString(R.string.firewall_title)).performScrollTo().assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.firewall_mode_block_unknown), useUnmergedTree = true)
+            .assertAtTheRight()
     }
 
     @Test
@@ -300,6 +307,35 @@ class RtlTest {
         val line = arabic.getString(R.string.alert_evidence_destinations, listed) + " " +
             arabic.resources.getQuantityString(R.plurals.alert_evidence_more_destinations, 3, 3)
         assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
+    /** CM-08: a blocked new app's alert, with its name inside the Arabic action. */
+    @Test
+    fun newAppBlockedAlert() {
+        val alert = HistoryAlert(
+            id = 4,
+            rule = AlertRule.FIRST_NETWORK_USE,
+            severity = AlertSeverity.INFO,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.Destinations(destinations = listOf(HOST), more = 0u),
+                AlertEvidence.NewAppBlocked,
+            ),
+            actions = listOf(AlertAction.AllowApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.alert_first_network_use_blocked_title)).assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_first_network_use_blocked_text)))
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.alert_evidence_new_app_blocked)).performScrollTo(),
+        )
+        val allow = arabic.getString(R.string.alert_action_allow_app, isolate(LABEL))
+        compose.onNodeWithText(allow).performScrollTo()
+        assertRightToLeft(compose.onNodeWithText(allow, useUnmergedTree = true))
     }
 
     /** CM-07: a changed setting's values, names written left to right, in a right-to-left line. */

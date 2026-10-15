@@ -113,7 +113,8 @@ fun AlertDetailScreen(id: Long, onBack: () -> Unit, onAction: (AlertAction) -> U
 
 private fun appsIn(alert: HistoryAlert): List<String> =
     alert.evidence.filterIsInstance<AlertEvidence.App>().map { it.app } +
-        alert.actions.filterIsInstance<AlertAction.OpenApp>().map { it.app }
+        alert.actions.filterIsInstance<AlertAction.OpenApp>().map { it.app } +
+        alert.actions.filterIsInstance<AlertAction.AllowApp>().map { it.app }
 
 /**
  * An alert in the order AL-02 asks for: how severe it is, a plain title and a
@@ -254,11 +255,30 @@ fun severityNameRes(severity: AlertSeverity): Int = when (severity) {
 
 /** The alert's title in the screen's language (AL-02). */
 @Composable
-fun alertTitle(alert: HistoryAlert): String = stringResource(titleRes(alert.rule))
+fun alertTitle(alert: HistoryAlert): String = stringResource(titleRes(alert))
 
 /** The alert's one-sentence explanation in the screen's language (AL-02). */
 @Composable
-fun alertExplanation(alert: HistoryAlert): String = stringResource(explanationRes(alert.rule))
+fun alertExplanation(alert: HistoryAlert): String = stringResource(explanationRes(alert))
+
+/** Whether Block-unknown kept the app the alert is about off the network (CM-08). */
+private fun HistoryAlert.blocked(): Boolean = evidence.any { it is AlertEvidence.NewAppBlocked }
+
+/** The alert's title: its rule's, or a blocked new app's. */
+fun titleRes(alert: HistoryAlert): Int =
+    if (alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked()) {
+        R.string.alert_first_network_use_blocked_title
+    } else {
+        titleRes(alert.rule)
+    }
+
+/** The alert's explanation: its rule's, or a blocked new app's. */
+fun explanationRes(alert: HistoryAlert): Int =
+    if (alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked()) {
+        R.string.alert_first_network_use_blocked_text
+    } else {
+        explanationRes(alert.rule)
+    }
 
 fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_title
@@ -318,6 +338,7 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             settingValue(listOfNotNull(evidence.before)),
             settingValue(listOfNotNull(evidence.after)),
         )
+        is AlertEvidence.NewAppBlocked -> stringResource(R.string.alert_evidence_new_app_blocked)
     }
 
 /** A network setting's values as written, each kept left to right, or "none". */
@@ -335,4 +356,5 @@ private fun actionLabel(action: AlertAction, label: (String) -> String): String 
         is AlertAction.StartMonitoring -> stringResource(R.string.alert_action_start_monitoring)
         is AlertAction.OpenApp -> stringResource(R.string.alert_action_open_app, isolate(label(action.app)))
         is AlertAction.OpenNetworkSettings -> stringResource(R.string.alert_action_open_network_settings)
+        is AlertAction.AllowApp -> stringResource(R.string.alert_action_allow_app, isolate(label(action.app)))
     }

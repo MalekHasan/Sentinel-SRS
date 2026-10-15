@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- A test fixture with no data and no icon. Exported so that the device tests can
+         start it with `am start` as Android's shell user. -->
+    <application
+        android:allowBackup="false"
+        android:label="Sentinel probe"
+        tools:ignore="MissingApplicationIcon">
+        <activity
+            android:name=".ConnectActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+    </application>
+</manifest>

@@ -19,6 +19,12 @@
     <string name="back">رجوع</string>
 
     <string name="live_action">الاتصالات هلأ</string>
+    <string name="firewall_title">الجدار الناري</string>
+    <string name="firewall_mode_monitor">مراقبة بس</string>
+    <string name="firewall_mode_monitor_text">كل اتصال بيتسجّل، وما بينحجب إلا اللي بتحجبه إنت بقواعدك.</string>
+    <string name="firewall_mode_block_unknown">احجب التطبيقات الجديدة</string>
+    <string name="firewall_mode_block_unknown_text">التطبيقات اللي بتتنزّل من هلأ وطالع ما بتقدر تستعمل الإنترنت لحتى تسمحلها.</string>
+    <string name="firewall_app_allowed">صار %1$s يقدر يستعمل الإنترنت.</string>
     <string name="live_title">الاتصالات المفتوحة هلأ</string>
     <string name="live_explainer">التطبيقات اللي عندها اتصالات مفتوحة هلأ، الأكتر استخداماً أول إشي. بتتحدّث كل ثانية.</string>
     <string name="live_empty">ما في ولا تطبيق عنده اتصال مفتوح هلأ.</string>
@@ -118,6 +124,7 @@
     <string name="alert_evidence_dns_servers">خوادم DNS قبل: %1$s. هلأ: %2$s</string>
     <string name="alert_evidence_private_dns">نظام DNS الخاص قبل: %1$s. هلأ: %2$s</string>
     <string name="alert_evidence_proxy">البروكسي قبل: %1$s. هلأ: %2$s</string>
+    <string name="alert_evidence_new_app_blocked">وقّف Sentinel هالتطبيق عن استعمال الإنترنت.</string>
     <string name="alert_setting_none">ولا شي</string>
     <plurals name="alert_evidence_more_destinations">
         <item quantity="zero">وما في أماكن تانية.</item>
@@ -131,6 +138,7 @@
     <string name="alert_action_start_monitoring">رجّع شغّل المراقبة</string>
     <string name="alert_action_open_app">شوف شو عمل %1$s</string>
     <string name="alert_action_open_network_settings">افتح إعدادات الشبكة</string>
+    <string name="alert_action_allow_app">خلّي %1$s يستعمل الإنترنت</string>
     <string name="alert_dismiss">إخفاء</string>
     <string name="alert_dismissed">أخفيت هالتنبيه.</string>
     <string name="alert_feedback_title">هالتنبيه كان مفيد؟</string>
@@ -161,6 +169,8 @@
     <string name="alert_monitoring_interrupted_text">تطبيق Sentinel وقف يراقب تطبيقاتك، فاللي عملته بهالوقت مش مسجّل.</string>
     <string name="alert_first_network_use_title">تطبيق جديد استعمل الإنترنت</string>
     <string name="alert_first_network_use_text">هالتطبيق تنزّل بعد ما بلّش Sentinel، وهلأ شافه Sentinel عم يتصل بالإنترنت لأول مرة.</string>
+    <string name="alert_first_network_use_blocked_title">انحجب تطبيق جديد</string>
+    <string name="alert_first_network_use_blocked_text">هالتطبيق تنزّل بعد ما اخترت تحجب التطبيقات الجديدة، فما رح يقدر يستعمل الإنترنت لحتى تسمحله.</string>
     <string name="alert_new_destination_title">تطبيق اتصل بأماكن جديدة</string>
     <string name="alert_new_destination_text">هالتطبيق اتصل بأماكن ما كان يستعملها قبل، وهاد غالباً طبيعي بعد التحديث.</string>
     <string name="alert_dns_servers_changed_title">خوادم DNS تغيّرت</string>

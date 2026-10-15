@@ -140,7 +140,7 @@ object AlertNotifier {
     }
 
     private fun build(context: Context, alert: HistoryAlert, alike: Int): Notification {
-        val text = context.getString(explanationRes(alert.rule))
+        val text = context.getString(explanationRes(alert))
         val more = alike - 1
         val details = if (more > 0) {
             text + "\n" + context.resources.getQuantityString(R.plurals.alert_more_like_this, more, more)
@@ -157,7 +157,7 @@ object AlertNotifier {
         )
         return Notification.Builder(context, channelId(alert.severity))
             .setSmallIcon(R.drawable.ic_monitoring)
-            .setContentTitle(context.getString(titleRes(alert.rule)))
+            .setContentTitle(context.getString(titleRes(alert)))
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(details))
             .setSubText(context.getString(severityNameRes(alert.severity)))

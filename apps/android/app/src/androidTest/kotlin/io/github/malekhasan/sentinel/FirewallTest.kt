@@ -7,12 +7,9 @@ import io.github.malekhasan.sentinel.core.FirewallRule
 import io.github.malekhasan.sentinel.core.HistoryStore
 import io.github.malekhasan.sentinel.core.RuleAction
 import io.github.malekhasan.sentinel.core.RuleDestination
-import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.Socket
 import java.net.SocketTimeoutException
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -114,18 +111,6 @@ class FirewallTest {
         )
     }
 
-    /** What the test server sent back, or null if the connection was refused or closed. */
-    private fun answer(host: String, port: Int, request: ByteArray): ByteArray? = try {
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(InetAddress.getByName(host), port), 5_000)
-            socket.soTimeout = 5_000
-            socket.getOutputStream().write(request)
-            socket.getInputStream().readBytes().takeIf { it.isNotEmpty() }
-        }
-    } catch (e: IOException) {
-        null
-    }
-
     private class Reply(val rcode: Int, val answers: Int)
 
     /** Asks the tunnel's resolver for [name]; null if nothing answers within 2 s, twice. */
@@ -156,7 +141,6 @@ class FirewallTest {
     private companion object {
         const val TRIES = 5
         const val BLOCKED = "blocked.sentinel.test"
-        val REQUEST = "GET / HTTP/1.0\r\n\r\n".toByteArray()
         val END = "\r\n\r\n".toByteArray()
     }
 }

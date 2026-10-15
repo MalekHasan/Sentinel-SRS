@@ -53,7 +53,7 @@ The alert model, delivery and feedback are [ADR-0012](0012-alerts.md)'s.
 
 ## Consequences
 
-- **The positive case is not tested on a device.** An app installed after the history began needs a second app, installed during the test, that then uses the network. The core's engine test covers that path with a real packet. A device test would need a test APK built for it.
+- **The positive case is tested on a device since Sprint 6.** An app installed after the history began needs a second app, installed during the test, that then uses the network. `FirewallModeTest` installs one, the probe ([ADR-0016](0016-firewall-modes.md)), and its first connection raises the alert. Before that, the core's engine test covered the path with a real packet.
 - If monitoring was off when a new app first used the network, its first connection seen later is still reported as its first. The alert says what Sentinel saw.
 - Names come from DNS answers that Sentinel sees and from TLS handshakes. A DNS name for a shared address can belong to another app's query, which can flag a name the app did not ask for. QUIC connections without a DNS answer Sentinel saw have no name, so they are never flagged.
 - New names are compared exactly. Without a public suffix list, `rr3---sn-4g5e.googlevideo.com` and `rr5---sn-4g5e.googlevideo.com` are different names. A video app can therefore raise its one alert most days until the user marks it "not useful" or allows it. Grouping by registrable domain (the `destination.etld1` column) would need the Public Suffix List as a new data source; it is left until noise measured in the beta shows the need.

@@ -17,3 +17,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Sentinel"
 include(":app")
+// A small app the device tests install while they run (see probe/build.gradle.kts).
+include(":probe")

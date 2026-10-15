@@ -10,6 +10,10 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 
@@ -72,6 +76,21 @@ internal fun testServer(): Pair<String, Int> {
     val host = value.substringBeforeLast(':')
     val port = value.substringAfterLast(':').toInt()
     return host to port
+}
+
+/** A plain HTTP request the test server answers. */
+internal val REQUEST = "GET / HTTP/1.0\r\n\r\n".toByteArray()
+
+/** What the test server sent back, or null if the connection was refused or closed. */
+internal fun answer(host: String, port: Int, request: ByteArray = REQUEST): ByteArray? = try {
+    Socket().use { socket ->
+        socket.connect(InetSocketAddress(InetAddress.getByName(host), port), 5_000)
+        socket.soTimeout = 5_000
+        socket.getOutputStream().write(request)
+        socket.getInputStream().readBytes().takeIf { it.isNotEmpty() }
+    }
+} catch (e: IOException) {
+    null
 }
 
 /** Runs [command] as Android's shell user and returns what it printed. */

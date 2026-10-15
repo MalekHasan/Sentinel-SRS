@@ -105,7 +105,7 @@ jobs:
           api-level: 34
           arch: x86_64
           target: default
-          script: cd apps/android && ./gradlew --no-daemon --stacktrace connectedDebugAndroidTest
+          script: cd apps/android && ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest
       - name: List the device tests that ran
         # Gradle prints no per-test results; show them so a skipped test cannot pass unseen.
         if: always()

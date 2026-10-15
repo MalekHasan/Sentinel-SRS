@@ -21,7 +21,7 @@ Set `ANDROID_NDK_HOME` to the NDK folder, for example `~/Android/Sdk/ndk/28.2.13
 cd apps/android
 ./gradlew assembleDebug           # APK in app/build/outputs/apk/debug/
 ./gradlew lintDebug
-./gradlew connectedDebugAndroidTest   # needs a device or emulator, see below
+./gradlew :app:connectedDebugAndroidTest   # needs a device or emulator, see below
 ```
 
 `MonitoringTest` and `LiveViewTest` start the VPN and connect through the engine to an HTTP server on the test machine, which the emulator reaches as `10.0.2.2`. Start it first:
@@ -30,7 +30,9 @@ cd apps/android
 python3 apps/android/scripts/test-server.py
 ```
 
-It is Python's `http.server` with a listen backlog large enough for the 500 connections `LiveViewTest` opens at once. On a real phone, run it with `--bind 0.0.0.0` on a computer the phone can reach and pass its address with `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=192.168.1.10:8765`. The tests grant themselves the VPN consent through `appops` and need no tapping.
+It is Python's `http.server` with a listen backlog large enough for the 500 connections `LiveViewTest` opens at once.
+
+`FirewallModeTest` needs an app installed while it runs. The `probe` module is that app: a test fixture that opens one connection where it is told and ships nowhere. The app's Gradle build copies its APK into the test APK's assets, and the test installs it with `pm install`. Run the device tests of the app module only (`:app:connectedDebugAndroidTest`): the probe has none. On a real phone, run it with `--bind 0.0.0.0` on a computer the phone can reach and pass its address with `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=192.168.1.10:8765`. The tests grant themselves the VPN consent through `appops` and need no tapping.
 
 Two Gradle tasks run before the Android build. Both are skipped when nothing under `crates/` or `third_party/` changed.
 

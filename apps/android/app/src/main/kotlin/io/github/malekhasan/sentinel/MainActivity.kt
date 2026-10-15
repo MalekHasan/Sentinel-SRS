@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.format.Formatter
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -40,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -49,6 +51,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.malekhasan.sentinel.core.AlertAction
 import io.github.malekhasan.sentinel.core.EngineSnapshot
+import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryFlow
@@ -57,6 +60,7 @@ import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -83,6 +87,7 @@ class MainActivity : ComponentActivity() {
         // Calls into the Rust core through UniFFI: proves the native library loads.
         val version = coreVersion()
         setContent {
+            val scope = rememberCoroutineScope()
             var showLive by rememberSaveable { mutableStateOf(false) }
             // The app whose detail is open, over whichever screen opened it.
             var openApp by rememberSaveable { mutableStateOf<String?>(null) }
@@ -119,6 +124,7 @@ class MainActivity : ComponentActivity() {
                                         is AlertAction.OpenApp -> openApp = action.app
                                         is AlertAction.OpenNetworkSettings ->
                                             startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+                                        is AlertAction.AllowApp -> scope.launch { allow(action.app) }
                                     }
                                 },
                             )
@@ -143,6 +149,16 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /** Lets [app] use the internet (CM-08) and says so. */
+    private suspend fun allow(app: String) {
+        val label = withContext(Dispatchers.IO) {
+            if (allowApp(this@MainActivity, app)) AppNames(this@MainActivity).labelFor(app) else null
+        }
+        if (label != null) {
+            Toast.makeText(this, getString(R.string.firewall_app_allowed, isolate(label)), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -219,7 +235,9 @@ fun MonitorScreen(
     var gaps by remember { mutableStateOf(emptyList<GapLog.Gap>()) }
     var away by remember { mutableStateOf(emptyList<AwayRow>()) }
     var alerts by remember { mutableStateOf(emptyList<HistoryAlert>()) }
+    var mode by remember { mutableStateOf<FirewallMode?>(null) }
     val names = remember(context) { AppNames(context) }
+    val scope = rememberCoroutineScope()
     var confirmWipe by remember { mutableStateOf(false) }
     // Bumped after a wipe so the lists reload.
     var generation by remember { mutableIntStateOf(0) }
@@ -230,6 +248,7 @@ fun MonitorScreen(
             gaps = withContext(Dispatchers.IO) { GapLog.recent(context, 5) }
             away = withContext(Dispatchers.IO) { awayRows(context, names) }
             alerts = withContext(Dispatchers.IO) { openAlerts(context, ALERTS_SHOWN) }
+            mode = withContext(Dispatchers.IO) { firewallMode(context) }
         }
         snapshot = null
         reload()
@@ -275,6 +294,15 @@ fun MonitorScreen(
         onOpenApp = onOpenApp,
         onOpenAlert = onOpenAlert,
         onWipe = { confirmWipe = true },
+        firewallMode = mode,
+        onFirewallMode = { chosen ->
+            scope.launch {
+                mode = withContext(Dispatchers.IO) {
+                    setFirewallMode(context, chosen)
+                    firewallMode(context)
+                }
+            }
+        },
     )
 }
 
@@ -294,6 +322,8 @@ fun MonitorContent(
     onOpenApp: (String) -> Unit,
     onOpenAlert: (Long) -> Unit,
     onWipe: () -> Unit,
+    firewallMode: FirewallMode? = null,
+    onFirewallMode: (FirewallMode) -> Unit = {},
 ) {
     val context = LocalContext.current
     Column(
@@ -338,6 +368,9 @@ fun MonitorContent(
                 OutlinedButton(onClick = onStop) { Text(stringResource(R.string.action_stop)) }
             }
         }
+
+        // Kept in the history, so it can be chosen before monitoring starts (CM-08).
+        FirewallModeChoice(firewallMode, onFirewallMode)
 
         if (away.isNotEmpty()) {
             Text(stringResource(R.string.away_title), style = MaterialTheme.typography.titleSmall)

@@ -20,6 +20,12 @@
     <string name="back">Back</string>
 
     <string name="live_action">Live connections</string>
+    <string name="firewall_title">Firewall</string>
+    <string name="firewall_mode_monitor">Watch only</string>
+    <string name="firewall_mode_monitor_text">Every connection is recorded. Only the rules you make block anything.</string>
+    <string name="firewall_mode_block_unknown">Block new apps</string>
+    <string name="firewall_mode_block_unknown_text">Apps installed from now on cannot use the internet until you allow them.</string>
+    <string name="firewall_app_allowed">%1$s can use the internet now.</string>
     <string name="live_title">Live connections</string>
     <string name="live_explainer">Apps with connections open right now, busiest first. Updated every second.</string>
     <string name="live_empty">No app has a connection open right now.</string>
@@ -103,6 +109,7 @@
     <string name="alert_evidence_dns_servers">DNS servers before: %1$s. Now: %2$s</string>
     <string name="alert_evidence_private_dns">Private DNS before: %1$s. Now: %2$s</string>
     <string name="alert_evidence_proxy">Proxy before: %1$s. Now: %2$s</string>
+    <string name="alert_evidence_new_app_blocked">Sentinel stopped this app from using the internet.</string>
     <string name="alert_setting_none">none</string>
     <plurals name="alert_evidence_more_destinations">
         <item quantity="one">And %d more place.</item>
@@ -112,6 +119,7 @@
     <string name="alert_action_start_monitoring">Start monitoring again</string>
     <string name="alert_action_open_app">See what %1$s did</string>
     <string name="alert_action_open_network_settings">Open network settings</string>
+    <string name="alert_action_allow_app">Let %1$s use the internet</string>
     <string name="alert_dismiss">Dismiss</string>
     <string name="alert_dismissed">You dismissed this alert.</string>
     <string name="alert_feedback_title">Was this alert useful?</string>
@@ -138,6 +146,8 @@
     <string name="alert_monitoring_interrupted_text">Sentinel stopped watching your apps, so what they did in that time is not recorded.</string>
     <string name="alert_first_network_use_title">A new app used the internet</string>
     <string name="alert_first_network_use_text">This app was installed after Sentinel started, and Sentinel just saw it connect to the internet for the first time.</string>
+    <string name="alert_first_network_use_blocked_title">A new app was blocked</string>
+    <string name="alert_first_network_use_blocked_text">This app was installed after you chose to block new apps, so it cannot use the internet until you allow it.</string>
     <string name="alert_new_destination_title">An app connected to new places</string>
     <string name="alert_new_destination_text">This app connected to places it had not used before, which is often normal after an update.</string>
     <string name="alert_dns_servers_changed_title">DNS servers changed</string>

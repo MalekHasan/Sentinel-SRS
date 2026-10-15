@@ -22,7 +22,7 @@ Names are the hard part. The engine learns a name for an address from the DNS an
    - The app is a package name.
    - A destination is a domain or an address range. A domain covers the names below it (`example.com` covers `www.example.com` but not `notexample.com`). A single address is a range of one.
    - Rules are checked when made: a rule needs an app or a destination; a domain must be a plain name; a range is written one way only (no bits set past its prefix). An IPv4 address written as IPv6 is the IPv4 address.
-2. **The most specific rule decides.** A rule for an app and a destination beats one for a destination, which beats one for an app. Among matching rules equally specific, blocking wins. When no rule matches, the firewall mode decides (CM-08, next task); until then, that means allow.
+2. **The most specific rule decides.** A rule for an app and a destination beats one for a destination, which beats one for an app. Among matching rules equally specific, blocking wins. When no rule matches, the firewall mode decides ([ADR-0016](0016-firewall-modes.md)): in Watch only, the default, that means allow.
 3. **The core decides, the engine enforces.** The rules and their decision live in `sentinel-detect` (`firewall`), so every edition decides the same way. The engine asks at three moments, each with only what it knows for sure:
    - **A new connection:** its app and address. App rules and address rules decide here, and a blocked connection never reaches the server.
    - **A TLS server name:** the app, the address and that name. Domain rules decide here too.
