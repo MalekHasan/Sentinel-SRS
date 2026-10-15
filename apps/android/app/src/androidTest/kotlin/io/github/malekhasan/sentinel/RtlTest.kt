@@ -38,6 +38,7 @@ import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.CategoryFact
 import io.github.malekhasan.sentinel.core.CompanyFact
 import io.github.malekhasan.sentinel.core.FirewallMode
+import io.github.malekhasan.sentinel.core.FirewallRule
 import io.github.malekhasan.sentinel.core.FlowProto
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.HistoryApp
@@ -45,9 +46,12 @@ import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryCompany
 import io.github.malekhasan.sentinel.core.HistoryDestination
 import io.github.malekhasan.sentinel.core.HistoryFlow
+import io.github.malekhasan.sentinel.core.JournalEntry
+import io.github.malekhasan.sentinel.core.JournalState
 import io.github.malekhasan.sentinel.core.LiveApp
 import io.github.malekhasan.sentinel.core.NameSource
 import io.github.malekhasan.sentinel.core.RuleAction
+import io.github.malekhasan.sentinel.core.RuleDestination
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -180,6 +184,31 @@ class RtlTest {
                 .format(listOf(isolate(HOST), isolate(ADDRESS))),
         )
         assertRightToLeft(compose.onNodeWithText(destinations, useUnmergedTree = true))
+    }
+
+    @Test
+    fun journalScreen() {
+        val rule = FirewallRule(PACKAGE, RuleDestination.Domain(HOST), RuleAction.BLOCK)
+        val entry = JournalEntry(
+            id = 1,
+            atMs = now,
+            alertId = 1,
+            before = JournalState.Rule(key = "k", rule = null),
+            after = JournalState.Rule(key = "k", rule = rule),
+            undoneMs = null,
+            canUndo = true,
+        )
+        compose.setContent {
+            InArabic { Journal(listOf(JournalRow(entry, LABEL)), onBack = {}, onUndo = {}) }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.back)).assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.journal_title)).assertAtTheRight()
+        // Latin names inside the sentence must not turn it around.
+        val said = arabic.getString(R.string.journal_block_for_app, isolate(HOST), isolate(LABEL))
+        compose.onNodeWithText(said).assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(said))
+        compose.onNodeWithText(arabic.getString(R.string.journal_from_alert)).assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.journal_undo)).assertAtTheRight()
     }
 
     @Test

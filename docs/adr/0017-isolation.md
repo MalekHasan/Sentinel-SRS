@@ -47,4 +47,4 @@ The firewall already decides every connection with what it knows for sure, and d
 - **Some of Android's own traffic stops.** System services, time sync, push notifications for non-allowed apps and app updates stop while isolated, as RA-03 intends. Sentinel's own notifications are local and keep working.
 - **Traffic that never enters the tunnel is not isolated**: the moment Android takes to route apps into a new tunnel, and system traffic Android exempts from VPNs (SRS §2.2).
 - **Sentinel updates mean Sentinel's own connections.** Until the signed feed (Sprint 7) exists, that is all of Sentinel's traffic through the tunnel.
-- **Undo is the End button for now.** The action journal (SRS §9, next task) will record isolation like every other action.
+- **Isolating and ending isolation are in the action journal** ([ADR-0018](0018-action-journal.md)). Undoing an end isolates the phone again from the time it was first isolated.

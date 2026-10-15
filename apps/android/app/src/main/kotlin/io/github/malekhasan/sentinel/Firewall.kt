@@ -24,8 +24,10 @@ import io.github.malekhasan.sentinel.core.AppAccess
 import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.FirewallRule
 import io.github.malekhasan.sentinel.core.HistoryRule
+import io.github.malekhasan.sentinel.core.JournalEntry
 import io.github.malekhasan.sentinel.core.RuleAction
 import io.github.malekhasan.sentinel.core.RuleDestination
+import io.github.malekhasan.sentinel.core.UndoResult
 import java.util.Locale
 
 private const val TAG = "SentinelFirewall"
@@ -54,23 +56,27 @@ fun setFirewallMode(context: Context, mode: FirewallMode): Boolean =
 
 /**
  * Lets [app] use the internet: a firewall rule allowing the whole app, which also lets
- * a new app through Block-unknown (CM-08, CM-10). Returns whether it was kept. Call off
- * the main thread.
+ * a new app through Block-unknown (CM-08, CM-10). [fromAlert] is the alert the user
+ * did it from, for the journal. Returns whether it was kept. Call off the main thread.
  */
-fun allowApp(context: Context, app: String): Boolean =
-    keepRule(context, FirewallRule(app, null, RuleAction.ALLOW))
+fun allowApp(context: Context, app: String, fromAlert: Long? = null): Boolean =
+    keepRule(context, FirewallRule(app, null, RuleAction.ALLOW), fromAlert)
 
 /**
  * Stops [app] using the internet, its open connections included: a firewall rule
- * blocking the whole app (RA-01). Returns whether it was kept. Call off the main thread.
+ * blocking the whole app (RA-01). [fromAlert] is the alert the user did it from, for
+ * the journal. Returns whether it was kept. Call off the main thread.
  */
-fun blockApp(context: Context, app: String): Boolean =
-    keepRule(context, FirewallRule(app, null, RuleAction.BLOCK))
+fun blockApp(context: Context, app: String, fromAlert: Long? = null): Boolean =
+    keepRule(context, FirewallRule(app, null, RuleAction.BLOCK), fromAlert)
 
-/** Keeps [rule], replacing one about the same app and destination. Call off the main thread. */
-fun keepRule(context: Context, rule: FirewallRule): Boolean =
+/**
+ * Keeps [rule], replacing one about the same app and destination; the journal records
+ * it (SRS §9), with the alert it came from if any. Call off the main thread.
+ */
+fun keepRule(context: Context, rule: FirewallRule, fromAlert: Long? = null): Boolean =
     try {
-        History.get(context).setFirewallRule(rule)
+        History.get(context).setFirewallRule(rule, fromAlert)
         true
     } catch (e: Exception) {
         Log.w(TAG, "the rule cannot be kept", e)
@@ -135,6 +141,28 @@ fun firewallRules(context: Context): List<HistoryRule> =
     } catch (e: Exception) {
         Log.w(TAG, "the rules cannot be read", e)
         emptyList()
+    }
+
+/** The action journal, newest first (SRS §9), or none if the history cannot be read. */
+fun journal(context: Context, limit: UInt): List<JournalEntry> =
+    try {
+        History.get(context).journal(limit)
+    } catch (e: Exception) {
+        Log.w(TAG, "the journal cannot be read", e)
+        emptyList()
+    }
+
+/**
+ * Undoes action [id]: its setting goes back to what it was, for open connections too,
+ * if nothing changed it since (SRS §9). Null if the history cannot be read. Call off
+ * the main thread.
+ */
+fun undoAction(context: Context, id: Long): UndoResult? =
+    try {
+        History.get(context).undoAction(id)
+    } catch (e: Exception) {
+        Log.w(TAG, "the action cannot be undone", e)
+        null
     }
 
 /** The rule destination for one of the app detail screen's destinations: a name or an address. */

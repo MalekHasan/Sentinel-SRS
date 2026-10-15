@@ -1124,11 +1124,11 @@ fn firewall_rules_are_kept_and_replaced_by_key() {
         RuleAction::Block,
     )
     .unwrap();
-    let key = store.set_firewall_rule(&block, NOW).unwrap();
+    let key = store.set_firewall_rule(&block, NOW, None).unwrap();
     assert_eq!(key, "org.example.chat domain:ads.example");
-    store.set_firewall_rule(&range, NOW + 1).unwrap();
+    store.set_firewall_rule(&range, NOW + 1, None).unwrap();
     let allow = FirewallRule::new(Some("org.example.chat"), Some(ads), RuleAction::Allow).unwrap();
-    assert_eq!(store.set_firewall_rule(&allow, NOW + 2).unwrap(), key);
+    assert_eq!(store.set_firewall_rule(&allow, NOW + 2, None).unwrap(), key);
 
     let kept: Vec<_> = store
         .firewall_rules()
@@ -1148,8 +1148,8 @@ fn firewall_rules_are_kept_and_replaced_by_key() {
     drop(store);
     let store = Store::open(&path, &KEY).unwrap();
     assert_eq!(store.firewall_rules().unwrap().len(), 2);
-    assert!(store.remove_firewall_rule(&key).unwrap());
-    assert!(!store.remove_firewall_rule(&key).unwrap());
+    assert!(store.remove_firewall_rule(&key, NOW).unwrap());
+    assert!(!store.remove_firewall_rule(&key, NOW).unwrap());
     assert_eq!(store.firewall_rules().unwrap()[0].rule, range);
     drop(store);
     wipe(&path).unwrap();
@@ -1173,10 +1173,10 @@ fn the_firewall_mode_is_kept() {
     let store = Store::open(&path, &KEY).unwrap();
     assert_eq!(store.firewall_mode().unwrap(), FirewallMode::Monitor);
     let on = FirewallMode::BlockUnknown { since: NOW };
-    assert_eq!(store.set_firewall_mode(on).unwrap(), on);
+    assert_eq!(store.set_firewall_mode(on, NOW).unwrap(), on);
     assert_eq!(
         store
-            .set_firewall_mode(FirewallMode::BlockUnknown { since: NOW + 5 })
+            .set_firewall_mode(FirewallMode::BlockUnknown { since: NOW + 5 }, NOW)
             .unwrap(),
         on,
         "still on since it was turned on"
@@ -1185,12 +1185,12 @@ fn the_firewall_mode_is_kept() {
     let store = Store::open(&path, &KEY).unwrap();
     assert_eq!(store.firewall_mode().unwrap(), on);
     assert_eq!(
-        store.set_firewall_mode(FirewallMode::Monitor).unwrap(),
+        store.set_firewall_mode(FirewallMode::Monitor, NOW).unwrap(),
         FirewallMode::Monitor
     );
     let again = FirewallMode::BlockUnknown { since: NOW + 10 };
     assert_eq!(
-        store.set_firewall_mode(again).unwrap(),
+        store.set_firewall_mode(again, NOW).unwrap(),
         again,
         "a new start"
     );
@@ -1234,12 +1234,15 @@ fn isolation_is_kept_until_turned_off() {
         since: NOW,
         own_app: "io.github.malekhasan.sentinel".to_owned(),
     };
-    store.set_isolation(Some(&on)).unwrap();
+    store.set_isolation(Some(&on), NOW).unwrap();
     store
-        .set_isolation(Some(&Isolation {
-            since: NOW + 5,
-            ..on.clone()
-        }))
+        .set_isolation(
+            Some(&Isolation {
+                since: NOW + 5,
+                ..on.clone()
+            }),
+            NOW,
+        )
         .unwrap();
     drop(store);
     let store = Store::open(&path, &KEY).unwrap();
@@ -1248,10 +1251,269 @@ fn isolation_is_kept_until_turned_off() {
         Some(on.clone()),
         "since it was first turned on"
     );
-    store.set_isolation(None).unwrap();
+    store.set_isolation(None, NOW).unwrap();
     assert_eq!(store.isolation().unwrap(), None);
-    store.set_isolation(Some(&on)).unwrap();
+    store.set_isolation(Some(&on), NOW).unwrap();
     drop(store);
     wipe(&path).unwrap();
     assert_eq!(Store::open(&path, &KEY).unwrap().isolation().unwrap(), None);
+}
+
+/// SRS §9: every change to the firewall rules, the mode and isolation is journalled,
+/// encrypted, with who made it, when, from which alert, and the setting before and
+/// after. A change that changes nothing is not journalled.
+#[test]
+fn every_firewall_change_is_journalled() {
+    use sentinel_detect::{
+        Destination, FirewallMode, FirewallRule, Isolation, RuleAction, Setting,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert!(store.journal(10).unwrap().is_empty());
+    let alert = store
+        .record_alert(&sentinel_detect::monitoring_interrupted(
+            NOW, None, "killed",
+        ))
+        .unwrap();
+
+    let block = FirewallRule::new(Some("org.example.chat"), None, RuleAction::Block).unwrap();
+    let allow = FirewallRule {
+        action: RuleAction::Allow,
+        ..block.clone()
+    };
+    let key = store.set_firewall_rule(&block, NOW, Some(alert)).unwrap();
+    store.set_firewall_rule(&block, NOW + 1, None).unwrap();
+    store
+        .set_firewall_rule(&allow, NOW + 2, Some(alert + 100))
+        .unwrap();
+    assert!(store.remove_firewall_rule(&key, NOW + 3).unwrap());
+    assert!(!store.remove_firewall_rule(&key, NOW + 4).unwrap());
+    let on = FirewallMode::BlockUnknown { since: NOW + 5 };
+    store.set_firewall_mode(on, NOW + 5).unwrap();
+    store
+        .set_firewall_mode(FirewallMode::BlockUnknown { since: NOW + 6 }, NOW + 6)
+        .unwrap();
+    store
+        .set_firewall_mode(FirewallMode::Monitor, NOW + 7)
+        .unwrap();
+    let isolation = Isolation {
+        since: NOW + 8,
+        own_app: "io.github.malekhasan.sentinel".to_owned(),
+    };
+    store.set_isolation(Some(&isolation), NOW + 8).unwrap();
+    store
+        .set_isolation(
+            Some(&Isolation {
+                since: NOW + 9,
+                ..isolation.clone()
+            }),
+            NOW + 9,
+        )
+        .unwrap();
+    store.set_isolation(None, NOW + 10).unwrap();
+    store.set_isolation(None, NOW + 11).unwrap();
+    // A domain rule is about a destination, under its own key.
+    let ads = FirewallRule::new(
+        None,
+        Some(Destination::domain("ads.example").unwrap()),
+        RuleAction::Block,
+    )
+    .unwrap();
+    store.set_firewall_rule(&ads, NOW + 12, None).unwrap();
+
+    let rule = |rule: Option<&FirewallRule>| Setting::Rule {
+        key: key.clone(),
+        rule: rule.cloned(),
+    };
+    let journal = store.journal(20).unwrap();
+    let seen: Vec<_> = journal
+        .iter()
+        .map(|e| {
+            (
+                e.change.before().clone(),
+                e.change.after().clone(),
+                e.alert,
+                e.at,
+                e.can_undo,
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (
+                Setting::Rule {
+                    key: ads.key(),
+                    rule: None
+                },
+                Setting::Rule {
+                    key: ads.key(),
+                    rule: Some(ads.clone())
+                },
+                None,
+                NOW + 12,
+                true,
+            ),
+            (
+                Setting::Isolation(Some(isolation.clone())),
+                Setting::Isolation(None),
+                None,
+                NOW + 10,
+                true,
+            ),
+            (
+                Setting::Isolation(None),
+                Setting::Isolation(Some(isolation)),
+                None,
+                NOW + 8,
+                false,
+            ),
+            (
+                Setting::Mode(on),
+                Setting::Mode(FirewallMode::Monitor),
+                None,
+                NOW + 7,
+                true,
+            ),
+            (
+                Setting::Mode(FirewallMode::Monitor),
+                Setting::Mode(on),
+                None,
+                NOW + 5,
+                false,
+            ),
+            (rule(Some(&allow)), rule(None), None, NOW + 3, true),
+            // An alert that does not exist is not kept.
+            (rule(Some(&block)), rule(Some(&allow)), None, NOW + 2, false),
+            (rule(None), rule(Some(&block)), Some(alert), NOW, false),
+        ]
+    );
+    assert!(
+        journal
+            .iter()
+            .all(|e| e.actor == "user" && e.undone_at.is_none())
+    );
+    let actions: Vec<_> = journal.iter().map(|e| e.change.action()).collect();
+    assert_eq!(
+        actions,
+        [
+            "keep_rule",
+            "end_isolation",
+            "isolate",
+            "set_mode",
+            "set_mode",
+            "remove_rule",
+            "keep_rule",
+            "keep_rule"
+        ]
+    );
+    assert_eq!(
+        store.journal(2).unwrap().len(),
+        2,
+        "newest first, as many as asked"
+    );
+    assert!(!file_contains(&path, b"keep_rule"), "encrypted on disk");
+
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.journal(20).unwrap(), journal, "kept across reopening");
+    drop(store);
+    wipe(&path).unwrap();
+    assert!(
+        Store::open(&path, &KEY)
+            .unwrap()
+            .journal(20)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// SRS §9: undoing an action puts its setting back as it was before, Block-unknown's
+/// and isolation's start times included, only while the setting is still as the action
+/// left it, and only once.
+#[test]
+fn undo_puts_back_what_was_there_before() {
+    use sentinel_detect::{FirewallMode, FirewallRule, Isolation, RuleAction};
+    use sentinel_store::Undo;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    let newest = |store: &Store| store.journal(1).unwrap()[0].id;
+    let rules = |store: &Store| -> Vec<FirewallRule> {
+        store
+            .firewall_rules()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.rule)
+            .collect()
+    };
+
+    // A new rule: undoing removes it.
+    let block = FirewallRule::new(Some("org.example.chat"), None, RuleAction::Block).unwrap();
+    let key = store.set_firewall_rule(&block, NOW, None).unwrap();
+    let kept = newest(&store);
+    assert_eq!(store.undo(kept, NOW + 1).unwrap(), Undo::Undone);
+    assert!(rules(&store).is_empty());
+    assert_eq!(store.undo(kept, NOW + 2).unwrap(), Undo::AlreadyUndone);
+    let entry = store.journal(1).unwrap().remove(0);
+    assert_eq!((entry.undone_at, entry.can_undo), (Some(NOW + 1), false));
+
+    // A replaced rule: undoing puts the earlier one back; a removed one comes back.
+    store.set_firewall_rule(&block, NOW + 3, None).unwrap();
+    let allow = FirewallRule {
+        action: RuleAction::Allow,
+        ..block.clone()
+    };
+    store.set_firewall_rule(&allow, NOW + 4, None).unwrap();
+    assert_eq!(store.undo(newest(&store), NOW + 5).unwrap(), Undo::Undone);
+    assert_eq!(rules(&store), std::slice::from_ref(&block));
+    store.remove_firewall_rule(&key, NOW + 6).unwrap();
+    assert_eq!(store.undo(newest(&store), NOW + 7).unwrap(), Undo::Undone);
+    assert_eq!(rules(&store), std::slice::from_ref(&block));
+
+    // Changed since: the later change stays.
+    store.remove_firewall_rule(&key, NOW + 8).unwrap();
+    let removed = newest(&store);
+    store.set_firewall_rule(&allow, NOW + 9, None).unwrap();
+    assert!(!store.journal(2).unwrap()[1].can_undo);
+    assert_eq!(store.undo(removed, NOW + 10).unwrap(), Undo::ChangedSince);
+    assert_eq!(rules(&store), [allow]);
+
+    // The mode comes back with when Block-unknown was turned on.
+    let on = FirewallMode::BlockUnknown { since: NOW + 11 };
+    store.set_firewall_mode(on, NOW + 11).unwrap();
+    let switched_on = newest(&store);
+    store
+        .set_firewall_mode(FirewallMode::Monitor, NOW + 12)
+        .unwrap();
+    assert_eq!(store.undo(newest(&store), NOW + 13).unwrap(), Undo::Undone);
+    assert_eq!(store.firewall_mode().unwrap(), on);
+    // Back as the first switch left it, so that switch can be undone too.
+    assert!(store.journal(2).unwrap()[1].can_undo);
+    assert_eq!(store.undo(switched_on, NOW + 14).unwrap(), Undo::Undone);
+    assert_eq!(store.firewall_mode().unwrap(), FirewallMode::Monitor);
+
+    // Isolation comes back with when it began.
+    let isolation = Isolation {
+        since: NOW + 15,
+        own_app: "io.github.malekhasan.sentinel".to_owned(),
+    };
+    store.set_isolation(Some(&isolation), NOW + 15).unwrap();
+    let isolated = newest(&store);
+    store.set_isolation(None, NOW + 16).unwrap();
+    let ended = newest(&store);
+    assert_eq!(store.undo(isolated, NOW + 17).unwrap(), Undo::ChangedSince);
+    assert_eq!(store.undo(ended, NOW + 17).unwrap(), Undo::Undone);
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.isolation().unwrap(), Some(isolation));
+    assert_eq!(store.undo(isolated, NOW + 18).unwrap(), Undo::Undone);
+    assert_eq!(store.isolation().unwrap(), None);
+
+    // Undoing is not itself journalled: the entry says when it was undone.
+    assert_eq!(store.journal(100).unwrap().len(), 10);
+    assert_eq!(store.undo(9_999, NOW + 19).unwrap(), Undo::NotFound);
 }

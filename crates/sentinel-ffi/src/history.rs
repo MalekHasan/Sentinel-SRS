@@ -5,12 +5,13 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use sentinel_detect::{FirewallMode as Mode, Isolation, Place, RuleSet};
-use sentinel_store::{KEY_LEN, Store, StoreError};
+use sentinel_store::{KEY_LEN, Store, StoreError, Undo};
 
 use crate::alerts::{AlertDelivery, AlertFeedback, AlertListener, AllowedRule, HistoryAlert};
 use crate::enrich::{CategoryFact, CompanyFact};
 use crate::firewall::{AppAccess, FirewallMode, FirewallRule, HistoryRule};
 use crate::flows::{FlowProto, NameSource};
+use crate::journal::{JournalEntry, UndoResult};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum HistoryError {
@@ -205,17 +206,23 @@ impl HistoryStore {
     }
 
     /// Keep a firewall rule, replacing one about the same app and destination, and apply
-    /// it to connections from now on (CM-10). Returns its key.
-    pub fn set_firewall_rule(&self, rule: FirewallRule) -> Result<String, HistoryError> {
+    /// it to connections from now on (CM-10). The journal keeps it (SRS §9), with the
+    /// alert it was taken from, if any. Returns its key.
+    #[uniffi::method(default(alert = None))]
+    pub fn set_firewall_rule(
+        &self,
+        rule: FirewallRule,
+        alert: Option<i64>,
+    ) -> Result<String, HistoryError> {
         let rule = sentinel_detect::FirewallRule::try_from(rule)?;
-        let key = self.store.set_firewall_rule(&rule, now_ms())?;
+        let key = self.store.set_firewall_rule(&rule, now_ms(), alert)?;
         self.reload_rules()?;
         Ok(key)
     }
 
-    /// Remove the firewall rule with this key. Returns whether there was one.
+    /// Remove the firewall rule with this key, journalled. Returns whether there was one.
     pub fn remove_firewall_rule(&self, key: String) -> Result<bool, HistoryError> {
-        let removed = self.store.remove_firewall_rule(&key)?;
+        let removed = self.store.remove_firewall_rule(&key, now_ms())?;
         self.reload_rules()?;
         Ok(removed)
     }
@@ -224,12 +231,13 @@ impl HistoryStore {
     /// blocks the apps installed from now on until a rule allows them; turning it on
     /// while it is on changes nothing.
     pub fn set_firewall_mode(&self, mode: FirewallMode) -> Result<(), HistoryError> {
+        let now = now_ms();
         let mode = match mode {
             FirewallMode::Monitor => Mode::Monitor,
-            FirewallMode::BlockUnknown => Mode::BlockUnknown { since: now_ms() },
+            FirewallMode::BlockUnknown => Mode::BlockUnknown { since: now },
         };
         let mut in_force = self.mode.write().unwrap_or_else(PoisonError::into_inner);
-        *in_force = self.store.set_firewall_mode(mode)?;
+        *in_force = self.store.set_firewall_mode(mode, now)?;
         drop(in_force);
         self.firewall_changed();
         Ok(())
@@ -245,15 +253,16 @@ impl HistoryStore {
     /// network. Kept until [`Self::end_isolation`], across restarts. Isolating while
     /// isolated keeps when it began.
     pub fn isolate(&self, own_app: String) -> Result<(), HistoryError> {
+        let now = now_ms();
         let isolation = Isolation {
-            since: now_ms(),
+            since: now,
             own_app,
         };
         let mut in_force = self
             .isolation
             .write()
             .unwrap_or_else(PoisonError::into_inner);
-        self.store.set_isolation(Some(&isolation))?;
+        self.store.set_isolation(Some(&isolation), now)?;
         *in_force = self.store.isolation()?.map(Arc::new);
         drop(in_force);
         self.firewall_changed();
@@ -266,11 +275,32 @@ impl HistoryStore {
             .isolation
             .write()
             .unwrap_or_else(PoisonError::into_inner);
-        self.store.set_isolation(None)?;
+        self.store.set_isolation(None, now_ms())?;
         *in_force = None;
         drop(in_force);
         self.firewall_changed();
         Ok(())
+    }
+
+    /// The action journal, newest first (SRS §9): each change to the firewall rules, the
+    /// mode and isolation, at most `limit`.
+    pub fn journal(&self, limit: u32) -> Result<Vec<JournalEntry>, HistoryError> {
+        Ok(self
+            .store
+            .journal(limit)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// Undo the action `id` from the journal: put its setting back as it was before,
+    /// if nothing changed it since, for connections from now on and open ones.
+    pub fn undo_action(&self, id: i64) -> Result<UndoResult, HistoryError> {
+        let undone = self.store.undo(id, now_ms())?;
+        if undone == Undo::Undone {
+            self.reload_firewall()?;
+        }
+        Ok(undone.into())
     }
 
     /// When isolation began, Unix milliseconds; `None` when the phone is not isolated.
@@ -585,6 +615,16 @@ impl HistoryStore {
     fn firewall_changed(&self) {
         self.firewall_changes
             .send_modify(|version| *version = version.wrapping_add(1));
+    }
+
+    /// Read the rules, the mode and isolation again, after an undo changed one of them.
+    fn reload_firewall(&self) -> Result<(), HistoryError> {
+        *self.mode.write().unwrap_or_else(PoisonError::into_inner) = self.store.firewall_mode()?;
+        *self
+            .isolation
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = self.store.isolation()?.map(Arc::new);
+        self.reload_rules()
     }
 
     fn reload_rules(&self) -> Result<(), HistoryError> {
@@ -964,19 +1004,22 @@ mod tests {
             action,
         };
         history
-            .set_firewall_rule(rule(
-                Some(RuleDestination::Domain {
-                    name: "chat.example".into(),
-                }),
-                RuleAction::Allow,
-            ))
+            .set_firewall_rule(
+                rule(
+                    Some(RuleDestination::Domain {
+                        name: "chat.example".into(),
+                    }),
+                    RuleAction::Allow,
+                ),
+                None,
+            )
             .unwrap();
         assert!(
             history.app_access(app(), later).blocked_as_new,
             "a place is not the app"
         );
         for action in [RuleAction::Allow, RuleAction::Block] {
-            history.set_firewall_rule(rule(None, action)).unwrap();
+            history.set_firewall_rule(rule(None, action), None).unwrap();
             assert_eq!(
                 history.app_access(app(), later),
                 AppAccess {
@@ -1003,13 +1046,20 @@ mod tests {
             }),
             action: RuleAction::Block,
         };
-        let key = history.set_firewall_rule(block_range.clone()).unwrap();
+        let key = history
+            .set_firewall_rule(block_range.clone(), None)
+            .unwrap();
         assert_eq!(key, "* network:192.0.2.0/24");
         let allow_range = FirewallRule {
             action: RuleAction::Allow,
             ..block_range.clone()
         };
-        assert_eq!(history.set_firewall_rule(allow_range.clone()).unwrap(), key);
+        assert_eq!(
+            history
+                .set_firewall_rule(allow_range.clone(), None)
+                .unwrap(),
+            key
+        );
         let named = FirewallRule {
             app: Some("org.example.chat".into()),
             destination: Some(RuleDestination::Domain {
@@ -1017,7 +1067,7 @@ mod tests {
             }),
             action: RuleAction::Block,
         };
-        history.set_firewall_rule(named).unwrap();
+        history.set_firewall_rule(named, None).unwrap();
         let rules = history.firewall_rules().unwrap();
         assert_eq!(rules.len(), 2);
         let by_key = |key: &str| rules.iter().find(|r| r.key == key).unwrap().rule.clone();
@@ -1052,7 +1102,7 @@ mod tests {
             },
         ] {
             assert!(matches!(
-                history.set_firewall_rule(bad),
+                history.set_firewall_rule(bad, None),
                 Err(HistoryError::BadRule { .. })
             ));
         }
@@ -1063,5 +1113,114 @@ mod tests {
         assert!(history.remove_firewall_rule(key.clone()).unwrap());
         assert!(!history.remove_firewall_rule(key).unwrap());
         assert_eq!(history.firewall_rules().unwrap().len(), 1);
+    }
+
+    /// SRS §9: each change the user makes to the firewall is journalled, with the alert
+    /// it was taken from; undoing it puts the setting back for the engine at once, and
+    /// running engines decide their open connections again.
+    #[test]
+    fn each_action_is_journalled_and_undone_at_once() {
+        use crate::firewall::{FirewallMode, FirewallRule, RuleAction};
+        use crate::journal::{JournalState, UndoResult};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path.clone(), vec![1; 32]).unwrap();
+        assert!(history.journal(10).unwrap().is_empty());
+        history.open_gap(None, "killed".into()).unwrap();
+        let alert = history.alerts(true, 1).unwrap()[0].id;
+        let app = "org.example.chat";
+        let blocked = || {
+            history
+                .rule_set()
+                .decide(Some(app), Place::default())
+                .is_some()
+        };
+
+        let block = FirewallRule {
+            app: Some(app.into()),
+            destination: None,
+            action: RuleAction::Block,
+        };
+        let key = history
+            .set_firewall_rule(block.clone(), Some(alert))
+            .unwrap();
+        let entry = history.journal(10).unwrap().remove(0);
+        assert_eq!(entry.alert_id, Some(alert));
+        assert_eq!(
+            (entry.before, entry.after),
+            (
+                JournalState::Rule {
+                    key: key.clone(),
+                    rule: None
+                },
+                JournalState::Rule {
+                    key,
+                    rule: Some(block)
+                }
+            )
+        );
+        assert!(entry.can_undo && entry.undone_ms.is_none());
+        assert!(blocked());
+        let mut changes = history.firewall_changes();
+        changes.mark_unchanged();
+        assert_eq!(history.undo_action(entry.id).unwrap(), UndoResult::Undone);
+        assert!(!blocked(), "in force at once");
+        assert!(
+            changes.has_changed().unwrap(),
+            "open connections are asked again"
+        );
+        assert_eq!(
+            history.undo_action(entry.id).unwrap(),
+            UndoResult::AlreadyUndone
+        );
+        let entry = history.journal(1).unwrap().remove(0);
+        assert!(!entry.can_undo && entry.undone_ms.is_some());
+
+        history
+            .set_firewall_mode(FirewallMode::BlockUnknown)
+            .unwrap();
+        let since = match history.mode_in_force() {
+            Mode::BlockUnknown { since } => since,
+            Mode::Monitor => panic!("not switched"),
+        };
+        let switched = history.journal(1).unwrap().remove(0);
+        assert_eq!(
+            switched.after,
+            JournalState::Mode {
+                mode: FirewallMode::BlockUnknown,
+                since_ms: Some(since)
+            }
+        );
+        assert_eq!(
+            history.undo_action(switched.id).unwrap(),
+            UndoResult::Undone
+        );
+        assert_eq!(history.mode_in_force(), Mode::Monitor);
+
+        history
+            .isolate("io.github.malekhasan.sentinel".into())
+            .unwrap();
+        let began = history.isolated_since_ms().unwrap();
+        history.end_isolation().unwrap();
+        let ended = history.journal(1).unwrap().remove(0);
+        assert_eq!(
+            (ended.before, ended.after),
+            (
+                JournalState::Isolation {
+                    since_ms: Some(began)
+                },
+                JournalState::Isolation { since_ms: None }
+            )
+        );
+        assert_eq!(history.undo_action(ended.id).unwrap(), UndoResult::Undone);
+        assert_eq!(history.isolated_since_ms(), Some(began), "since it began");
+        assert!(history.isolation_in_force().is_some());
+        assert_eq!(history.undo_action(9_999).unwrap(), UndoResult::CannotUndo);
+
+        drop(history);
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        assert_eq!(history.journal(10).unwrap().len(), 4);
+        assert_eq!(history.isolated_since_ms(), Some(began));
     }
 }

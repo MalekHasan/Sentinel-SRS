@@ -736,11 +736,14 @@ mod tests {
 
         let (_dir, history) = blocking_history();
         history
-            .set_firewall_rule(FirewallRule {
-                app: Some(OWNER_APP.into()),
-                destination: None,
-                action: RuleAction::Block,
-            })
+            .set_firewall_rule(
+                FirewallRule {
+                    app: Some(OWNER_APP.into()),
+                    destination: None,
+                    action: RuleAction::Block,
+                },
+                None,
+            )
             .unwrap();
         assert_the_engine_blocks(&history, recording_flows());
     }
@@ -856,11 +859,14 @@ mod tests {
 
         let blocked_at = std::time::Instant::now();
         history
-            .set_firewall_rule(FirewallRule {
-                app: Some(OWNER_APP.into()),
-                destination: None,
-                action: RuleAction::Block,
-            })
+            .set_firewall_rule(
+                FirewallRule {
+                    app: Some(OWNER_APP.into()),
+                    destination: None,
+                    action: RuleAction::Block,
+                },
+                None,
+            )
             .unwrap();
         let ended = loop {
             let batch = batches
@@ -942,11 +948,14 @@ mod tests {
         assert!(!echoed(40_001), "isolated");
 
         history
-            .set_firewall_rule(FirewallRule {
-                app: Some(OWNER_APP.into()),
-                destination: None,
-                action: RuleAction::Allow,
-            })
+            .set_firewall_rule(
+                FirewallRule {
+                    app: Some(OWNER_APP.into()),
+                    destination: None,
+                    action: RuleAction::Allow,
+                },
+                None,
+            )
             .unwrap();
         assert!(echoed(40_002), "an app allowed as a whole");
         history.firewall_rules().unwrap().iter().for_each(|rule| {

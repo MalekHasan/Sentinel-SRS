@@ -10,6 +10,7 @@ mod enrich;
 mod firewall;
 mod flows;
 mod history;
+mod journal;
 
 pub use alerts::{
     AlertAction, AlertDelivery, AlertEvidence, AlertFeedback, AlertListener, AlertRule,
@@ -26,6 +27,7 @@ pub use history::{
     HistoryApp, HistoryAway, HistoryCompany, HistoryDestination, HistoryError, HistoryFlow,
     HistoryGap, HistoryStore, wipe_history,
 };
+pub use journal::{JournalEntry, JournalState, UndoResult};
 
 uniffi::setup_scaffolding!();
 

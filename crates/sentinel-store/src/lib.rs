@@ -12,8 +12,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sentinel_detect::{
-    Alert, AlertState, Delivery, Feedback, FirewallMode, FirewallRule, Isolation, NetworkState,
-    Rule, Sent, Severity,
+    Alert, AlertState, Change, Delivery, Feedback, FirewallMode, FirewallRule, Isolation,
+    NetworkState, Rule, Sent, Setting, Severity,
 };
 use zeroize::Zeroizing;
 
@@ -225,6 +225,39 @@ pub struct AllowedEntry {
     pub app: Option<String>,
     /// Unix milliseconds.
     pub created: i64,
+}
+
+/// One action in the journal (SRS §9): who took it and when, what it changed, and
+/// whether it was undone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JournalEntry {
+    pub id: i64,
+    /// The alert it was taken from, if any.
+    pub alert: Option<i64>,
+    /// Who took it: on Android, always the user.
+    pub actor: String,
+    pub change: Change,
+    /// Unix milliseconds.
+    pub at: i64,
+    pub undone_at: Option<i64>,
+    /// Whether [`Store::undo`] would undo it now: it was not undone yet, and its setting
+    /// is still as it left it.
+    pub can_undo: bool,
+}
+
+/// What [`Store::undo`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Undo {
+    /// The setting is back as it was before the action.
+    Undone,
+    /// It was undone before; nothing changed.
+    AlreadyUndone,
+    /// Something changed the setting since the action; it was left alone.
+    ChangedSince,
+    /// The action cannot be undone, or this version cannot read it.
+    CannotUndo,
+    /// The journal has no such action.
+    NotFound,
 }
 
 /// A firewall rule as stored (CM-10).
@@ -679,16 +712,23 @@ impl Store {
         Ok(previous.and_then(|json| NetworkState::from_json(&json).ok()))
     }
 
-    /// Keep a firewall rule, replacing one about the same app and destination (CM-10).
-    /// Returns its key.
-    pub fn set_firewall_rule(&self, rule: &FirewallRule, now: i64) -> Result<String> {
+    /// Keep a firewall rule, replacing one about the same app and destination (CM-10),
+    /// and journal it (SRS §9) with the alert it was taken from, if any. Returns its key.
+    pub fn set_firewall_rule(
+        &self,
+        rule: &FirewallRule,
+        now: i64,
+        alert: Option<i64>,
+    ) -> Result<String> {
         let key = rule.key();
-        lock(&self.conn).execute(
-            "INSERT INTO rule (id, kind, body, enabled, source, version, created)
-             VALUES (?1, 'firewall', ?2, 1, 'user', 1, ?3)
-             ON CONFLICT (id) DO UPDATE SET body = excluded.body, created = excluded.created",
-            params![key, rule.to_json(), now],
-        )?;
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let after = Setting::Rule {
+            key: key.clone(),
+            rule: Some(rule.clone()),
+        };
+        change(&tx, after, now, alert)?;
+        tx.commit()?;
         Ok(key)
     }
 
@@ -699,21 +739,19 @@ impl Store {
         Ok(read_firewall_mode(&conn)?.unwrap_or(FirewallMode::Monitor))
     }
 
-    /// Put `mode` in force, and return the mode now in force. Setting the mode already
-    /// in force changes nothing, so Block-unknown keeps the time it was turned on.
-    pub fn set_firewall_mode(&self, mode: FirewallMode) -> Result<FirewallMode> {
-        let since = match mode {
-            FirewallMode::Monitor => None,
-            FirewallMode::BlockUnknown { since } => Some(since),
-        };
+    /// Put `mode` in force, journalled, and return the mode now in force. Setting the
+    /// mode already in force changes nothing, so Block-unknown keeps the time it was
+    /// turned on.
+    pub fn set_firewall_mode(&self, mode: FirewallMode, now: i64) -> Result<FirewallMode> {
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO firewall_mode (id, mode, since) VALUES (1, ?1, ?2)
-             ON CONFLICT (id) DO UPDATE SET mode = excluded.mode, since = excluded.since
-             WHERE mode != excluded.mode",
-            params![mode.id(), since],
-        )?;
+        if read_firewall_mode(&tx)?
+            .unwrap_or(FirewallMode::Monitor)
+            .id()
+            != mode.id()
+        {
+            change(&tx, Setting::Mode(mode), now, None)?;
+        }
         let now_in_force = read_firewall_mode(&tx)?.unwrap_or(FirewallMode::Monitor);
         tx.commit()?;
         Ok(now_in_force)
@@ -721,42 +759,122 @@ impl Store {
 
     /// Network isolation (RA-03), while it is on.
     pub fn isolation(&self) -> Result<Option<Isolation>> {
-        Ok(lock(&self.conn)
-            .query_row(
-                "SELECT since, own_app FROM isolation WHERE id = 1",
-                [],
-                |r| {
-                    Ok(Isolation {
-                        since: r.get(0)?,
-                        own_app: r.get(1)?,
-                    })
-                },
-            )
-            .optional()?)
+        read_isolation(&lock(&self.conn))
     }
 
-    /// Turn isolation on, or off with `None`. Turning it on while it is on keeps when it
-    /// was turned on.
-    pub fn set_isolation(&self, isolation: Option<&Isolation>) -> Result<()> {
-        let conn = lock(&self.conn);
-        match isolation {
-            Some(isolation) => conn.execute(
-                "INSERT INTO isolation (id, since, own_app) VALUES (1, ?1, ?2)
-                 ON CONFLICT (id) DO UPDATE SET own_app = excluded.own_app",
-                params![isolation.since, isolation.own_app],
-            )?,
-            None => conn.execute("DELETE FROM isolation", [])?,
+    /// Turn isolation on, or off with `None`, journalled. Turning it on while it is on
+    /// keeps when it was turned on.
+    pub fn set_isolation(&self, isolation: Option<&Isolation>, now: i64) -> Result<()> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let after = match (isolation, read_isolation(&tx)?) {
+            (Some(isolation), Some(in_force)) => Some(Isolation {
+                since: in_force.since,
+                own_app: isolation.own_app.clone(),
+            }),
+            (isolation, _) => isolation.cloned(),
         };
+        change(&tx, Setting::Isolation(after), now, None)?;
+        tx.commit()?;
         Ok(())
     }
 
-    /// Remove the firewall rule with this key. Returns whether there was one.
-    pub fn remove_firewall_rule(&self, key: &str) -> Result<bool> {
-        let removed = lock(&self.conn).execute(
-            "DELETE FROM rule WHERE id = ?1 AND kind = 'firewall'",
-            [key],
+    /// Remove the firewall rule with this key, journalled. Returns whether there was one.
+    pub fn remove_firewall_rule(&self, key: &str, now: i64) -> Result<bool> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let after = Setting::Rule {
+            key: key.to_owned(),
+            rule: None,
+        };
+        let removed = change(&tx, after, now, None)?;
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    /// The action journal, newest first (SRS §9). An entry this version cannot read is
+    /// left out.
+    pub fn journal(&self, limit: u32) -> Result<Vec<JournalEntry>> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT id, alert_id, actor, before_state, after_state, undo IS NOT NULL, at,
+                    undone_at
+             FROM action_journal ORDER BY id DESC LIMIT ?1",
         )?;
-        Ok(removed == 1)
+        let rows = stmt
+            .query_map([limit], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, bool>(5)?,
+                    r.get::<_, i64>(6)?,
+                    r.get::<_, Option<i64>>(7)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut entries = Vec::with_capacity(rows.len());
+        for (id, alert, actor, before, after, undoable, at, undone_at) in rows {
+            let Some(change) = read_change(&before, &after) else {
+                continue;
+            };
+            let can_undo = undoable
+                && undone_at.is_none()
+                && read_setting(&conn, change.after())? == *change.after();
+            entries.push(JournalEntry {
+                id,
+                alert,
+                actor,
+                change,
+                at,
+                undone_at,
+                can_undo,
+            });
+        }
+        Ok(entries)
+    }
+
+    /// Undo the journalled action `id`: put its setting back as it was before, if the
+    /// setting is still as the action left it, and record when it was undone.
+    pub fn undo(&self, id: i64, now: i64) -> Result<Undo> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let row = tx
+            .query_row(
+                "SELECT before_state, after_state, undo IS NOT NULL, undone_at
+                 FROM action_journal WHERE id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, bool>(2)?,
+                        r.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((before, after, undoable, undone_at)) = row else {
+            return Ok(Undo::NotFound);
+        };
+        if undone_at.is_some() {
+            return Ok(Undo::AlreadyUndone);
+        }
+        let Some(change) = read_change(&before, &after).filter(|_| undoable) else {
+            return Ok(Undo::CannotUndo);
+        };
+        if read_setting(&tx, change.after())? != *change.after() {
+            return Ok(Undo::ChangedSince);
+        }
+        write_setting(&tx, change.before(), now)?;
+        tx.execute(
+            "UPDATE action_journal SET undone_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )?;
+        tx.commit()?;
+        Ok(Undo::Undone)
     }
 
     /// The firewall rules in force, newest first. A rule this version cannot read is
@@ -1153,6 +1271,112 @@ fn read_firewall_mode(conn: &Connection) -> Result<Option<FirewallMode>> {
         )
         .optional()?;
     Ok(row.and_then(|(mode, since)| FirewallMode::from_id(&mode, since)))
+}
+
+fn read_isolation(conn: &Connection) -> Result<Option<Isolation>> {
+    Ok(conn
+        .query_row(
+            "SELECT since, own_app FROM isolation WHERE id = 1",
+            [],
+            |r| {
+                Ok(Isolation {
+                    since: r.get(0)?,
+                    own_app: r.get(1)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// The firewall rule kept under `key`, if this version can read it.
+fn read_rule(conn: &Connection, key: &str) -> Result<Option<FirewallRule>> {
+    let body: Option<String> = conn
+        .query_row(
+            "SELECT body FROM rule WHERE id = ?1 AND kind = 'firewall'",
+            [key],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(body.and_then(|body| FirewallRule::from_json(&body)))
+}
+
+/// The state in force of the setting `like` is a state of.
+fn read_setting(conn: &Connection, like: &Setting) -> Result<Setting> {
+    Ok(match like {
+        Setting::Rule { key, .. } => Setting::Rule {
+            key: key.clone(),
+            rule: read_rule(conn, key)?,
+        },
+        Setting::Mode(_) => {
+            Setting::Mode(read_firewall_mode(conn)?.unwrap_or(FirewallMode::Monitor))
+        }
+        Setting::Isolation(_) => Setting::Isolation(read_isolation(conn)?),
+    })
+}
+
+/// Put `setting` in force as it is, at `now`.
+fn write_setting(conn: &Connection, setting: &Setting, now: i64) -> Result<()> {
+    match setting {
+        Setting::Rule {
+            key,
+            rule: Some(rule),
+        } => conn.execute(
+            "INSERT INTO rule (id, kind, body, enabled, source, version, created)
+             VALUES (?1, 'firewall', ?2, 1, 'user', 1, ?3)
+             ON CONFLICT (id) DO UPDATE SET body = excluded.body, created = excluded.created",
+            params![key, rule.to_json(), now],
+        )?,
+        Setting::Rule { key, rule: None } => conn.execute(
+            "DELETE FROM rule WHERE id = ?1 AND kind = 'firewall'",
+            [key],
+        )?,
+        Setting::Mode(mode) => {
+            let since = match mode {
+                FirewallMode::Monitor => None,
+                FirewallMode::BlockUnknown { since } => Some(*since),
+            };
+            conn.execute(
+                "INSERT INTO firewall_mode (id, mode, since) VALUES (1, ?1, ?2)
+                 ON CONFLICT (id) DO UPDATE SET mode = excluded.mode, since = excluded.since",
+                params![mode.id(), since],
+            )?
+        }
+        Setting::Isolation(Some(isolation)) => conn.execute(
+            "INSERT INTO isolation (id, since, own_app) VALUES (1, ?1, ?2)
+             ON CONFLICT (id) DO UPDATE SET since = excluded.since, own_app = excluded.own_app",
+            params![isolation.since, isolation.own_app],
+        )?,
+        Setting::Isolation(None) => conn.execute("DELETE FROM isolation", [])?,
+    };
+    Ok(())
+}
+
+/// Put `after` in force and journal the change from the state in force (SRS §9), as
+/// the user's action, taken from `alert` if it exists. Returns whether anything
+/// changed: nothing is journalled when nothing did.
+fn change(tx: &Transaction<'_>, after: Setting, now: i64, alert: Option<i64>) -> Result<bool> {
+    let before = read_setting(tx, &after)?;
+    let Some(change) = Change::new(before, after) else {
+        return Ok(false);
+    };
+    write_setting(tx, change.after(), now)?;
+    tx.execute(
+        "INSERT INTO action_journal (alert_id, action, actor, before_state, after_state, undo, at)
+         VALUES ((SELECT id FROM alert WHERE id = ?1), ?2, 'user', ?3, ?4, ?5, ?6)",
+        params![
+            alert,
+            change.action(),
+            change.before().to_json(),
+            change.after().to_json(),
+            change.undo().action(),
+            now
+        ],
+    )?;
+    Ok(true)
+}
+
+fn read_change(before: &str, after: &str) -> Option<Change> {
+    Change::new(Setting::from_json(before)?, Setting::from_json(after)?)
 }
 
 fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<(i64, bool)> {

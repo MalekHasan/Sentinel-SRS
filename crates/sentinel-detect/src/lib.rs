@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 mod delivery;
 mod firewall;
 mod first_seen;
+mod journal;
 mod network;
 
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
@@ -22,6 +23,7 @@ pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,
     join_destinations, new_destinations,
 };
+pub use journal::{Change, Setting};
 pub use network::{NetworkState, network_changes};
 
 /// How urgent an alert is (AL-01). Ordered from least to most urgent.

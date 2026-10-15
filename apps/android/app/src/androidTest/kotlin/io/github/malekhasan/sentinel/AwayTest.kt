@@ -94,6 +94,7 @@ class AwayTest {
                     onShowLive = {},
                     onOpenApp = {},
                     onOpenAlert = {},
+                    onShowJournal = {},
                 )
             }
         }

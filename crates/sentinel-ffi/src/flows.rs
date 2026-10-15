@@ -997,11 +997,14 @@ mod tests {
         );
         let rule = |app: Option<&str>, destination: Option<RuleDestination>, action| {
             history
-                .set_firewall_rule(FirewallRule {
-                    app: app.map(str::to_owned),
-                    destination,
-                    action,
-                })
+                .set_firewall_rule(
+                    FirewallRule {
+                        app: app.map(str::to_owned),
+                        destination,
+                        action,
+                    },
+                    None,
+                )
                 .unwrap()
         };
         let domain = |name: &str| Some(RuleDestination::Domain { name: name.into() });
@@ -1147,12 +1150,15 @@ mod tests {
             action,
         };
         history
-            .set_firewall_rule(rule(
-                Some(RuleDestination::Domain {
-                    name: "ads.example".into(),
-                }),
-                RuleAction::Block,
-            ))
+            .set_firewall_rule(
+                rule(
+                    Some(RuleDestination::Domain {
+                        name: "ads.example".into(),
+                    }),
+                    RuleAction::Block,
+                ),
+                None,
+            )
             .unwrap();
         assert_eq!(
             events.dns_query(&dns, "ads.example"),
@@ -1160,7 +1166,7 @@ mod tests {
             "rules still apply"
         );
         history
-            .set_firewall_rule(rule(None, RuleAction::Allow))
+            .set_firewall_rule(rule(None, RuleAction::Allow), None)
             .unwrap();
         let allowed = at(4, 1);
         assert_eq!(
@@ -1221,13 +1227,16 @@ mod tests {
         );
         let company = |app: Option<&str>, action| {
             history
-                .set_firewall_rule(FirewallRule {
-                    app: app.map(str::to_owned),
-                    destination: Some(RuleDestination::Company {
-                        name: "Example Ads".into(),
-                    }),
-                    action,
-                })
+                .set_firewall_rule(
+                    FirewallRule {
+                        app: app.map(str::to_owned),
+                        destination: Some(RuleDestination::Company {
+                            name: "Example Ads".into(),
+                        }),
+                        action,
+                    },
+                    None,
+                )
                 .unwrap()
         };
         company(None, RuleAction::Block);
@@ -1287,13 +1296,16 @@ mod tests {
         assert_eq!(events.flow_started(&guessed), Verdict::Allow);
 
         history
-            .set_firewall_rule(FirewallRule {
-                app: None,
-                destination: Some(RuleDestination::Domain {
-                    name: "ads.example".into(),
-                }),
-                action: RuleAction::Block,
-            })
+            .set_firewall_rule(
+                FirewallRule {
+                    app: None,
+                    destination: Some(RuleDestination::Domain {
+                        name: "ads.example".into(),
+                    }),
+                    action: RuleAction::Block,
+                },
+                None,
+            )
             .unwrap();
         assert_eq!(events.recheck(&named), Verdict::Block, "by its server name");
         assert_eq!(
@@ -1303,11 +1315,14 @@ mod tests {
         );
 
         let chat = history
-            .set_firewall_rule(FirewallRule {
-                app: Some("org.example.chat".into()),
-                destination: None,
-                action: RuleAction::Block,
-            })
+            .set_firewall_rule(
+                FirewallRule {
+                    app: Some("org.example.chat".into()),
+                    destination: None,
+                    action: RuleAction::Block,
+                },
+                None,
+            )
             .unwrap();
         assert_eq!(events.recheck(&guessed), Verdict::Block, "by its app");
         assert!(history.remove_firewall_rule(chat).unwrap());
@@ -1343,13 +1358,16 @@ mod tests {
             )],
         );
         history
-            .set_firewall_rule(FirewallRule {
-                app: None,
-                destination: Some(RuleDestination::Network {
-                    range: "203.0.113.0/24".into(),
-                }),
-                action: RuleAction::Block,
-            })
+            .set_firewall_rule(
+                FirewallRule {
+                    app: None,
+                    destination: Some(RuleDestination::Network {
+                        range: "203.0.113.0/24".into(),
+                    }),
+                    action: RuleAction::Block,
+                },
+                None,
+            )
             .unwrap();
         let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
         assert_eq!(
@@ -1472,11 +1490,14 @@ mod tests {
 
         // What the alert's action does: a rule allowing the app.
         let allowed = history
-            .set_firewall_rule(FirewallRule {
-                app: Some("org.example.new".into()),
-                destination: None,
-                action: RuleAction::Allow,
-            })
+            .set_firewall_rule(
+                FirewallRule {
+                    app: Some("org.example.new".into()),
+                    destination: None,
+                    action: RuleAction::Allow,
+                },
+                None,
+            )
             .unwrap();
         assert_eq!(events.flow_started(&at(5, 1)), Verdict::Allow);
         assert!(history.remove_firewall_rule(allowed).unwrap());

@@ -212,7 +212,25 @@ CREATE TABLE isolation (
 );
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13];
+/// The action journal (SRS §9 and §13.1 `action_journal`, ADR-0018): each change to the
+/// firewall rules, the mode or isolation, with the setting before and after as JSON
+/// (`sentinel_detect::Setting`). `undo` names the action that undoes it, or is NULL if
+/// it cannot be undone; `undone_at` is set once it was.
+const V14: &str = "
+CREATE TABLE action_journal (
+  id INTEGER PRIMARY KEY,
+  alert_id INTEGER REFERENCES alert(id) ON DELETE SET NULL,  -- the alert it was taken from
+  action TEXT NOT NULL,              -- keep_rule|remove_rule|set_mode|isolate|end_isolation
+  actor TEXT NOT NULL,               -- user
+  before_state TEXT NOT NULL,
+  after_state TEXT NOT NULL,
+  undo TEXT,
+  at INTEGER NOT NULL,
+  undone_at INTEGER
+);
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

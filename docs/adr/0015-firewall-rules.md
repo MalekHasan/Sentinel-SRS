@@ -2,7 +2,7 @@
 
 - Status: **Accepted** (Sprint 6; `crates/sentinel-detect`, then `crates/sentinel-store`, `crates/sentinel-vpn`, `crates/sentinel-ffi`, `apps/android`)
 - Date: 2026-10-15
-- Implements: SRS CM-10 for Android, the Phase A subset: rules by app, domain, address and company; RA-01 (block an app, a destination or a company, from the app). Modes (CM-08) are [ADR-0016](0016-firewall-modes.md), isolation (RA-03) is [ADR-0017](0017-isolation.md); the action journal follows in Sprint 6.
+- Implements: SRS CM-10 for Android, the Phase A subset: rules by app, domain, address and company; RA-01 (block an app, a destination or a company, from the app). Modes (CM-08) are [ADR-0016](0016-firewall-modes.md), isolation (RA-03) is [ADR-0017](0017-isolation.md); the action journal and undo are [ADR-0018](0018-action-journal.md).
 
 ## Context
 

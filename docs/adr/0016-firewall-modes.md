@@ -63,4 +63,5 @@ Android gives every app its first install time (`PackageInfo.firstInstallTime`),
 - **A clock moved back** makes apps installed afterwards look older than the switch, so the mode lets them through. A clock moved forward does the opposite. Android sets the clock from the network, so this needs a deliberate change.
 - **Within one monitoring run, an app's install time is read once.** An app uninstalled and installed again while monitoring runs keeps its first install time until monitoring restarts.
 - **The probe is a test fixture only.** It is a separate Gradle module that ships nowhere; the device tests install it from the test APK's assets with `pm install`, and the CI and local test command runs the app module's tests only (`:app:connectedDebugAndroidTest`).
-- **Not yet:** Lockdown (only allow-listed apps), the list of allowed apps on a settings screen, and undo through the action journal (SRS §9, next tasks).
+- **A switch can be undone** from the action journal ([ADR-0018](0018-action-journal.md)), which puts back the mode with the time Block new apps counted from.
+- **Not yet:** Lockdown (only allow-listed apps), and the list of allowed apps on a settings screen.

@@ -89,6 +89,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val scope = rememberCoroutineScope()
             var showLive by rememberSaveable { mutableStateOf(false) }
+            var showJournal by rememberSaveable { mutableStateOf(false) }
             // The app whose detail is open, over whichever screen opened it.
             var openApp by rememberSaveable { mutableStateOf<String?>(null) }
             // The alert that is open; an app opened from it shows over it.
@@ -97,6 +98,7 @@ class MainActivity : ComponentActivity() {
                 requestedAlert.value?.let {
                     openApp = null
                     showLive = false
+                    showJournal = false
                     openAlert = it
                     requestedAlert.value = null
                 }
@@ -124,11 +126,15 @@ class MainActivity : ComponentActivity() {
                                         is AlertAction.OpenApp -> openApp = action.app
                                         is AlertAction.OpenNetworkSettings ->
                                             startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
-                                        is AlertAction.AllowApp -> scope.launch { allow(action.app) }
-                                        is AlertAction.BlockApp -> scope.launch { block(action.app) }
+                                        is AlertAction.AllowApp -> scope.launch { allow(action.app, alert) }
+                                        is AlertAction.BlockApp -> scope.launch { block(action.app, alert) }
                                     }
                                 },
                             )
+                        }
+                        showJournal -> {
+                            BackHandler { showJournal = false }
+                            JournalScreen(onBack = { showJournal = false })
                         }
                         showLive -> {
                             BackHandler { showLive = false }
@@ -144,6 +150,7 @@ class MainActivity : ComponentActivity() {
                             onStart = ::requestStart,
                             onStop = ::stopMonitoring,
                             onShowLive = { showLive = true },
+                            onShowJournal = { showJournal = true },
                             onOpenApp = { openApp = it },
                             onOpenAlert = { openAlert = it },
                         )
@@ -153,15 +160,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Lets [app] use the internet (CM-08) and says so. */
-    private suspend fun allow(app: String) = firewallAction(app, R.string.firewall_app_allowed, ::allowApp)
+    /** Lets [app] use the internet (CM-08), as alert [fromAlert] offered, and says so. */
+    private suspend fun allow(app: String, fromAlert: Long) =
+        firewallAction(app, fromAlert, R.string.firewall_app_allowed, ::allowApp)
 
-    /** Stops [app] using the internet (RA-01) and says so. */
-    private suspend fun block(app: String) = firewallAction(app, R.string.firewall_app_blocked, ::blockApp)
+    /** Stops [app] using the internet (RA-01), as alert [fromAlert] offered, and says so. */
+    private suspend fun block(app: String, fromAlert: Long) =
+        firewallAction(app, fromAlert, R.string.firewall_app_blocked, ::blockApp)
 
-    private suspend fun firewallAction(app: String, done: Int, act: (Context, String) -> Boolean) {
+    private suspend fun firewallAction(
+        app: String,
+        fromAlert: Long,
+        done: Int,
+        act: (Context, String, Long?) -> Boolean,
+    ) {
         val label = withContext(Dispatchers.IO) {
-            if (act(this@MainActivity, app)) AppNames(this@MainActivity).labelFor(app) else null
+            if (act(this@MainActivity, app, fromAlert)) AppNames(this@MainActivity).labelFor(app) else null
         }
         if (label != null) {
             Toast.makeText(this, getString(done, isolate(label)), Toast.LENGTH_LONG).show()
@@ -233,6 +247,7 @@ fun MonitorScreen(
     onShowLive: () -> Unit,
     onOpenApp: (String) -> Unit,
     onOpenAlert: (Long) -> Unit,
+    onShowJournal: () -> Unit,
 ) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
@@ -319,6 +334,7 @@ fun MonitorScreen(
                 }
             }
         },
+        onShowJournal = onShowJournal,
         firewallMode = mode,
         onFirewallMode = { chosen ->
             scope.launch {
@@ -352,6 +368,7 @@ fun MonitorContent(
     isolatedSince: Long? = null,
     onIsolate: () -> Unit = {},
     onEndIsolation: () -> Unit = {},
+    onShowJournal: () -> Unit = {},
 ) {
     val context = LocalContext.current
     Column(
@@ -408,6 +425,8 @@ fun MonitorContent(
 
         // Kept in the history, so it can be chosen before monitoring starts (CM-08).
         FirewallModeChoice(firewallMode, onFirewallMode)
+        // Every change to the firewall, with Undo (SRS §9).
+        OutlinedButton(onClick = onShowJournal) { Text(stringResource(R.string.journal_action)) }
 
         if (away.isNotEmpty()) {
             Text(stringResource(R.string.away_title), style = MaterialTheme.typography.titleSmall)
