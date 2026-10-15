@@ -2,11 +2,11 @@
 //! The encrypted local history (SRS §13), as seen from Kotlin.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use sentinel_store::{KEY_LEN, Store, StoreError};
 
-use crate::alerts::HistoryAlert;
+use crate::alerts::{AlertDelivery, AlertListener, HistoryAlert};
 use crate::enrich::{CategoryFact, CompanyFact};
 use crate::flows::{FlowProto, NameSource};
 
@@ -143,6 +143,7 @@ pub struct HistoryAway {
 #[derive(uniffi::Object)]
 pub struct HistoryStore {
     pub(crate) store: Store,
+    alert_listener: Mutex<Option<Arc<dyn AlertListener>>>,
 }
 
 #[uniffi::export]
@@ -155,7 +156,10 @@ impl HistoryStore {
             expected: KEY_LEN as u32,
         })?;
         let store = Store::open(Path::new(&path), &key)?;
-        Ok(Arc::new(HistoryStore { store }))
+        Ok(Arc::new(HistoryStore {
+            store,
+            alert_listener: Mutex::new(None),
+        }))
     }
 
     /// The most recent flows, newest first.
@@ -266,9 +270,30 @@ impl HistoryStore {
     pub fn open_gap(&self, started_ms: Option<i64>, reason: String) -> Result<(), HistoryError> {
         if self.store.open_gap(started_ms, &reason)? {
             let alert = sentinel_detect::monitoring_interrupted(now_ms(), started_ms, &reason);
-            self.store.record_alert(&alert)?;
+            self.raise(&alert)?;
         }
         Ok(())
+    }
+
+    /// Tell `listener` about every new alert from now on, or no one.
+    pub fn set_alert_listener(&self, listener: Option<Arc<dyn AlertListener>>) {
+        *self
+            .alert_listener
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = listener;
+    }
+
+    /// Whether alert `id` gets a notification now (AL-03, AL-04); if so, it is recorded
+    /// as notified. `None` if there is no alert with this id.
+    pub fn claim_notification(
+        &self,
+        id: i64,
+        do_not_disturb: bool,
+    ) -> Result<Option<AlertDelivery>, HistoryError> {
+        Ok(self
+            .store
+            .claim_notification(id, now_ms(), do_not_disturb)?
+            .map(AlertDelivery::from))
     }
 
     /// The most recent alerts, newest first: only the open ones, or all of them.
@@ -325,6 +350,23 @@ impl HistoryStore {
 #[uniffi::export]
 pub fn wipe_history(path: String) -> Result<(), HistoryError> {
     Ok(sentinel_store::wipe(Path::new(&path))?)
+}
+
+impl HistoryStore {
+    /// Keep a new alert and tell the listener, if any. The listener is called without
+    /// any lock held, so it may read the history.
+    fn raise(&self, alert: &sentinel_detect::Alert) -> Result<(), HistoryError> {
+        let id = self.store.record_alert(alert)?;
+        let listener = self
+            .alert_listener
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let (Some(listener), Some(stored)) = (listener, self.store.alert(id)?) {
+            listener.raised(stored.into());
+        }
+        Ok(())
+    }
 }
 
 fn now_ms() -> i64 {
@@ -410,5 +452,91 @@ mod tests {
         );
         assert!(!history.alert(alert.id).unwrap().unwrap().open);
         assert_eq!(history.alerts(false, 10).unwrap().len(), 2);
+    }
+
+    /// Hears each new alert and, like the app, claims its notification at once: from
+    /// inside the call, which must not deadlock.
+    struct Notifier {
+        history: Mutex<std::sync::Weak<HistoryStore>>,
+        do_not_disturb: bool,
+        heard: Mutex<Vec<(HistoryAlert, Option<AlertDelivery>)>>,
+    }
+
+    impl AlertListener for Notifier {
+        fn raised(&self, alert: HistoryAlert) {
+            let history = self.history.lock().unwrap().upgrade().unwrap();
+            let delivery = history
+                .claim_notification(alert.id, self.do_not_disturb)
+                .unwrap();
+            self.heard.lock().unwrap().push((alert, delivery));
+        }
+    }
+
+    /// AL-03, AL-04, AL-06: the app hears each new alert; three notifications an hour
+    /// pass for the same subject, and Do Not Disturb holds a Warning.
+    #[test]
+    fn the_app_hears_each_alert_and_notifications_are_limited() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        let listen = |do_not_disturb: bool| {
+            let notifier = Arc::new(Notifier {
+                history: Mutex::new(Arc::downgrade(&history)),
+                do_not_disturb,
+                heard: Mutex::new(Vec::new()),
+            });
+            history.set_alert_listener(Some(notifier.clone()));
+            notifier
+        };
+
+        let notifier = listen(false);
+        for gap in 0..5 {
+            history.open_gap(Some(gap), format!("gap {gap}")).unwrap();
+            history.close_gap(gap + 1).unwrap();
+        }
+        let heard = notifier.heard.lock().unwrap().clone();
+        assert_eq!(heard.len(), 5, "one call per new alert");
+        let deliveries: Vec<_> = heard.iter().map(|(_, d)| *d).collect();
+        assert_eq!(
+            deliveries,
+            [
+                Some(AlertDelivery::Notify),
+                Some(AlertDelivery::Notify),
+                Some(AlertDelivery::Notify),
+                Some(AlertDelivery::HeldForRateLimit),
+                Some(AlertDelivery::HeldForRateLimit),
+            ]
+        );
+        let notified = history
+            .alerts(false, 10)
+            .unwrap()
+            .iter()
+            .filter(|a| a.notified_ms.is_some())
+            .count();
+        assert_eq!(notified, 3);
+
+        // Do Not Disturb: the Warning waits in the app.
+        let fresh = tempfile::tempdir().unwrap();
+        let path = fresh.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        let quiet = Arc::new(Notifier {
+            history: Mutex::new(Arc::downgrade(&history)),
+            do_not_disturb: true,
+            heard: Mutex::new(Vec::new()),
+        });
+        history.set_alert_listener(Some(quiet.clone()));
+        history.open_gap(None, "quiet".into()).unwrap();
+        assert_eq!(
+            quiet.heard.lock().unwrap()[0].1,
+            Some(AlertDelivery::HeldForDoNotDisturb)
+        );
+
+        // Without a listener nothing is told, and nothing breaks.
+        history.set_alert_listener(None);
+        history.close_gap(5).unwrap();
+        history.open_gap(None, "unheard".into()).unwrap();
+        assert_eq!(quiet.heard.lock().unwrap().len(), 1);
+        assert_eq!(history.claim_notification(9_999, false).unwrap(), None);
+        drop(notifier);
     }
 }

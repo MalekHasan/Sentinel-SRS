@@ -2,7 +2,7 @@
 //! Alerts (SRS §12.1) as seen from Kotlin. The app writes each alert's title and
 //! explanation in the user's language from its rule and evidence (ADR-0012).
 
-use sentinel_detect::{Action, AlertState, Evidence, Rule, Severity};
+use sentinel_detect::{Action, AlertState, Delivery, Evidence, Rule, Severity};
 use sentinel_store::StoredAlert;
 
 /// How urgent an alert is (AL-01).
@@ -56,6 +56,37 @@ pub struct HistoryAlert {
     pub actions: Vec<AlertAction>,
     /// False once the user has dismissed it.
     pub open: bool,
+    /// When a notification was posted for it; `None` if it was kept in the app only.
+    #[uniffi(default = None)]
+    pub notified_ms: Option<i64>,
+}
+
+/// How a new alert reaches the user (AL-03, AL-04).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AlertDelivery {
+    /// Post a notification.
+    Notify,
+    /// Do Not Disturb is on and the alert is below High: it waits in the app.
+    HeldForDoNotDisturb,
+    /// The app it is about already had three non-critical notifications this hour.
+    HeldForRateLimit,
+}
+
+impl From<Delivery> for AlertDelivery {
+    fn from(delivery: Delivery) -> Self {
+        match delivery {
+            Delivery::Notify => AlertDelivery::Notify,
+            Delivery::HoldForDoNotDisturb => AlertDelivery::HeldForDoNotDisturb,
+            Delivery::HoldForRateLimit => AlertDelivery::HeldForRateLimit,
+        }
+    }
+}
+
+/// Implemented by the app: told about each new alert, to notify the user (AL-06).
+/// Called on the thread that raised it, after it is stored.
+#[uniffi::export(with_foreign)]
+pub trait AlertListener: Send + Sync {
+    fn raised(&self, alert: HistoryAlert);
 }
 
 impl From<StoredAlert> for HistoryAlert {
@@ -93,6 +124,7 @@ impl From<StoredAlert> for HistoryAlert {
                 })
                 .collect(),
             open: stored.state == AlertState::Open,
+            notified_ms: stored.notified,
         }
     }
 }

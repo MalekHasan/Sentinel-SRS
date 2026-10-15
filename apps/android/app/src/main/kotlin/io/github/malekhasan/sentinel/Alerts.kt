@@ -200,30 +200,30 @@ private fun severityColors(severity: AlertSeverity): Pair<Color, Color> =
     }
 
 @Composable
-private fun severityName(severity: AlertSeverity): String = stringResource(
-    when (severity) {
-        AlertSeverity.INFO -> R.string.severity_info
-        AlertSeverity.WARNING -> R.string.severity_warning
-        AlertSeverity.HIGH -> R.string.severity_high
-        AlertSeverity.CRITICAL -> R.string.severity_critical
-    },
-)
+private fun severityName(severity: AlertSeverity): String = stringResource(severityNameRes(severity))
+
+fun severityNameRes(severity: AlertSeverity): Int = when (severity) {
+    AlertSeverity.INFO -> R.string.severity_info
+    AlertSeverity.WARNING -> R.string.severity_warning
+    AlertSeverity.HIGH -> R.string.severity_high
+    AlertSeverity.CRITICAL -> R.string.severity_critical
+}
 
 /** The alert's title in the screen's language (AL-02). */
 @Composable
-fun alertTitle(alert: HistoryAlert): String = stringResource(
-    when (alert.rule) {
-        AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_title
-    },
-)
+fun alertTitle(alert: HistoryAlert): String = stringResource(titleRes(alert.rule))
 
 /** The alert's one-sentence explanation in the screen's language (AL-02). */
 @Composable
-fun alertExplanation(alert: HistoryAlert): String = stringResource(
-    when (alert.rule) {
-        AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_text
-    },
-)
+fun alertExplanation(alert: HistoryAlert): String = stringResource(explanationRes(alert.rule))
+
+fun titleRes(rule: AlertRule): Int = when (rule) {
+    AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_title
+}
+
+fun explanationRes(rule: AlertRule): Int = when (rule) {
+    AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_text
+}
 
 @Composable
 private fun raisedWhen(alert: HistoryAlert): String =

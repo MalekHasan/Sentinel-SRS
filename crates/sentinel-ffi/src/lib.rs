@@ -10,7 +10,10 @@ mod enrich;
 mod flows;
 mod history;
 
-pub use alerts::{AlertAction, AlertEvidence, AlertRule, AlertSeverity, HistoryAlert};
+pub use alerts::{
+    AlertAction, AlertDelivery, AlertEvidence, AlertListener, AlertRule, AlertSeverity,
+    HistoryAlert,
+};
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
 pub use enrich::{
     CategoryFact, CompanyFact, IpDatabase, IpDatabaseError, IpSources, TrackerDatabase,

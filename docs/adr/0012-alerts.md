@@ -2,7 +2,7 @@
 
 - Status: **Accepted** (Sprint 5; `crates/sentinel-detect`, `crates/sentinel-store`, `apps/android`)
 - Date: 2026-10-15
-- Implements: SRS AL-01, AL-02, and the alert for monitoring gaps (SP-03); prepares AL-03 to AL-06
+- Implements: SRS AL-01, AL-02, the alert for monitoring gaps (SP-03), and delivery as notifications (AL-03, AL-04, AL-06); prepares AL-05
 
 ## Context
 
@@ -28,6 +28,29 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
 5. **Alerts live in the encrypted history** (schema version 6, [ADR-0009](0009-local-history-store.md)), so the one-tap wipe removes them too. A row this version cannot read (an unknown rule, severity, state or evidence) is reported as an error, not skipped silently.
 6. **The first rule is "monitoring stopped"** (SP-03). Each new monitoring gap raises one Warning alert, with the gap's start and recorded reason as evidence, offering to start monitoring again. A stop the user asked for is not a gap and raises nothing.
 
+### Delivery (AL-03, AL-04, AL-06)
+
+7. **The core decides whether an alert is notified now.** The rule lives in `sentinel-detect` (`delivery`), so every edition applies it the same way:
+   - Critical alerts are always notified.
+   - While Do Not Disturb is on, Info and Warning alerts wait in the app. High and Critical alerts are posted.
+   - Otherwise an alert is notified unless the app it is about already had three non-critical notifications in the last hour. Sentinel's own alerts, such as a monitoring gap, count as one app.
+
+   The store records when each alert was notified (schema version 7) and makes the decision and the record in one transaction. That way two alerts raised at once cannot both pass the limit. An alert that is not notified is still kept and shown in the app.
+8. **The app hears every new alert** through a listener the core calls after storing it. The app reads the phone's Do Not Disturb state and asks the core for the decision. It posts only if allowed, and only if Android would show the notification (permission granted, channel not turned off), so that a hidden notification does not use up the allowance.
+9. **One Android notification channel per severity**, each with its own importance, sound and vibration:
+
+   | Severity | Importance | Sound | Vibration |
+   | --- | --- | --- | --- |
+   | Info | Low | None | None |
+   | Warning | Default | Notification sound | Short |
+   | High | High (shown at the top of the screen) | Notification sound | Two pulses |
+   | Critical | High | Alarm sound | Three long pulses |
+
+   This completes AL-01's distinct sounds. The user can change each channel in Android's settings.
+10. **Repeated alerts share one notification.** Alerts of the same rule about the same app replace each other's notification, which says how many more like it are open (AL-03's grouping).
+11. **Nothing on the lock screen.** Notifications are private: the lock screen shows only "Sentinel has an alert". What was found, and about which app, can matter to someone who looks at another person's phone. THREAT-MODEL-A's B5 is that person with the phone unlocked; a locked phone should not show more.
+12. Tapping a notification opens the alert in the app, and a notification offers no other action. Every alert also lives in the app, so a notification that imitates Sentinel's leads nowhere new (THREAT-MODEL-A S4).
+
 ## Verification
 
 - `sentinel-detect` unit tests:
@@ -43,8 +66,20 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
   - `AlertTextTest` checks the English texts against AL-02's reading grade of 8, using the Flesch-Kincaid formula on each rule's title and explanation and on the screen's other texts;
   - `RtlTest` shows the alert screens in Arabic, right to left.
 
+- Delivery:
+  - the `delivery` unit tests cover each severity with and without Do Not Disturb, the per-app count, critical alerts never being held, and the one-hour window;
+  - AL-03's load test sends one alert per second for two hours and gets exactly three notifications in each hour, with every critical one notified;
+  - the store and FFI tests check the atomic claim, that a claim is never counted twice, and that the app's listener can claim from inside the call.
+- `AlertNotificationTest` on the emulator checks:
+  - the four channels' importance, sounds, vibrations and lock-screen privacy;
+  - that a gap posts a Warning notification whose lock-screen version says nothing;
+  - that five gaps give one notification, three of them notified;
+  - that a Warning waits in the app while Do Not Disturb is on.
+
 ## Consequences
 
 - Every new rule needs a title and an explanation in each app's strings. `AlertTextTest` finds rules by their `alert_<rule>_title` and `alert_<rule>_text` strings, so a rule with strings in English only, or with hard words, fails the build's device tests.
 - A gap's reason is stored as text in the language of the moment it was recorded (the gap log predates this decision); the alert shows it as evidence, as recorded.
-- Grouping, rate limits, Do Not Disturb, notification channels and sounds (AL-03, AL-04, AL-06) and feedback (AL-05) build on this model in the rest of Sprint 5.
+- **Do Not Disturb on Android.** Android lets only the user allow an app's channel through Do Not Disturb. Sentinel asks for it on the High and Critical channels, and posts those alerts during Do Not Disturb. Whether they make a sound depends on the user allowing Sentinel in Do Not Disturb. Quiet hours on Android are Do Not Disturb schedules, so Sentinel has no quiet-hours setting of its own. A settings screen that shows the user how to let Critical alerts through comes with the settings work.
+- Alerts held for Do Not Disturb or the rate limit are not notified later; they wait in the app's list.
+- Feedback (AL-05) builds on this model in the rest of Sprint 5.

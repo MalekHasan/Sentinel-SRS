@@ -8,6 +8,10 @@
 
 use serde::{Deserialize, Serialize};
 
+mod delivery;
+
+pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
+
 /// How urgent an alert is (AL-01). Ordered from least to most urgent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {
@@ -116,6 +120,15 @@ pub struct Alert {
 impl Alert {
     pub fn actions(&self) -> Vec<Action> {
         self.rule.actions(&self.evidence)
+    }
+
+    /// The app the alert is about: the first app in its evidence. `None` for alerts
+    /// about Sentinel itself, such as a monitoring gap.
+    pub fn app(&self) -> Option<&str> {
+        self.evidence.iter().find_map(|e| match e {
+            Evidence::App { package } => Some(package.as_str()),
+            Evidence::Gap { .. } => None,
+        })
     }
 }
 

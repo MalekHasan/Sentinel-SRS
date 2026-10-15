@@ -20,7 +20,11 @@ object History {
 
     fun get(context: Context): HistoryStore =
         store ?: synchronized(this) {
-            store ?: open(context.applicationContext).also { store = it }
+            store ?: open(context.applicationContext).also {
+                // Every new alert may become a notification (AL-06).
+                it.setAlertListener(AlertNotifier.Listener(context.applicationContext))
+                store = it
+            }
         }
 
     /**

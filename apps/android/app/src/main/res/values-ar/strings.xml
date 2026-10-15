@@ -119,6 +119,23 @@
     <string name="alert_action_open_app">شوف شو عمل %1$s</string>
     <string name="alert_dismiss">إخفاء</string>
     <string name="alert_dismissed">أخفيت هالتنبيه.</string>
+    <string name="alert_notification_public">في تنبيه من Sentinel. افتح قفل الموبايل عشان تشوفه.</string>
+    <plurals name="alert_more_like_this">
+        <item quantity="zero">ما في تنبيهات تانية متلو مفتوحة.</item>
+        <item quantity="one">في تنبيه واحد تاني متلو مفتوح.</item>
+        <item quantity="two">في تنبيهين تانيين متلو مفتوحين.</item>
+        <item quantity="few">في %d تنبيهات تانية متلو مفتوحة.</item>
+        <item quantity="many">في %d تنبيه تاني متلو مفتوح.</item>
+        <item quantity="other">في %d تنبيه تاني متلو مفتوح.</item>
+    </plurals>
+    <string name="channel_alert_info">تنبيهات: معلومة</string>
+    <string name="channel_alert_info_description">أشياء منيح تعرفها. بدون صوت.</string>
+    <string name="channel_alert_warning">تنبيهات: تحذير</string>
+    <string name="channel_alert_warning_description">أشياء لازم تشيّك عليها قريباً. بتستنى لما يكون وضع عدم الإزعاج شغّال.</string>
+    <string name="channel_alert_high">تنبيهات: خطورة عالية</string>
+    <string name="channel_alert_high_description">أشياء لازم تشوفها هلأ. بتقدر توصلك بوضع عدم الإزعاج إذا سمحتلها.</string>
+    <string name="channel_alert_critical">تنبيهات: خطر كبير</string>
+    <string name="channel_alert_critical_description">علامات برنامج تجسس أو هجوم. إلها صوت منبّه، وبتقدر توصلك بوضع عدم الإزعاج إذا سمحتلها.</string>
     <!-- عنوان كل قاعدة وجملة الشرح تبعها (AL-02): كلام بسيط. -->
     <string name="alert_monitoring_interrupted_title">المراقبة وقفت</string>
     <string name="alert_monitoring_interrupted_text">تطبيق Sentinel وقف يراقب تطبيقاتك، فاللي عملته بهالوقت مش مسجّل.</string>

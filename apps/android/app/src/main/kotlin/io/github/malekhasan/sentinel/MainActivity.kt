@@ -62,6 +62,9 @@ class MainActivity : ComponentActivity() {
     /** True between onStart and onStop: live counters refresh only while visible. */
     private val visible = mutableStateOf(false)
 
+    /** The alert a tapped notification asks to show (AL-06). */
+    private val requestedAlert = mutableStateOf<Long?>(null)
+
     private val vpnConsent =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK) startMonitoring()
@@ -75,6 +78,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         GapLog.recordUnexpectedExit(this)
+        if (savedInstanceState == null) showRequestedAlert(intent)
         // Calls into the Rust core through UniFFI: proves the native library loads.
         val version = coreVersion()
         setContent {
@@ -83,6 +87,14 @@ class MainActivity : ComponentActivity() {
             var openApp by rememberSaveable { mutableStateOf<String?>(null) }
             // The alert that is open; an app opened from it shows over it.
             var openAlert by rememberSaveable { mutableStateOf<Long?>(null) }
+            LaunchedEffect(requestedAlert.value) {
+                requestedAlert.value?.let {
+                    openApp = null
+                    showLive = false
+                    openAlert = it
+                    requestedAlert.value = null
+                }
+            }
             SentinelTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val detail = openApp
@@ -129,6 +141,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        showRequestedAlert(intent)
+    }
+
+    private fun showRequestedAlert(intent: Intent?) {
+        val id = intent?.getLongExtra(AlertNotifier.EXTRA_ALERT_ID, -1L) ?: -1L
+        if (id >= 0) requestedAlert.value = id
     }
 
     override fun onStart() {

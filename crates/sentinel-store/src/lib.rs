@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use sentinel_detect::{Alert, AlertState, Rule, Severity};
+use sentinel_detect::{Alert, AlertState, Delivery, Rule, Sent, Severity};
 use zeroize::Zeroizing;
 
 mod schema;
@@ -186,6 +186,9 @@ pub struct StoredAlert {
     pub id: i64,
     pub alert: Alert,
     pub state: AlertState,
+    /// When a notification was posted for it, Unix milliseconds; `None` if it was kept
+    /// in the app only (AL-03, AL-04).
+    pub notified: Option<i64>,
 }
 
 /// One app's traffic while the user was away (SRS CM-06).
@@ -372,10 +375,10 @@ impl Store {
     /// The most recent alerts, newest first: only the open ones, or all of them.
     pub fn alerts(&self, open_only: bool, limit: u32) -> Result<Vec<StoredAlert>> {
         let conn = lock(&self.conn);
-        let mut stmt = conn.prepare(
-            "SELECT id, rule_id, severity, evidence, created, state FROM alert
-             WHERE ?1 = 0 OR state = 'open' ORDER BY created DESC, id DESC LIMIT ?2",
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "{ALERT_COLUMNS} WHERE ?1 = 0 OR state = 'open' ORDER BY created DESC, id DESC
+             LIMIT ?2"
+        ))?;
         let rows = stmt
             .query_map(params![open_only, limit], alert_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -385,13 +388,56 @@ impl Store {
     /// One alert, if there is one with this id.
     pub fn alert(&self, id: i64) -> Result<Option<StoredAlert>> {
         let row = lock(&self.conn)
-            .query_row(
-                "SELECT id, rule_id, severity, evidence, created, state FROM alert WHERE id = ?1",
-                [id],
-                alert_row,
-            )
+            .query_row(&format!("{ALERT_COLUMNS} WHERE id = ?1"), [id], alert_row)
             .optional()?;
         row.map(stored_alert).transpose()
+    }
+
+    /// Decide whether alert `id` is notified now (AL-03, AL-04), and if so record that it
+    /// was, in one step so that two callers cannot both pass the rate limit. An alert
+    /// already notified stays notified. `None` if there is no alert with this id.
+    pub fn claim_notification(
+        &self,
+        id: i64,
+        now: i64,
+        do_not_disturb: bool,
+    ) -> Result<Option<Delivery>> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let Some(row) = tx
+            .query_row(&format!("{ALERT_COLUMNS} WHERE id = ?1"), [id], alert_row)
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let stored = stored_alert(row)?;
+        if stored.notified.is_some() {
+            return Ok(Some(Delivery::Notify));
+        }
+        let since = now.saturating_sub(sentinel_detect::RATE_WINDOW_MS);
+        let mut stmt = tx.prepare(&format!("{ALERT_COLUMNS} WHERE notified > ?1"))?;
+        let sent = stmt
+            .query_map([since], alert_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|row| {
+                stored_alert(row).map(|s| Sent {
+                    at: s.notified.unwrap_or_default(),
+                    severity: s.alert.severity,
+                    app: s.alert.app().map(str::to_owned),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        drop(stmt);
+        let delivery = sentinel_detect::delivery(&stored.alert, now, do_not_disturb, &sent);
+        if delivery == Delivery::Notify {
+            tx.execute(
+                "UPDATE alert SET notified = ?2 WHERE id = ?1",
+                params![id, now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(Some(delivery))
     }
 
     /// Change an alert's state. Returns whether there is an alert with this id.
@@ -793,8 +839,12 @@ fn proto_from(name: &str) -> Proto {
     }
 }
 
-/// An alert row as read: id, rule id, severity, evidence, created, state.
-type AlertRow = (i64, String, String, String, i64, String);
+/// The columns [`alert_row`] reads.
+const ALERT_COLUMNS: &str =
+    "SELECT id, rule_id, severity, evidence, created, state, notified FROM alert";
+
+/// An alert row as read: id, rule id, severity, evidence, created, state, notified.
+type AlertRow = (i64, String, String, String, i64, String, Option<i64>);
 
 fn alert_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AlertRow> {
     Ok((
@@ -804,10 +854,13 @@ fn alert_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AlertRow> {
         r.get(3)?,
         r.get(4)?,
         r.get(5)?,
+        r.get(6)?,
     ))
 }
 
-fn stored_alert((id, rule, severity, evidence, created, state): AlertRow) -> Result<StoredAlert> {
+fn stored_alert(
+    (id, rule, severity, evidence, created, state, notified): AlertRow,
+) -> Result<StoredAlert> {
     let bad = || StoreError::BadAlert(id);
     Ok(StoredAlert {
         id,
@@ -818,6 +871,7 @@ fn stored_alert((id, rule, severity, evidence, created, state): AlertRow) -> Res
             evidence: sentinel_detect::evidence_from_json(&evidence).map_err(|_| bad())?,
         },
         state: AlertState::from_name(&state).ok_or_else(bad)?,
+        notified,
     })
 }
 

@@ -601,11 +601,13 @@ fn alerts_are_kept_with_their_evidence_and_state() {
                 id: newer_id,
                 alert: newer.clone(),
                 state: AlertState::Open,
+                notified: None,
             },
             StoredAlert {
                 id: older_id,
                 alert: older.clone(),
                 state: AlertState::Open,
+                notified: None,
             },
         ]
     );
@@ -631,6 +633,75 @@ fn alerts_are_kept_with_their_evidence_and_state() {
     drop(store);
     let store = Store::open(&db(&dir), &KEY).unwrap();
     assert_eq!(store.alert(older_id).unwrap().unwrap().alert, older);
+}
+
+/// AL-03, AL-04: claiming a notification applies the delivery rules to what was
+/// already notified, and records it in the same step.
+#[test]
+fn notifications_are_claimed_once_and_rate_limited() {
+    use sentinel_detect::{Delivery, Evidence, Severity};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let about = |app: &str, severity: Severity| {
+        let mut alert = sentinel_detect::monitoring_interrupted(NOW, None, "r");
+        alert.severity = severity;
+        alert.evidence.push(Evidence::App {
+            package: app.to_owned(),
+        });
+        store.record_alert(&alert).unwrap()
+    };
+    assert_eq!(store.claim_notification(9_999, NOW, false).unwrap(), None);
+
+    // Do Not Disturb keeps a Warning in the app, and records nothing.
+    let held = about("org.example.chat", Severity::Warning);
+    assert_eq!(
+        store.claim_notification(held, NOW, true).unwrap(),
+        Some(Delivery::HoldForDoNotDisturb)
+    );
+    assert_eq!(store.alert(held).unwrap().unwrap().notified, None);
+
+    // Three notifications for the app within the hour, then the fourth is held.
+    let ids: Vec<i64> = (0..4)
+        .map(|_| about("org.example.chat", Severity::Warning))
+        .collect();
+    for (i, id) in ids.iter().enumerate() {
+        let expected = if i < 3 {
+            Delivery::Notify
+        } else {
+            Delivery::HoldForRateLimit
+        };
+        let at = NOW + i as i64;
+        assert_eq!(
+            store.claim_notification(*id, at, false).unwrap(),
+            Some(expected)
+        );
+    }
+    assert_eq!(store.alert(ids[0]).unwrap().unwrap().notified, Some(NOW));
+    assert_eq!(store.alert(ids[3]).unwrap().unwrap().notified, None);
+    // Claiming again changes nothing, and does not count twice.
+    assert_eq!(
+        store.claim_notification(ids[0], NOW + 10, false).unwrap(),
+        Some(Delivery::Notify)
+    );
+    assert_eq!(store.alert(ids[0]).unwrap().unwrap().notified, Some(NOW));
+    // Another app has its own allowance; Critical is never held.
+    let other = about("org.example.mail", Severity::Warning);
+    assert_eq!(
+        store.claim_notification(other, NOW, false).unwrap(),
+        Some(Delivery::Notify)
+    );
+    let critical = about("org.example.chat", Severity::Critical);
+    assert_eq!(
+        store.claim_notification(critical, NOW, true).unwrap(),
+        Some(Delivery::Notify)
+    );
+    // An hour after the first three, the held one can be notified.
+    let later = NOW + sentinel_detect::RATE_WINDOW_MS + 3;
+    assert_eq!(
+        store.claim_notification(ids[3], later, false).unwrap(),
+        Some(Delivery::Notify)
+    );
 }
 
 #[test]

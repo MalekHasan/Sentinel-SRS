@@ -119,7 +119,10 @@ CREATE TABLE alert (
 CREATE INDEX alert_by_created ON alert (created);
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+/// When each alert was notified (AL-03, AL-04): NULL if it was kept in the app only.
+const V7: &str = "ALTER TABLE alert ADD COLUMN notified INTEGER;";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

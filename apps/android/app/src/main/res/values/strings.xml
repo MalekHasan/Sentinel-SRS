@@ -104,6 +104,19 @@
     <string name="alert_action_open_app">See what %1$s did</string>
     <string name="alert_dismiss">Dismiss</string>
     <string name="alert_dismissed">You dismissed this alert.</string>
+    <string name="alert_notification_public">Sentinel has an alert. Unlock your phone to see it.</string>
+    <plurals name="alert_more_like_this">
+        <item quantity="one">%d more alert like this is open.</item>
+        <item quantity="other">%d more alerts like this are open.</item>
+    </plurals>
+    <string name="channel_alert_info">Alerts: info</string>
+    <string name="channel_alert_info_description">Things worth knowing. No sound.</string>
+    <string name="channel_alert_warning">Alerts: warning</string>
+    <string name="channel_alert_warning_description">Things to check soon. Waits while Do Not Disturb is on.</string>
+    <string name="channel_alert_high">Alerts: high</string>
+    <string name="channel_alert_high_description">Things to look at now. Can come through Do Not Disturb if you allow it.</string>
+    <string name="channel_alert_critical">Alerts: critical</string>
+    <string name="channel_alert_critical_description">Signs of spyware or an attack. Uses an alarm sound and can come through Do Not Disturb if you allow it.</string>
     <!-- Each rule's title and one-sentence explanation (AL-02): plain words, reading grade 8 or lower. -->
     <string name="alert_monitoring_interrupted_title">Monitoring stopped</string>
     <string name="alert_monitoring_interrupted_text">Sentinel stopped watching your apps, so what they did in that time is not recorded.</string>
