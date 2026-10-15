@@ -91,6 +91,23 @@
     <string name="category_third_party_analytics_marketing">Third-party analytics and marketing</string>
     <string name="category_unknown_high_risk">Unknown high-risk behaviour</string>
 
+    <string name="alerts_title">Alerts</string>
+    <string name="severity_info">Info</string>
+    <string name="severity_warning">Warning</string>
+    <string name="severity_high">High</string>
+    <string name="severity_critical">Critical</string>
+    <string name="alert_evidence_title">What Sentinel saw</string>
+    <string name="alert_evidence_gap">Stopped at %1$s. Reason: %2$s</string>
+    <string name="alert_evidence_app">App: %1$s</string>
+    <string name="alert_actions_title">What you can do</string>
+    <string name="alert_action_start_monitoring">Start monitoring again</string>
+    <string name="alert_action_open_app">See what %1$s did</string>
+    <string name="alert_dismiss">Dismiss</string>
+    <string name="alert_dismissed">You dismissed this alert.</string>
+    <!-- Each rule's title and one-sentence explanation (AL-02): plain words, reading grade 8 or lower. -->
+    <string name="alert_monitoring_interrupted_title">Monitoring stopped</string>
+    <string name="alert_monitoring_interrupted_text">Sentinel stopped watching your apps, so what they did in that time is not recorded.</string>
+
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>
 

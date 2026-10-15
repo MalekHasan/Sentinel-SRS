@@ -29,9 +29,14 @@ import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.malekhasan.sentinel.core.AlertAction
+import io.github.malekhasan.sentinel.core.AlertEvidence
+import io.github.malekhasan.sentinel.core.AlertRule
+import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.CategoryFact
 import io.github.malekhasan.sentinel.core.CompanyFact
 import io.github.malekhasan.sentinel.core.FlowProto
+import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.HistoryApp
 import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryCompany
@@ -88,6 +93,7 @@ class RtlTest {
             HistoryAway(app = PACKAGE, flows = 1, bytesUpAway = 2_048, bytesDownAway = 100),
             label = LABEL,
         )
+        val alert = alert()
         compose.setContent {
             InArabic {
                 MonitorContent(
@@ -97,15 +103,19 @@ class RtlTest {
                     flows = listOf(flow),
                     gaps = listOf(GapLog.Gap(now - 60_000, now, "test")),
                     away = listOf(away),
+                    alerts = listOf(alert),
                     onStart = {},
                     onStop = {},
                     onShowLive = {},
                     onOpenApp = {},
+                    onOpenAlert = {},
                     onWipe = {},
                 )
             }
         }
         compose.onNodeWithText(arabic.getString(R.string.tagline)).assertIsDisplayed()
+        compose.onNodeWithText(arabic.getString(R.string.alerts_title)).assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.severity_warning), useUnmergedTree = true).assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.action_start)).assertAtTheRight()
 
         // Both lines start with a Latin name in Arabic, which must not turn them around.
@@ -241,6 +251,38 @@ class RtlTest {
         compose.onAllNodesWithText(text).assertCountEquals(count)
         return compose.onAllNodesWithText(text)[0]
     }
+
+    @Test
+    fun alertDetail() {
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert(), mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.back)).assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.severity_warning), useUnmergedTree = true).assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.alert_monitoring_interrupted_title)).assertAtTheRight()
+        // Lines that carry Latin names or an English reason stay right to left.
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_monitoring_interrupted_text)))
+        val gap = arabic.getString(
+            R.string.alert_evidence_gap, arabic.getString(R.string.gap_time_unknown), isolate("Android stopped the VPN"),
+        )
+        assertRightToLeft(compose.onNodeWithText(gap))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_evidence_app, isolate(LABEL))))
+        compose.onNodeWithText(arabic.getString(R.string.alert_action_open_app, isolate(LABEL)), useUnmergedTree = true)
+            .assertExists()
+    }
+
+    private fun alert() = HistoryAlert(
+        id = 1,
+        rule = AlertRule.MONITORING_INTERRUPTED,
+        severity = AlertSeverity.WARNING,
+        createdMs = now,
+        evidence = listOf(
+            AlertEvidence.Gap(startedMs = null, reason = "Android stopped the VPN"),
+            AlertEvidence.App(app = PACKAGE),
+        ),
+        actions = listOf(AlertAction.StartMonitoring, AlertAction.OpenApp(app = PACKAGE)),
+        open = true,
+    )
 
     /** Arabic resources and a right-to-left layout, as on a phone set to Arabic. */
     @Composable

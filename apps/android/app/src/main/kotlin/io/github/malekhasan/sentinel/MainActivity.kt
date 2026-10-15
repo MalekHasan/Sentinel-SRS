@@ -46,7 +46,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.malekhasan.sentinel.core.AlertAction
 import io.github.malekhasan.sentinel.core.EngineSnapshot
+import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryFlow
 import io.github.malekhasan.sentinel.core.coreVersion
@@ -79,13 +81,32 @@ class MainActivity : ComponentActivity() {
             var showLive by rememberSaveable { mutableStateOf(false) }
             // The app whose detail is open, over whichever screen opened it.
             var openApp by rememberSaveable { mutableStateOf<String?>(null) }
+            // The alert that is open; an app opened from it shows over it.
+            var openAlert by rememberSaveable { mutableStateOf<Long?>(null) }
             SentinelTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     val detail = openApp
+                    val alert = openAlert
                     when {
                         detail != null -> {
                             BackHandler { openApp = null }
                             AppDetailScreen(app = detail, visible = visible.value, onBack = { openApp = null })
+                        }
+                        alert != null -> {
+                            BackHandler { openAlert = null }
+                            AlertDetailScreen(
+                                id = alert,
+                                onBack = { openAlert = null },
+                                onAction = { action ->
+                                    when (action) {
+                                        is AlertAction.StartMonitoring -> {
+                                            openAlert = null
+                                            requestStart()
+                                        }
+                                        is AlertAction.OpenApp -> openApp = action.app
+                                    }
+                                },
+                            )
                         }
                         showLive -> {
                             BackHandler { showLive = false }
@@ -102,6 +123,7 @@ class MainActivity : ComponentActivity() {
                             onStop = ::stopMonitoring,
                             onShowLive = { showLive = true },
                             onOpenApp = { openApp = it },
+                            onOpenAlert = { openAlert = it },
                         )
                     }
                 }
@@ -163,6 +185,7 @@ fun MonitorScreen(
     onStop: () -> Unit,
     onShowLive: () -> Unit,
     onOpenApp: (String) -> Unit,
+    onOpenAlert: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
@@ -170,6 +193,7 @@ fun MonitorScreen(
     var flows by remember { mutableStateOf(emptyList<HistoryFlow>()) }
     var gaps by remember { mutableStateOf(emptyList<GapLog.Gap>()) }
     var away by remember { mutableStateOf(emptyList<AwayRow>()) }
+    var alerts by remember { mutableStateOf(emptyList<HistoryAlert>()) }
     val names = remember(context) { AppNames(context) }
     var confirmWipe by remember { mutableStateOf(false) }
     // Bumped after a wipe so the lists reload.
@@ -180,6 +204,7 @@ fun MonitorScreen(
             flows = withContext(Dispatchers.IO) { recentFlows(context) }
             gaps = withContext(Dispatchers.IO) { GapLog.recent(context, 5) }
             away = withContext(Dispatchers.IO) { awayRows(context, names) }
+            alerts = withContext(Dispatchers.IO) { openAlerts(context, ALERTS_SHOWN) }
         }
         snapshot = null
         reload()
@@ -218,10 +243,12 @@ fun MonitorScreen(
         flows = flows,
         gaps = gaps,
         away = away,
+        alerts = alerts,
         onStart = onStart,
         onStop = onStop,
         onShowLive = onShowLive,
         onOpenApp = onOpenApp,
+        onOpenAlert = onOpenAlert,
         onWipe = { confirmWipe = true },
     )
 }
@@ -235,10 +262,12 @@ fun MonitorContent(
     flows: List<HistoryFlow>,
     gaps: List<GapLog.Gap>,
     away: List<AwayRow>,
+    alerts: List<HistoryAlert>,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onShowLive: () -> Unit,
     onOpenApp: (String) -> Unit,
+    onOpenAlert: (Long) -> Unit,
     onWipe: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -251,6 +280,12 @@ fun MonitorContent(
     ) {
         Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
         Text(stringResource(R.string.tagline), style = MaterialTheme.typography.bodyLarge)
+
+        // Open alerts first: they are what needs the user (AL-01, AL-02).
+        if (alerts.isNotEmpty()) {
+            Text(stringResource(R.string.alerts_title), style = MaterialTheme.typography.titleMedium)
+            alerts.forEach { AlertRow(it, onOpenAlert) }
+        }
 
         when (status) {
             Monitor.Status.OFF -> {
@@ -327,6 +362,9 @@ fun MonitorContent(
         )
     }
 }
+
+/** Open alerts listed on the main screen, newest first. */
+private const val ALERTS_SHOWN = 5u
 
 /** An app's traffic while the user was away, with the name the user knows it by. */
 data class AwayRow(val away: HistoryAway, val label: String?)

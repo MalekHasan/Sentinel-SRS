@@ -89,6 +89,7 @@ class AwayTest {
                     onStop = {},
                     onShowLive = {},
                     onOpenApp = {},
+                    onOpenAlert = {},
                 )
             }
         }

@@ -4,11 +4,13 @@
 //! The API grows with Phase A: engine control, flow events and the encrypted history
 //! now, then alerts.
 
+mod alerts;
 mod engine;
 mod enrich;
 mod flows;
 mod history;
 
+pub use alerts::{AlertAction, AlertEvidence, AlertRule, AlertSeverity, HistoryAlert};
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
 pub use enrich::{
     CategoryFact, CompanyFact, IpDatabase, IpDatabaseError, IpSources, TrackerDatabase,

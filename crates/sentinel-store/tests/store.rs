@@ -5,9 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
+use sentinel_detect::AlertState;
 use sentinel_store::{
     AppSummary, AwayTotal, CompanyTotal, DailyTotal, DestinationFacts, DestinationTotal, FlowEvent,
-    FlowRow, Gap, HostnameSource, Listed, Proto, Store, StoreError, wipe,
+    FlowRow, Gap, HostnameSource, Listed, Proto, Store, StoreError, StoredAlert, wipe,
 };
 
 const KEY: [u8; 32] = [7; 32];
@@ -575,15 +576,75 @@ fn companies_and_categories_are_kept_with_their_sources() {
     );
 }
 
+/// AL-01, AL-02: alerts keep their rule, severity and evidence, newest first, and can be
+/// put away.
+#[test]
+fn alerts_are_kept_with_their_evidence_and_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    assert!(store.alerts(false, 10).unwrap().is_empty());
+
+    let older = sentinel_detect::monitoring_interrupted(NOW - 60_000, None, "killed");
+    let mut newer = sentinel_detect::monitoring_interrupted(NOW, Some(NOW - 5_000), "revoked");
+    newer.severity = sentinel_detect::Severity::High;
+    newer.evidence.push(sentinel_detect::Evidence::App {
+        package: "org.example.vpn".to_owned(),
+    });
+    let older_id = store.record_alert(&older).unwrap();
+    let newer_id = store.record_alert(&newer).unwrap();
+
+    let open = store.alerts(true, 10).unwrap();
+    assert_eq!(
+        open,
+        vec![
+            StoredAlert {
+                id: newer_id,
+                alert: newer.clone(),
+                state: AlertState::Open,
+            },
+            StoredAlert {
+                id: older_id,
+                alert: older.clone(),
+                state: AlertState::Open,
+            },
+        ]
+    );
+    assert_eq!(store.alerts(true, 1).unwrap().len(), 1, "the limit holds");
+
+    assert!(
+        store
+            .set_alert_state(newer_id, AlertState::Dismissed)
+            .unwrap()
+    );
+    assert!(!store.set_alert_state(9_999, AlertState::Dismissed).unwrap());
+    let open = store.alerts(true, 10).unwrap();
+    assert_eq!(open.iter().map(|a| a.id).collect::<Vec<_>>(), [older_id]);
+    let all = store.alerts(false, 10).unwrap();
+    assert_eq!(all.len(), 2, "dismissed alerts stay in the history");
+    assert_eq!(
+        store.alert(newer_id).unwrap().unwrap().state,
+        AlertState::Dismissed
+    );
+    assert_eq!(store.alert(9_999).unwrap(), None);
+
+    // They survive closing and reopening, encrypted like the rest.
+    drop(store);
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    assert_eq!(store.alert(older_id).unwrap().unwrap().alert, older);
+}
+
 #[test]
 fn one_gap_is_open_at_a_time() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(&db(&dir), &KEY).unwrap();
-    store.open_gap(Some(NOW), "engine stopped").unwrap();
-    store.open_gap(Some(NOW + 1), "revoked").unwrap();
+    assert!(store.open_gap(Some(NOW), "engine stopped").unwrap());
+    assert!(
+        !store.open_gap(Some(NOW + 1), "revoked").unwrap(),
+        "one is already open"
+    );
     store.close_gap(NOW + 5_000).unwrap();
     store.close_gap(NOW + 9_000).unwrap();
-    store.open_gap(None, "closed without warning").unwrap();
+    assert!(store.open_gap(None, "closed without warning").unwrap());
     assert_eq!(
         store.recent_gaps(10).unwrap(),
         vec![

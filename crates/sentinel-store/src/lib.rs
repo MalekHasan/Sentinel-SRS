@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use sentinel_detect::{Alert, AlertState, Rule, Severity};
 use zeroize::Zeroizing;
 
 mod schema;
@@ -179,6 +180,14 @@ pub struct DestinationTotal {
     pub last_seen: i64,
 }
 
+/// An alert as stored (SRS §13.1 `alert`), with its row id and state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredAlert {
+    pub id: i64,
+    pub alert: Alert,
+    pub state: AlertState,
+}
+
 /// One app's traffic while the user was away (SRS CM-06).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AwayTotal {
@@ -197,6 +206,10 @@ pub enum StoreError {
     WrongKey,
     #[error("the database was written by a newer version of Sentinel (schema {0})")]
     TooNew(i64),
+    /// An alert row this version cannot read: an unknown rule, severity or state, or
+    /// evidence that is not the stored format.
+    #[error("alert {0} cannot be read")]
+    BadAlert(i64),
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -319,8 +332,8 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Start a gap, unless one is already open.
-    pub fn open_gap(&self, started: Option<i64>, reason: &str) -> Result<()> {
+    /// Start a gap, unless one is already open. Returns whether it started one.
+    pub fn open_gap(&self, started: Option<i64>, reason: &str) -> Result<bool> {
         let conn = lock(&self.conn);
         let open: Option<i64> = conn
             .query_row(
@@ -335,7 +348,59 @@ impl Store {
                 params![started, reason],
             )?;
         }
-        Ok(())
+        Ok(open.is_none())
+    }
+
+    /// Keep an alert, open. Returns its id. Its text is not stored: the app writes it
+    /// from the rule and the evidence (ADR-0012).
+    pub fn record_alert(&self, alert: &Alert) -> Result<i64> {
+        let conn = lock(&self.conn);
+        conn.execute(
+            "INSERT INTO alert (rule_id, severity, evidence, created, state)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                alert.rule.id(),
+                alert.severity.as_str(),
+                sentinel_detect::evidence_to_json(&alert.evidence),
+                alert.created,
+                AlertState::Open.as_str(),
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// The most recent alerts, newest first: only the open ones, or all of them.
+    pub fn alerts(&self, open_only: bool, limit: u32) -> Result<Vec<StoredAlert>> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT id, rule_id, severity, evidence, created, state FROM alert
+             WHERE ?1 = 0 OR state = 'open' ORDER BY created DESC, id DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![open_only, limit], alert_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter().map(stored_alert).collect()
+    }
+
+    /// One alert, if there is one with this id.
+    pub fn alert(&self, id: i64) -> Result<Option<StoredAlert>> {
+        let row = lock(&self.conn)
+            .query_row(
+                "SELECT id, rule_id, severity, evidence, created, state FROM alert WHERE id = ?1",
+                [id],
+                alert_row,
+            )
+            .optional()?;
+        row.map(stored_alert).transpose()
+    }
+
+    /// Change an alert's state. Returns whether there is an alert with this id.
+    pub fn set_alert_state(&self, id: i64, state: AlertState) -> Result<bool> {
+        let changed = lock(&self.conn).execute(
+            "UPDATE alert SET state = ?2 WHERE id = ?1",
+            params![id, state.as_str()],
+        )?;
+        Ok(changed == 1)
     }
 
     /// Monitoring is back: close the open gap, if any.
@@ -726,6 +791,34 @@ fn proto_from(name: &str) -> Proto {
     } else {
         Proto::Tcp
     }
+}
+
+/// An alert row as read: id, rule id, severity, evidence, created, state.
+type AlertRow = (i64, String, String, String, i64, String);
+
+fn alert_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AlertRow> {
+    Ok((
+        r.get(0)?,
+        r.get(1)?,
+        r.get(2)?,
+        r.get(3)?,
+        r.get(4)?,
+        r.get(5)?,
+    ))
+}
+
+fn stored_alert((id, rule, severity, evidence, created, state): AlertRow) -> Result<StoredAlert> {
+    let bad = || StoreError::BadAlert(id);
+    Ok(StoredAlert {
+        id,
+        alert: Alert {
+            rule: Rule::from_id(&rule).ok_or_else(bad)?,
+            severity: Severity::from_name(&severity).ok_or_else(bad)?,
+            created,
+            evidence: sentinel_detect::evidence_from_json(&evidence).map_err(|_| bad())?,
+        },
+        state: AlertState::from_name(&state).ok_or_else(bad)?,
+    })
 }
 
 fn hostname_src_name(source: HostnameSource) -> &'static str {

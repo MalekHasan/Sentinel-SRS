@@ -106,6 +106,23 @@
     <string name="category_third_party_analytics_marketing">تحليلات وتسويق من طرف تالت</string>
     <string name="category_unknown_high_risk">سلوك عالي الخطورة مش معروف</string>
 
+    <string name="alerts_title">التنبيهات</string>
+    <string name="severity_info">معلومة</string>
+    <string name="severity_warning">تحذير</string>
+    <string name="severity_high">خطورة عالية</string>
+    <string name="severity_critical">خطر كبير</string>
+    <string name="alert_evidence_title">شو شاف Sentinel</string>
+    <string name="alert_evidence_gap">وقفت المراقبة بتاريخ %1$s. السبب: %2$s</string>
+    <string name="alert_evidence_app">التطبيق: %1$s</string>
+    <string name="alert_actions_title">شو فيك تعمل</string>
+    <string name="alert_action_start_monitoring">رجّع شغّل المراقبة</string>
+    <string name="alert_action_open_app">شوف شو عمل %1$s</string>
+    <string name="alert_dismiss">إخفاء</string>
+    <string name="alert_dismissed">أخفيت هالتنبيه.</string>
+    <!-- عنوان كل قاعدة وجملة الشرح تبعها (AL-02): كلام بسيط. -->
+    <string name="alert_monitoring_interrupted_title">المراقبة وقفت</string>
+    <string name="alert_monitoring_interrupted_text">تطبيق Sentinel وقف يراقب تطبيقاتك، فاللي عملته بهالوقت مش مسجّل.</string>
+
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>
 

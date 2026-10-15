@@ -101,7 +101,25 @@ ALTER TABLE destination ADD COLUMN category_domain TEXT;
 ALTER TABLE destination ADD COLUMN category_source TEXT;
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5];
+/// Alerts (SRS §13.1 `alert`, AL-01, AL-02). `title` and `body` stay empty: the app
+/// writes an alert's text in the user's language from `rule_id` and `evidence`
+/// (ADR-0012). `evidence` is a JSON array; `state` is "open" or "dismissed".
+const V6: &str = "
+CREATE TABLE alert (
+  id INTEGER PRIMARY KEY,
+  rule_id TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT,
+  body TEXT,
+  evidence TEXT NOT NULL,
+  created INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  user_feedback TEXT
+);
+CREATE INDEX alert_by_created ON alert (created);
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use sentinel_store::{KEY_LEN, Store, StoreError};
 
+use crate::alerts::HistoryAlert;
 use crate::enrich::{CategoryFact, CompanyFact};
 use crate::flows::{FlowProto, NameSource};
 
@@ -261,9 +262,36 @@ impl HistoryStore {
     }
 
     /// Start a monitoring gap, unless one is already open. `started_ms` is `None` when
-    /// the start is unknown.
+    /// the start is unknown. A new gap raises an alert (SP-03).
     pub fn open_gap(&self, started_ms: Option<i64>, reason: String) -> Result<(), HistoryError> {
-        Ok(self.store.open_gap(started_ms, &reason)?)
+        if self.store.open_gap(started_ms, &reason)? {
+            let alert = sentinel_detect::monitoring_interrupted(now_ms(), started_ms, &reason);
+            self.store.record_alert(&alert)?;
+        }
+        Ok(())
+    }
+
+    /// The most recent alerts, newest first: only the open ones, or all of them.
+    pub fn alerts(&self, open_only: bool, limit: u32) -> Result<Vec<HistoryAlert>, HistoryError> {
+        Ok(self
+            .store
+            .alerts(open_only, limit)?
+            .into_iter()
+            .map(HistoryAlert::from)
+            .collect())
+    }
+
+    /// One alert, if there is one with this id.
+    pub fn alert(&self, id: i64) -> Result<Option<HistoryAlert>, HistoryError> {
+        Ok(self.store.alert(id)?.map(HistoryAlert::from))
+    }
+
+    /// The user has seen the alert and puts it away. Returns whether there is one with
+    /// this id.
+    pub fn dismiss_alert(&self, id: i64) -> Result<bool, HistoryError> {
+        Ok(self
+            .store
+            .set_alert_state(id, sentinel_detect::AlertState::Dismissed)?)
     }
 
     /// Monitoring is back: close the open gap, if any.
@@ -299,6 +327,12 @@ pub fn wipe_history(path: String) -> Result<(), HistoryError> {
     Ok(sentinel_store::wipe(Path::new(&path))?)
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,5 +363,52 @@ mod tests {
         ));
         wipe_history(path).unwrap();
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// SP-03: each new monitoring gap raises one alert, which the user can dismiss.
+    #[test]
+    fn a_new_gap_raises_one_alert() {
+        use crate::alerts::{AlertAction, AlertEvidence, AlertRule, AlertSeverity};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        let before = now_ms();
+        history.open_gap(Some(5), "revoked".into()).unwrap();
+        history.open_gap(Some(6), "again".into()).unwrap();
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 1, "the gap was already open");
+        let alert = &alerts[0];
+        assert_eq!(alert.rule, AlertRule::MonitoringInterrupted);
+        assert_eq!(alert.severity, AlertSeverity::Warning);
+        assert!((before..=now_ms()).contains(&alert.created_ms));
+        assert_eq!(
+            alert.evidence,
+            [AlertEvidence::Gap {
+                started_ms: Some(5),
+                reason: "revoked".into()
+            }]
+        );
+        assert_eq!(alert.actions, [AlertAction::StartMonitoring]);
+        assert!(alert.open);
+        assert_eq!(history.alert(alert.id).unwrap().as_ref(), Some(alert));
+
+        history.close_gap(9).unwrap();
+        history.open_gap(None, "killed".into()).unwrap();
+        assert_eq!(history.alerts(true, 10).unwrap().len(), 2);
+
+        assert!(history.dismiss_alert(alert.id).unwrap());
+        assert!(!history.dismiss_alert(9_999).unwrap());
+        let open = history.alerts(true, 10).unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(
+            open[0].evidence,
+            [AlertEvidence::Gap {
+                started_ms: None,
+                reason: "killed".into()
+            }]
+        );
+        assert!(!history.alert(alert.id).unwrap().unwrap().open);
+        assert_eq!(history.alerts(false, 10).unwrap().len(), 2);
     }
 }
