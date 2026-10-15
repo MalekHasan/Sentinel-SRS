@@ -52,29 +52,39 @@ class FirewallTest {
         history.firewallRules().forEach { history.removeFirewallRule(it.key) }
     }
 
+    /**
+     * Each time monitoring starts, the first connection is already subject to the rules.
+     * Repeated, because the first run of this test once saw a blocked request answered.
+     */
     @Test
     fun aBlockedAddressIsNotReachedUntilTheRuleIsRemoved() {
         val (host, port) = testServer()
         val address = checkNotNull(InetAddress.getByName(host).hostAddress)
-        val key = history.setFirewallRule(
-            FirewallRule(context.packageName, RuleDestination.Network(address), RuleAction.BLOCK),
-        )
-        assertEquals(listOf(key), history.firewallRules().map { it.key })
-        val blocked = answer(host, port, REQUEST)
-        if (blocked != null) {
-            // Say what the engine saw, to tell a wrong owner from a wrong address.
-            stopMonitoring()
-            val seen = history.recentFlows(100u).filter { it.remoteIp == address }
-                .map { "${it.app} ${it.proto} ${it.remoteIp}:${it.remotePort} blocked=${it.blocked}" }
-            fail("blocked by address, but the server answered (${blocked.size} bytes); rule $key; flows: $seen")
+        repeat(TRIES) { attempt ->
+            if (attempt > 0) {
+                stopMonitoring()
+                startMonitoring()
+            }
+            val key = history.setFirewallRule(
+                FirewallRule(context.packageName, RuleDestination.Network(address), RuleAction.BLOCK),
+            )
+            assertEquals(listOf(key), history.firewallRules().map { it.key })
+            val blocked = answer(host, port, REQUEST)
+            if (blocked != null) {
+                // Say what the engine saw, to tell a wrong owner from a wrong address.
+                stopMonitoring()
+                val seen = history.recentFlows(100u).filter { it.remoteIp == address }
+                    .map { "${it.app} ${it.proto} ${it.remoteIp}:${it.remotePort} blocked=${it.blocked}" }
+                fail("try ${attempt + 1}: blocked by address, but the server answered; rule $key; flows: $seen")
+            }
+            assertTrue(history.removeFirewallRule(key))
+            assertNotNull("try ${attempt + 1}: allowed again", answer(host, port, REQUEST))
         }
-        assertTrue(history.removeFirewallRule(key))
-        assertNotNull("allowed again", answer(host, port, REQUEST))
 
         stopMonitoring()
         val flows = history.recentFlows(100u).filter { it.remoteIp == address && it.remotePort.toInt() == port }
-        assertTrue("stored as blocked: $flows", flows.any { it.blocked })
-        assertTrue("stored as allowed: $flows", flows.any { !it.blocked })
+        assertEquals("stored as blocked: $flows", TRIES, flows.count { it.blocked })
+        assertEquals("stored as allowed: $flows", TRIES, flows.count { !it.blocked })
     }
 
     @Test
@@ -142,6 +152,7 @@ class FirewallTest {
     }
 
     private companion object {
+        const val TRIES = 5
         const val BLOCKED = "blocked.sentinel.test"
         val REQUEST = "GET / HTTP/1.0\r\n\r\n".toByteArray()
         val END = "\r\n\r\n".toByteArray()
