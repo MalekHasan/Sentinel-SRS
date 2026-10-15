@@ -104,7 +104,6 @@
     <string name="alert_action_open_app">See what %1$s did</string>
     <string name="alert_dismiss">Dismiss</string>
     <string name="alert_dismissed">You dismissed this alert.</string>
-    <string name="alert_notification_public">Sentinel has an alert. Unlock your phone to see it.</string>
     <plurals name="alert_more_like_this">
         <item quantity="one">%d more alert like this is open.</item>
         <item quantity="other">%d more alerts like this are open.</item>

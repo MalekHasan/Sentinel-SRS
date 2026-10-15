@@ -58,12 +58,9 @@ class AlertNotificationTest {
         assertEquals(alarm, channels.getValue(AlertSeverity.CRITICAL).sound)
         val patterns = channels.values.mapNotNull { it.vibrationPattern?.toList() }
         assertEquals("distinct vibrations: $patterns", patterns.size, patterns.toSet().size)
-        channels.values.forEach {
-            assertEquals("${it.id} on the lock screen", Notification.VISIBILITY_PRIVATE, it.lockscreenVisibility)
-        }
     }
 
-    /** A gap posts one Warning notification that shows nothing on the lock screen. */
+    /** A gap posts one Warning notification that shows nothing on a locked phone. */
     @Test
     fun aMonitoringGapPostsAWarningNotification() {
         GapLog.open(context, System.currentTimeMillis(), "test reason")
@@ -73,12 +70,7 @@ class AlertNotificationTest {
             context.getString(R.string.alert_monitoring_interrupted_title),
             posted.notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
         )
-        assertEquals(Notification.VISIBILITY_PRIVATE, posted.notification.visibility)
-        val public = checkNotNull(posted.notification.publicVersion)
-        assertEquals(
-            context.getString(R.string.alert_notification_public),
-            public.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
-        )
+        assertEquals(Notification.VISIBILITY_SECRET, posted.notification.visibility)
         assertNotNull("tapping opens the alert", posted.notification.contentIntent)
         assertNotNull(History.get(context).alerts(true, 10u).single().notifiedMs)
     }

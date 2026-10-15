@@ -25,8 +25,8 @@ import io.github.malekhasan.sentinel.core.HistoryStore
  * importance, sound and vibration (AL-01). The core decides whether an alert is
  * notified now: at most three non-critical notifications an hour per app (AL-03), and
  * Info and Warning wait in the app while Do Not Disturb is on (AL-04). Repeated alerts
- * of one kind share one notification, which says how many more are open (AL-03). On the
- * lock screen a notification only says that Sentinel has an alert.
+ * of one kind share one notification, which says how many more are open (AL-03). On a
+ * locked phone a notification makes its sound but shows nothing (ADR-0012).
  */
 object AlertNotifier {
     private const val TAG = "SentinelAlertNotifier"
@@ -84,7 +84,6 @@ object AlertNotifier {
             }
             val channel = NotificationChannel(channelId(severity), context.getString(name), importance).apply {
                 this.description = context.getString(description)
-                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
                 when (severity) {
                     AlertSeverity.INFO -> {
                         setSound(null, null)
@@ -156,11 +155,6 @@ object AlertNotifier {
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        // What the lock screen shows: nothing about what was found.
-        val public = Notification.Builder(context, channelId(alert.severity))
-            .setSmallIcon(R.drawable.ic_monitoring)
-            .setContentTitle(context.getString(R.string.alert_notification_public))
-            .build()
         return Notification.Builder(context, channelId(alert.severity))
             .setSmallIcon(R.drawable.ic_monitoring)
             .setContentTitle(context.getString(titleRes(alert.rule)))
@@ -169,8 +163,9 @@ object AlertNotifier {
             .setSubText(context.getString(severityNameRes(alert.severity)))
             .setContentIntent(open)
             .setAutoCancel(true)
-            .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setPublicVersion(public)
+            // Nothing on a locked phone, whatever the lock screen setting: what was found
+            // can matter to someone who looks at the phone. It still sounds.
+            .setVisibility(Notification.VISIBILITY_SECRET)
             .build()
     }
 }

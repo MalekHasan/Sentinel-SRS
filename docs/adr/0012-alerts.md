@@ -48,7 +48,7 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
 
    This completes AL-01's distinct sounds. The user can change each channel in Android's settings.
 10. **Repeated alerts share one notification.** Alerts of the same rule about the same app replace each other's notification, which says how many more like it are open (AL-03's grouping).
-11. **Nothing on the lock screen.** Notifications are private: the lock screen shows only "Sentinel has an alert". What was found, and about which app, can matter to someone who looks at another person's phone. THREAT-MODEL-A's B5 is that person with the phone unlocked; a locked phone should not show more.
+11. **Nothing on a locked phone.** Alert notifications are secret: on a phone locked with a PIN, pattern or password they make their sound but show nothing until it is unlocked, whatever the lock screen setting. What was found, and about which app, can matter to someone who looks at another person's phone. THREAT-MODEL-A's B5 is that person with the phone unlocked; a locked phone should not show more. A "private" notification with a neutral public version is not enough. Android shows private notifications in full when the user's lock screen setting shows all notification content, which is a common default. Android also ignores lock screen visibility that an app sets on its own channel.
 12. Tapping a notification opens the alert in the app, and a notification offers no other action. Every alert also lives in the app, so a notification that imitates Sentinel's leads nowhere new (THREAT-MODEL-A S4).
 
 ## Verification
@@ -71,8 +71,8 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
   - AL-03's load test sends one alert per second for two hours and gets exactly three notifications in each hour, with every critical one notified;
   - the store and FFI tests check the atomic claim, that a claim is never counted twice, and that the app's listener can claim from inside the call.
 - `AlertNotificationTest` on the emulator checks:
-  - the four channels' importance, sounds, vibrations and lock-screen privacy;
-  - that a gap posts a Warning notification whose lock-screen version says nothing;
+  - the four channels' importance, sounds and vibrations;
+  - that a gap posts a secret Warning notification;
   - that five gaps give one notification, three of them notified;
   - that a Warning waits in the app while Do Not Disturb is on.
 

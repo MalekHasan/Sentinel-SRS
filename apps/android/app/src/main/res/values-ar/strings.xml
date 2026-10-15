@@ -119,7 +119,6 @@
     <string name="alert_action_open_app">شوف شو عمل %1$s</string>
     <string name="alert_dismiss">إخفاء</string>
     <string name="alert_dismissed">أخفيت هالتنبيه.</string>
-    <string name="alert_notification_public">في تنبيه من Sentinel. افتح قفل الموبايل عشان تشوفه.</string>
     <plurals name="alert_more_like_this">
         <item quantity="zero">ما في تنبيهات تانية متلو مفتوحة.</item>
         <item quantity="one">في تنبيه واحد تاني متلو مفتوح.</item>

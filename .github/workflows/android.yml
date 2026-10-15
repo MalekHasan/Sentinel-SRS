@@ -112,6 +112,9 @@ jobs:
         run: |
           find apps/android/app/build/outputs/androidTest-results -name '*.xml' \
             -exec grep -ho '<testsuite [^>]*\|<testcase [^>]*\|<skipped\|<failure [^>]*' {} +
+          # And what each failure said, which Gradle does not print.
+          find apps/android/app/build/outputs/androidTest-results -name '*.xml' \
+            -exec sed -n '/<failure/,/<\/failure>/p' {} + | head -n 300
       - uses: actions/upload-artifact@v4
         if: always()
         with:
