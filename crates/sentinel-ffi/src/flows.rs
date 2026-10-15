@@ -4,12 +4,13 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use sentinel_vpn::{FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 use tokio::sync::Notify;
 
+use crate::enrich::IpDatabase;
 use crate::history::HistoryStore;
 
 /// How long events wait so that several can cross into Kotlin together. Short enough
@@ -55,6 +56,13 @@ pub struct FlowRecord {
     pub bytes_up_away: u64,
     pub bytes_down_away: u64,
     pub blocked: bool,
+    /// The network the remote address belongs to (autonomous system number), from the
+    /// IP database if one is set (DT-01).
+    pub asn: Option<u32>,
+    /// That network's registered name.
+    pub network_owner: Option<String>,
+    /// Approximate country of the remote address, ISO 3166 two letters.
+    pub country: Option<String>,
 }
 
 /// Who owns a connection.
@@ -113,6 +121,7 @@ pub(crate) struct FlowEvents {
     /// Flows that have started and not ended, with their owner.
     open: Mutex<HashMap<u64, (FlowInfo, FlowOwner)>>,
     pending: Mutex<Vec<FlowRecord>>,
+    ip_database: RwLock<Option<Arc<IpDatabase>>>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -129,9 +138,25 @@ impl FlowEvents {
             session,
             open: Mutex::new(HashMap::new()),
             pending: Mutex::new(Vec::new()),
+            ip_database: RwLock::new(None),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
+    }
+
+    /// Replace the IP database used for flows from now on (DT-01).
+    pub(crate) fn set_ip_database(&self, database: Option<Arc<IpDatabase>>) {
+        *self
+            .ip_database
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = database;
+    }
+
+    fn ip_database(&self) -> Option<Arc<IpDatabase>> {
+        self.ip_database
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Batches that could not be written to the history.
@@ -153,9 +178,16 @@ impl FlowEvents {
     /// Ends every flow still open (the engine is stopping), then sends what is left.
     pub(crate) fn close_all(&self, ended_ms: u64) {
         let open: Vec<_> = lock(&self.open).drain().map(|(_, entry)| entry).collect();
+        let database = self.ip_database();
         let mut pending = lock(&self.pending);
         for (flow, owner) in open {
-            pending.push(record(&flow, &owner, Some(ended_ms), false));
+            pending.push(record(
+                &flow,
+                &owner,
+                Some(ended_ms),
+                false,
+                database.as_deref(),
+            ));
         }
         drop(pending);
         self.flush();
@@ -198,7 +230,13 @@ impl Observer for FlowEvents {
             flow.dst.ip().to_string(),
             flow.dst.port(),
         );
-        self.push(record(flow, &owner, None, false));
+        self.push(record(
+            flow,
+            &owner,
+            None,
+            false,
+            self.ip_database().as_deref(),
+        ));
         lock(&self.open).insert(flow.id, (flow.clone(), owner));
         Verdict::Allow
     }
@@ -220,6 +258,7 @@ impl Observer for FlowEvents {
             &owner,
             Some(totals.ended_ms),
             totals.verdict == Verdict::Block,
+            self.ip_database().as_deref(),
         );
         ended.bytes_up = totals.bytes_up;
         ended.bytes_down = totals.bytes_down;
@@ -229,7 +268,14 @@ impl Observer for FlowEvents {
     }
 }
 
-fn record(flow: &FlowInfo, owner: &FlowOwner, ended_ms: Option<u64>, blocked: bool) -> FlowRecord {
+fn record(
+    flow: &FlowInfo,
+    owner: &FlowOwner,
+    ended_ms: Option<u64>,
+    blocked: bool,
+    database: Option<&IpDatabase>,
+) -> FlowRecord {
+    let ip = database.map(|database| database.db.lookup(flow.dst.ip()));
     FlowRecord {
         id: flow.id,
         proto: proto(flow.proto),
@@ -251,6 +297,9 @@ fn record(flow: &FlowInfo, owner: &FlowOwner, ended_ms: Option<u64>, blocked: bo
         bytes_up_away: flow.counters.bytes_up_away(),
         bytes_down_away: flow.counters.bytes_down_away(),
         blocked,
+        asn: ip.and_then(|ip| ip.asn),
+        network_owner: ip.and_then(|ip| ip.network_owner).map(str::to_owned),
+        country: ip.and_then(|ip| ip.country).map(str::to_owned),
     }
 }
 

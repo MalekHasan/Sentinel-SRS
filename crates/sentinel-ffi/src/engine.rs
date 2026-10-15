@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sentinel_vpn::{DnsForward, EngineConfig, EngineStats, Protect, TunDevice};
 use tokio::sync::oneshot;
 
+use crate::enrich::IpDatabase;
 use crate::flows::{FlowEvents, FlowObserver, LiveApp};
 use crate::history::HistoryStore;
 
@@ -200,6 +201,13 @@ impl Engine {
             .map(|ip| SocketAddr::new(ip, 53))
             .collect();
         self.dns.set_upstream(servers);
+    }
+
+    /// Use `database` for the network, owner and country of each new flow (DT-01), or
+    /// none. It can be replaced while the engine runs, for example when the feed brings a
+    /// newer one.
+    pub fn set_ip_database(&self, database: Option<Arc<IpDatabase>>) {
+        self.events.set_ip_database(database);
     }
 
     /// Whether the user is away (on Android: the screen is off or locked). While it is
@@ -725,6 +733,67 @@ mod tests {
                 bytes_down_away: 2,
             }]
         );
+    }
+
+    /// With an IP database set, every flow carries its network, owner and country
+    /// (DT-01); without one, none. The database can be set while the engine runs.
+    #[test]
+    fn enriches_each_flow_from_the_ip_database() {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let mut builder = sentinel_enrich::IpDbBuilder::new(sentinel_enrich::Sources {
+            network: "IPtoASN test".into(),
+            country: "DB-IP Lite test".into(),
+        });
+        let loopback = std::net::IpAddr::from(Ipv4Addr::LOCALHOST);
+        builder.add_network(loopback, loopback, 64_500).unwrap();
+        builder.name_network(64_500, "EXAMPLE-NET").unwrap();
+        builder.add_country(loopback, loopback, "JO").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ip.db");
+        std::fs::write(&path, builder.build().unwrap()).unwrap();
+        let database = IpDatabase::open(path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(database.sources().network, "IPtoASN test");
+
+        let Started {
+            engine,
+            peer,
+            batches,
+            ..
+        } = start_on_socketpair();
+        let first_record = |src_port: u16| {
+            peer.send(&udp_packet_from(src_port, [127, 0, 0, 1], port))
+                .unwrap();
+            let echoed = (&peer).read(&mut [0u8; 2048]).expect("no echo");
+            assert!(echoed > 0);
+            loop {
+                let batch = batches
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("no flow event");
+                if let Some(record) = batch.into_iter().find(|r| r.local_port == src_port) {
+                    return record;
+                }
+            }
+        };
+
+        let plain = first_record(40_101);
+        assert_eq!((plain.asn, plain.country), (None, None), "no database yet");
+
+        engine.set_ip_database(Some(database));
+        let enriched = first_record(40_102);
+        assert_eq!(enriched.asn, Some(64_500));
+        assert_eq!(enriched.network_owner.as_deref(), Some("EXAMPLE-NET"));
+        assert_eq!(enriched.country.as_deref(), Some("JO"));
+
+        engine.set_ip_database(None);
+        assert_eq!(first_record(40_103).asn, None);
+        engine.stop();
     }
 
     /// The live view (CM-03) shows open flows by app with their bytes so far, and

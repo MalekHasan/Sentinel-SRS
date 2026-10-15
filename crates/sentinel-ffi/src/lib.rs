@@ -5,10 +5,12 @@
 //! now, then alerts.
 
 mod engine;
+mod enrich;
 mod flows;
 mod history;
 
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
+pub use enrich::{IpDatabase, IpDatabaseError, IpSources};
 pub use flows::{FlowObserver, FlowOwner, FlowProto, FlowRecord, LiveApp, NameSource};
 pub use history::{
     HistoryApp, HistoryAway, HistoryDestination, HistoryError, HistoryFlow, HistoryGap,
