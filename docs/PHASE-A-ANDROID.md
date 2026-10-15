@@ -155,7 +155,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 
 ### Sprint 4 — Where data goes
 
-- [ ] `sentinel-enrich`: offline ASN, country, company and category lookup in under 1 ms per flow (DT-01)
+- [ ] `sentinel-enrich`: offline ASN, country, company and category lookup in under 1 ms per flow (DT-01). Done: network (ASN), its owner and approximate country, from IPtoASN and DB-IP Lite, in a checked range-table file that ships through the feed ([ADR-0010](adr/0010-offline-ip-enrichment.md)); every flow record carries them once the app sets a database. 0.56 µs per lookup at 1.3 million ranges (release build, synthetic data). Still to do: company and category (with DT-06), and measuring the file with the real data sets
 - [ ] "Why we believe this" source and confidence on every destination card (DT-02)
 - [ ] Tracker and SDK matching per app (DT-06)
 
