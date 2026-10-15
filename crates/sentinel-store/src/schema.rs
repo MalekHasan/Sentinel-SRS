@@ -72,7 +72,26 @@ ALTER TABLE flow_daily ADD COLUMN away_up INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE flow_daily ADD COLUMN away_down INTEGER NOT NULL DEFAULT 0;
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3];
+/// What is known about each destination (SRS §13.1 `destination`), plus where the
+/// network and country come from (DT-02). Keyed by hostname, or by address when no
+/// name is known.
+const V4: &str = "
+CREATE TABLE destination (
+  hostname TEXT PRIMARY KEY,
+  etld1 TEXT,
+  asn INTEGER,
+  net_owner TEXT,
+  company TEXT,
+  category TEXT,
+  country TEXT,
+  confidence REAL,
+  updated INTEGER,
+  net_source TEXT,
+  country_source TEXT
+);
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -130,5 +149,13 @@ mod tests {
             )
             .unwrap();
         assert_eq!(away_columns, 2);
+        let destination: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'destination'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(destination, 1);
     }
 }

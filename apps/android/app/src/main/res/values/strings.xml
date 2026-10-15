@@ -47,6 +47,13 @@
     <string name="app_detail_destinations_shown">Destinations shown: %1$d of %2$d.</string>
     <string name="app_detail_last_seen">Last seen %1$s</string>
     <string name="app_detail_away">While the screen was off or locked: sent %1$s, received %2$s</string>
+    <string name="dest_named_dns">Name from the app\'s DNS lookup</string>
+    <string name="dest_named_sni">Name from the connection itself (TLS server name)</string>
+    <string name="dest_address_only">No name seen, only the address</string>
+    <string name="dest_network">Network: %1$s</string>
+    <string name="dest_network_why">From %1$s. The company that runs this network, which is not always the one that receives the data.</string>
+    <string name="dest_country">Country (approximate): %1$s</string>
+    <string name="dest_country_why">From %1$s. Where the address is registered; the server itself may be elsewhere.</string>
 
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>

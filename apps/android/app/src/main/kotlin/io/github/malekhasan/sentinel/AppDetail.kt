@@ -32,8 +32,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.malekhasan.sentinel.core.HistoryApp
 import io.github.malekhasan.sentinel.core.HistoryDestination
+import io.github.malekhasan.sentinel.core.NameSource
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -185,6 +187,7 @@ private fun DestinationRow(destination: HistoryDestination) {
     val flows = destination.flows.toInt()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(destination.destination, style = MaterialTheme.typography.titleSmall)
+        DestinationFacts(destination)
         Text(
             pluralStringResource(R.plurals.connections, flows, flows),
             style = MaterialTheme.typography.bodySmall,
@@ -215,4 +218,40 @@ private fun DestinationRow(destination: HistoryDestination) {
             style = MaterialTheme.typography.bodySmall,
         )
     }
+}
+
+/**
+ * What is known about a destination and why we believe it (SRS DT-02): how its name was
+ * learned, its network and its country, each with its source and how far to trust it.
+ */
+@Composable
+private fun DestinationFacts(destination: HistoryDestination) {
+    val small = MaterialTheme.typography.bodySmall
+    val why = MaterialTheme.typography.labelSmall
+    when {
+        destination.nameSource == NameSource.SNI -> Text(stringResource(R.string.dest_named_sni), style = why)
+        destination.nameSource == NameSource.DNS -> Text(stringResource(R.string.dest_named_dns), style = why)
+        android.net.InetAddresses.isNumericAddress(destination.destination) ->
+            Text(stringResource(R.string.dest_address_only), style = why)
+    }
+    destination.asn?.let { asn ->
+        val network = listOfNotNull("AS$asn", destination.networkOwner).joinToString(" ")
+        Text(stringResource(R.string.dest_network, isolate(network)), style = small)
+        destination.networkSource?.let {
+            Text(stringResource(R.string.dest_network_why, isolate(it)), style = why)
+        }
+    }
+    destination.country?.let { code ->
+        Text(stringResource(R.string.dest_country, countryName(code)), style = small)
+        destination.countrySource?.let {
+            Text(stringResource(R.string.dest_country_why, isolate(it)), style = why)
+        }
+    }
+}
+
+/** The country's name in the screen's language, or its code if Android has none. */
+@Composable
+fun countryName(code: String): String {
+    val locale = LocalConfiguration.current.locales[0]
+    return Locale.Builder().setRegion(code).build().getDisplayCountry(locale).ifEmpty { code }
 }

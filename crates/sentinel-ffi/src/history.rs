@@ -88,6 +88,22 @@ pub struct HistoryDestination {
     /// start of that day (UTC).
     pub first_seen_ms: i64,
     pub last_seen_ms: i64,
+    /// How the destination's name was learned (the strongest seen); none for an address.
+    #[uniffi(default = None)]
+    pub name_source: Option<NameSource>,
+    /// The network the destination's address belongs to (DT-01) and where that comes
+    /// from (DT-02).
+    #[uniffi(default = None)]
+    pub asn: Option<u32>,
+    #[uniffi(default = None)]
+    pub network_owner: Option<String>,
+    #[uniffi(default = None)]
+    pub network_source: Option<String>,
+    /// Approximate country, ISO 3166 two letters, and where that comes from.
+    #[uniffi(default = None)]
+    pub country: Option<String>,
+    #[uniffi(default = None)]
+    pub country_source: Option<String>,
 }
 
 /// One app's traffic while the user was away (CM-06).
@@ -179,6 +195,15 @@ impl HistoryStore {
                         bytes_down_away: d.bytes_down_away,
                         first_seen_ms: d.first_seen,
                         last_seen_ms: d.last_seen,
+                        name_source: d.name_source.map(|source| match source {
+                            sentinel_store::HostnameSource::Dns => NameSource::Dns,
+                            sentinel_store::HostnameSource::Sni => NameSource::Sni,
+                        }),
+                        asn: d.facts.asn,
+                        network_owner: d.facts.network_owner,
+                        network_source: d.facts.network_source,
+                        country: d.facts.country,
+                        country_source: d.facts.country_source,
                     })
                     .collect(),
             }))

@@ -4,6 +4,7 @@ package io.github.malekhasan.sentinel
 import io.github.malekhasan.sentinel.core.Engine
 import io.github.malekhasan.sentinel.core.EngineSnapshot
 import io.github.malekhasan.sentinel.core.FlowRecord
+import io.github.malekhasan.sentinel.core.IpSources
 import io.github.malekhasan.sentinel.core.LiveApp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,7 +48,17 @@ object Monitor {
 
     internal fun stopped() {
         engine = null
+        ipSources = null
         mutableStatus.value = Status.OFF
+    }
+
+    /** The sources of the IP database the engine uses, or null while it has none. */
+    @Volatile
+    var ipSources: IpSources? = null
+        private set
+
+    internal fun ipDataLoaded(sources: IpSources) {
+        ipSources = sources
     }
 
     private const val RECENT_FLOWS = 500

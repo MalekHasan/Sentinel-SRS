@@ -14,9 +14,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.HistoryApp
 import io.github.malekhasan.sentinel.core.HistoryDestination
 import io.github.malekhasan.sentinel.core.LiveApp
+import io.github.malekhasan.sentinel.core.NameSource
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.Locale
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -128,6 +130,67 @@ class AppDetailTest {
         val shown = context.getString(R.string.app_detail_destinations_shown, 100, 150)
         list.performScrollToNode(hasText(shown))
         compose.onNodeWithText(shown).assertIsDisplayed()
+    }
+
+    /** Each destination says what is known about it and why (DT-02). */
+    @Test
+    fun showsWhyWeBelieveEachFact() {
+        val named = HistoryDestination(
+            destination = "chat.example.com",
+            flows = 1,
+            bytesUp = 2_000,
+            bytesDown = 0,
+            bytesUpAway = 0,
+            bytesDownAway = 0,
+            firstSeenMs = 0,
+            lastSeenMs = System.currentTimeMillis(),
+            nameSource = NameSource.SNI,
+            asn = 64_500u,
+            networkOwner = "EXAMPLE-NET",
+            networkSource = "IPtoASN 2026-10-15",
+            country = "JO",
+            countrySource = "DB-IP Lite 2026-10",
+        )
+        val bare = named.copy(
+            destination = "192.0.2.7",
+            bytesUp = 1_000,
+            nameSource = null,
+            asn = null,
+            networkOwner = null,
+            networkSource = null,
+            country = null,
+            countrySource = null,
+        )
+        val history = HistoryApp(
+            app = "org.example.chat",
+            firstSeenMs = 0,
+            flows = 2,
+            bytesUp = 3_000,
+            bytesDown = 0,
+            bytesUpAway = 0,
+            bytesDownAway = 0,
+            destinationCount = 2u,
+            destinations = listOf(named, bare),
+        )
+        compose.setContent {
+            SentinelTheme {
+                AppDetail("org.example.chat", AppDetails("Chat", history, openFlows = 0), onBack = {})
+            }
+        }
+        val jordan = Locale.Builder().setRegion("JO").build()
+            .getDisplayCountry(context.resources.configuration.locales[0])
+        val list = compose.onNodeWithTag(APP_DETAIL_TAG)
+        for (line in listOf(
+            context.getString(R.string.dest_named_sni),
+            context.getString(R.string.dest_network, isolate("AS64500 EXAMPLE-NET")),
+            context.getString(R.string.dest_network_why, isolate("IPtoASN 2026-10-15")),
+            context.getString(R.string.dest_country, jordan),
+            context.getString(R.string.dest_country_why, isolate("DB-IP Lite 2026-10")),
+            context.getString(R.string.dest_address_only),
+        )) {
+            list.performScrollToNode(hasText(line))
+            compose.onNodeWithText(line).assertIsDisplayed()
+        }
     }
 
     /** Tapping an app in the live view opens its detail. */

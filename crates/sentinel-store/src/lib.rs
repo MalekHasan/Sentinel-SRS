@@ -21,6 +21,22 @@ pub struct FlowEvent {
     /// The engine's id for the flow, unique within one engine session.
     pub engine_id: u64,
     pub flow: FlowRow,
+    /// What is known about the destination, if anything.
+    pub destination: Option<DestinationFacts>,
+}
+
+/// What is known about a destination and where each answer comes from: SRS §13.1
+/// `destination`, and "why we believe this" (DT-02).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DestinationFacts {
+    /// The network (autonomous system) the destination's address belongs to.
+    pub asn: Option<u32>,
+    pub network_owner: Option<String>,
+    /// Where the network and its owner come from, for example "IPtoASN 2026-10-15".
+    pub network_source: Option<String>,
+    /// Approximate country, ISO 3166 two letters.
+    pub country: Option<String>,
+    pub country_source: Option<String>,
 }
 
 /// A flow read back from the database.
@@ -121,6 +137,11 @@ pub struct DestinationTotal {
     pub bytes_down: i64,
     pub bytes_up_away: i64,
     pub bytes_down_away: i64,
+    /// How the destination's name was learned, for the strongest name seen: the TLS
+    /// server name over a DNS answer. `None` for a bare address or rolled-up days.
+    pub name_source: Option<HostnameSource>,
+    /// The latest facts recorded for the destination.
+    pub facts: DestinationFacts,
     /// Unix milliseconds. Flows already rolled up into daily totals keep only their
     /// day, so they count from the start of that day (UTC).
     pub first_seen: i64,
@@ -203,8 +224,12 @@ impl Store {
         for FlowEvent {
             engine_id,
             flow: row,
+            destination,
         } in events
         {
+            if let Some(facts) = destination {
+                record_destination(&tx, row, facts)?;
+            }
             let key = (session, *engine_id);
             let existing = if row.ended.is_some() {
                 open.remove(&key)
@@ -350,20 +375,28 @@ impl Store {
             return Ok(None);
         };
         let mut stmt = conn.prepare(
-            "SELECT destination, sum(flows), sum(up), sum(down), min(first), max(last),
-                    sum(away_up), sum(away_down)
+            "SELECT g.destination, g.flows, g.up, g.down, g.first, g.last, g.away_up,
+                    g.away_down, g.name_src, d.asn, d.net_owner, d.net_source, d.country,
+                    d.country_source
              FROM (
-                 SELECT coalesce(hostname, remote_ip) AS destination, 1 AS flows,
-                        bytes_up AS up, bytes_down AS down, started AS first,
-                        coalesce(ended, started) AS last, away_up, away_down
-                 FROM flow WHERE app_id = ?1
-                 UNION ALL
-                 SELECT destination, flows, bytes_up, bytes_down, day * ?2, day * ?2,
-                        away_up, away_down
-                 FROM flow_daily WHERE app_id = ?1
-             )
-             GROUP BY destination
-             ORDER BY sum(up) DESC, sum(up) + sum(down) DESC, destination",
+                 SELECT destination, sum(flows) AS flows, sum(up) AS up, sum(down) AS down,
+                        min(first) AS first, max(last) AS last, sum(away_up) AS away_up,
+                        sum(away_down) AS away_down, max(name_src) AS name_src
+                 FROM (
+                     SELECT coalesce(hostname, remote_ip) AS destination, 1 AS flows,
+                            bytes_up AS up, bytes_down AS down, started AS first,
+                            coalesce(ended, started) AS last, away_up, away_down,
+                            hostname_src AS name_src
+                     FROM flow WHERE app_id = ?1
+                     UNION ALL
+                     SELECT destination, flows, bytes_up, bytes_down, day * ?2, day * ?2,
+                            away_up, away_down, NULL
+                     FROM flow_daily WHERE app_id = ?1
+                 )
+                 GROUP BY destination
+             ) g
+             LEFT JOIN destination d ON d.hostname = g.destination
+             ORDER BY g.up DESC, g.up + g.down DESC, g.destination",
         )?;
         let all = stmt
             .query_map(params![id, DAY_MS], |r| {
@@ -376,6 +409,17 @@ impl Store {
                     last_seen: r.get(5)?,
                     bytes_up_away: r.get(6)?,
                     bytes_down_away: r.get(7)?,
+                    // "sni" sorts after "dns", so the strongest source wins.
+                    name_source: r
+                        .get::<_, Option<String>>(8)?
+                        .map(|s| hostname_src_from(&s)),
+                    facts: DestinationFacts {
+                        asn: r.get(9)?,
+                        network_owner: r.get(10)?,
+                        network_source: r.get(11)?,
+                        country: r.get(12)?,
+                        country_source: r.get(13)?,
+                    },
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -475,6 +519,34 @@ fn app_id(tx: &Transaction<'_>, app: Option<&str>, now: i64) -> Result<Option<i6
         params![PLATFORM, identifier],
         |r| r.get(0),
     )?))
+}
+
+/// Keep the latest facts about a flow's destination: its hostname, or its address
+/// when no name is known.
+fn record_destination(tx: &Transaction<'_>, row: &FlowRow, facts: &DestinationFacts) -> Result<()> {
+    if facts.asn.is_none() && facts.country.is_none() {
+        return Ok(());
+    }
+    tx.execute(
+        "INSERT INTO destination (hostname, asn, net_owner, net_source, country, country_source,
+                                  updated)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT (hostname) DO UPDATE SET
+             asn = excluded.asn, net_owner = excluded.net_owner,
+             net_source = excluded.net_source, country = excluded.country,
+             country_source = excluded.country_source, updated = excluded.updated
+         WHERE excluded.updated >= coalesce(destination.updated, 0)",
+        params![
+            row.hostname.as_deref().unwrap_or(&row.remote_ip),
+            facts.asn,
+            facts.network_owner,
+            facts.network_source,
+            facts.country,
+            facts.country_source,
+            row.ended.unwrap_or(row.started),
+        ],
+    )?;
+    Ok(())
 }
 
 fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<i64> {

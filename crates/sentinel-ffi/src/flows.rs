@@ -199,7 +199,13 @@ impl FlowEvents {
             return;
         }
         if let Some(history) = &self.history {
-            let events: Vec<_> = batch.iter().map(history_event).collect();
+            let sources = self
+                .ip_database()
+                .map(|database| database.db.sources().clone());
+            let events: Vec<_> = batch
+                .iter()
+                .map(|record| history_event(record, sources.as_ref()))
+                .collect();
             if let Err(e) = history.store.record_flows(self.session, &events) {
                 log::warn!("could not write {} flows to the history: {e}", events.len());
                 self.history_failures.fetch_add(1, Ordering::Relaxed);
@@ -304,10 +310,22 @@ fn record(
 }
 
 /// The history's form of a flow record.
-fn history_event(record: &FlowRecord) -> sentinel_store::FlowEvent {
+fn history_event(
+    record: &FlowRecord,
+    sources: Option<&sentinel_enrich::Sources>,
+) -> sentinel_store::FlowEvent {
     let signed = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
+    // What the IP database said about the destination, with where it comes from (DT-02).
+    let destination = sources.map(|sources| sentinel_store::DestinationFacts {
+        asn: record.asn,
+        network_owner: record.network_owner.clone(),
+        network_source: record.asn.map(|_| sources.network.clone()),
+        country: record.country.clone(),
+        country_source: record.country.as_ref().map(|_| sources.country.clone()),
+    });
     sentinel_store::FlowEvent {
         engine_id: record.id,
+        destination,
         flow: sentinel_store::FlowRow {
             app: record.app.clone(),
             proto: match record.proto {

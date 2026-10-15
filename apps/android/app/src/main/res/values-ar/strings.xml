@@ -58,6 +58,13 @@
     <string name="app_detail_destinations_shown">الأماكن المعروضة: %1$d من %2$d.</string>
     <string name="app_detail_last_seen">آخر مرة: %1$s</string>
     <string name="app_detail_away">لما كانت الشاشة مطفية أو مقفولة: بعت %1$s واستلم %2$s</string>
+    <string name="dest_named_dns">الاسم من طلب الـDNS اللي عمله التطبيق</string>
+    <string name="dest_named_sni">الاسم من الاتصال نفسه (اسم السيرفر بالـTLS)</string>
+    <string name="dest_address_only">ما شفنا اسم، بس العنوان</string>
+    <string name="dest_network">الشبكة: %1$s</string>
+    <string name="dest_network_why">المصدر: %1$s. هاي الشركة اللي بتشغّل الشبكة، ومش دايماً هي اللي بتوصلها البيانات.</string>
+    <string name="dest_country">الدولة (تقريباً): %1$s</string>
+    <string name="dest_country_why">المصدر: %1$s. هاد مكان تسجيل العنوان، والسيرفر نفسه ممكن يكون بمكان تاني.</string>
 
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>

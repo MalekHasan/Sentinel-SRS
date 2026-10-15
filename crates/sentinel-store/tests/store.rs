@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use sentinel_store::{
-    AppSummary, AwayTotal, DailyTotal, DestinationTotal, FlowEvent, FlowRow, Gap, HostnameSource,
-    Proto, Store, StoreError, wipe,
+    AppSummary, AwayTotal, DailyTotal, DestinationFacts, DestinationTotal, FlowEvent, FlowRow, Gap,
+    HostnameSource, Proto, Store, StoreError, wipe,
 };
 
 const KEY: [u8; 32] = [7; 32];
@@ -40,7 +40,11 @@ fn flow(app: &str, host: &str, started: i64) -> FlowRow {
 }
 
 fn event(engine_id: u64, flow: FlowRow) -> FlowEvent {
-    FlowEvent { engine_id, flow }
+    FlowEvent {
+        engine_id,
+        flow,
+        destination: None,
+    }
 }
 
 /// True if `needle` appears in the database file or its write-ahead log.
@@ -264,6 +268,8 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
                     bytes_down: 1,
                     bytes_up_away: 0,
                     bytes_down_away: 0,
+                    name_source: Some(HostnameSource::Dns),
+                    facts: DestinationFacts::default(),
                     first_seen: NOW - 2 * DAY,
                     last_seen: NOW - 2 * DAY + 1_000,
                 },
@@ -274,6 +280,8 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
                     bytes_down: 150,
                     bytes_up_away: 0,
                     bytes_down_away: 0,
+                    name_source: Some(HostnameSource::Dns),
+                    facts: DestinationFacts::default(),
                     // The rolled-up flow keeps only its day.
                     first_seen: old_day / DAY * DAY,
                     last_seen: NOW - DAY + 1_000,
@@ -285,6 +293,8 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
                     bytes_down: 0,
                     bytes_up_away: 0,
                     bytes_down_away: 0,
+                    name_source: None,
+                    facts: DestinationFacts::default(),
                     first_seen: NOW,
                     last_seen: NOW,
                 },
@@ -371,6 +381,84 @@ fn traffic_while_away_is_totalled_per_app_and_survives_roll_up() {
             .collect::<Vec<_>>(),
         vec![(10, 20)]
     );
+}
+
+#[test]
+fn destination_facts_are_kept_per_destination_with_their_sources() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let facts = |asn: u32, country: &str, date: &str| DestinationFacts {
+        asn: Some(asn),
+        network_owner: Some(format!("NET-{asn}")),
+        network_source: Some(format!("IPtoASN {date}")),
+        country: Some(country.to_owned()),
+        country_source: Some(format!("DB-IP Lite {date}")),
+    };
+    let app = "org.example.a";
+    let with = |id: u64, row: FlowRow, facts: Option<DestinationFacts>| FlowEvent {
+        engine_id: id,
+        flow: row,
+        destination: facts,
+    };
+    let mut by_sni = flow(app, "cdn.example", NOW - 60_000);
+    by_sni.hostname_src = Some(HostnameSource::Sni);
+    let mut bare = flow(app, "unused", NOW - 50_000);
+    bare.hostname = None;
+    bare.hostname_src = None;
+    bare.remote_ip = "192.0.2.7".to_owned();
+    store
+        .record_flows(
+            1,
+            &[
+                with(
+                    1,
+                    flow(app, "cdn.example", NOW - 120_000),
+                    Some(facts(64_500, "DE", "old")),
+                ),
+                with(2, by_sni, Some(facts(64_501, "JO", "new"))),
+                with(3, bare, Some(facts(64_502, "US", "new"))),
+                // A late report of an older flow does not replace newer facts.
+                with(
+                    4,
+                    flow(app, "cdn.example", NOW - 180_000),
+                    Some(facts(64_999, "FR", "older")),
+                ),
+                // Nothing known: nothing recorded.
+                with(
+                    5,
+                    flow(app, "plain.example", NOW),
+                    Some(DestinationFacts::default()),
+                ),
+            ],
+        )
+        .unwrap();
+
+    let summary = store.app_summary(app, 10).unwrap().unwrap();
+    let get = |name: &str| {
+        summary
+            .destinations
+            .iter()
+            .find(|d| d.destination == name)
+            .unwrap()
+            .clone()
+    };
+    let cdn = get("cdn.example");
+    assert_eq!(
+        cdn.facts,
+        facts(64_501, "JO", "new"),
+        "the latest facts win"
+    );
+    assert_eq!(
+        cdn.name_source,
+        Some(HostnameSource::Sni),
+        "the TLS name outranks DNS"
+    );
+    let bare = get("192.0.2.7");
+    assert_eq!(bare.facts.asn, Some(64_502));
+    assert_eq!(bare.name_source, None, "an address has no name source");
+    let plain = get("plain.example");
+    assert_eq!(plain.facts, DestinationFacts::default());
+    assert_eq!(plain.name_source, Some(HostnameSource::Dns));
 }
 
 #[test]

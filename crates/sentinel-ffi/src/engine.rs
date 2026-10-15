@@ -796,6 +796,70 @@ mod tests {
         engine.stop();
     }
 
+    /// The history keeps each destination's network and country with the sources they
+    /// come from, for "why we believe this" (DT-02).
+    #[test]
+    fn stores_destination_facts_with_their_sources() {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let mut builder = sentinel_enrich::IpDbBuilder::new(sentinel_enrich::Sources {
+            network: "IPtoASN 2026-10-15".into(),
+            country: "DB-IP Lite 2026-10".into(),
+        });
+        let loopback = std::net::IpAddr::from(Ipv4Addr::LOCALHOST);
+        builder.add_network(loopback, loopback, 64_500).unwrap();
+        builder.name_network(64_500, "EXAMPLE-NET").unwrap();
+        builder.add_country(loopback, loopback, "JO").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("ip.db");
+        std::fs::write(&db_path, builder.build().unwrap()).unwrap();
+        let history_path = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(history_path, vec![6; 32]).unwrap();
+
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let (flows, _batches) = recording_flows();
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            flows,
+            Some(Arc::clone(&history)),
+        )
+        .unwrap();
+        engine.set_ip_database(Some(
+            IpDatabase::open(db_path.to_string_lossy().into_owned()).unwrap(),
+        ));
+        peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
+        let echoed = (&peer).read(&mut [0u8; 2048]).expect("no echo");
+        assert!(echoed > 0);
+        engine.stop();
+
+        let app = history.app_summary(OWNER_APP.into(), 10).unwrap().unwrap();
+        let destination = &app.destinations[0];
+        assert_eq!(destination.destination, "127.0.0.1");
+        assert_eq!(destination.name_source, None, "an address, no name");
+        assert_eq!(destination.asn, Some(64_500));
+        assert_eq!(destination.network_owner.as_deref(), Some("EXAMPLE-NET"));
+        assert_eq!(
+            destination.network_source.as_deref(),
+            Some("IPtoASN 2026-10-15")
+        );
+        assert_eq!(destination.country.as_deref(), Some("JO"));
+        assert_eq!(
+            destination.country_source.as_deref(),
+            Some("DB-IP Lite 2026-10")
+        );
+    }
+
     /// The live view (CM-03) shows open flows by app with their bytes so far, and
     /// forgets them once they end.
     #[test]

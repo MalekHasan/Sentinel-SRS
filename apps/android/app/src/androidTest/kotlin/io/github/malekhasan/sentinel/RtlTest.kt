@@ -167,6 +167,12 @@ class RtlTest {
                     bytesDownAway = 0,
                     firstSeenMs = now,
                     lastSeenMs = now,
+                    nameSource = NameSource.DNS,
+                    asn = 64_500u,
+                    networkOwner = "EXAMPLE-NET",
+                    networkSource = "IPtoASN 2026-10-15",
+                    country = "JO",
+                    countrySource = "DB-IP Lite 2026-10",
                 ),
             ),
         )
@@ -185,6 +191,16 @@ class RtlTest {
             Formatter.formatShortFileSize(arabic, 0),
         )
         assertRightToLeft(compose.onNodeWithText(away))
+        // The destination's facts and their sources: Latin names inside Arabic lines.
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.dest_network, isolate("AS64500 EXAMPLE-NET"))),
+        )
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.dest_network_why, isolate("IPtoASN 2026-10-15"))),
+        )
+        val jordan = Locale.Builder().setRegion("JO").build().getDisplayCountry(Locale.forLanguageTag("ar"))
+        // The row may reach below the screen's edge; being laid out is enough here.
+        compose.onNodeWithText(arabic.getString(R.string.dest_country, jordan)).assertExists()
     }
 
     /** Arabic resources and a right-to-left layout, as on a phone set to Arabic. */

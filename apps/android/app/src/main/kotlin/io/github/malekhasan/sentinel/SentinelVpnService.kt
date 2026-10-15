@@ -108,6 +108,16 @@ class SentinelVpnService : VpnService() {
         }.also { it.start() }
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
+        // The network and country of each destination (DT-01), if a feed brought the data.
+        Thread({
+            val database = IpData.open(this) ?: return@Thread
+            main.post {
+                if (engine === started) {
+                    started.setIpDatabase(database)
+                    Monitor.ipDataLoaded(database.sources())
+                }
+            }
+        }, "sentinel-ip-data").start()
         if (history != null) {
             // Roll old flows into daily totals (SRS §13.2), off the main thread.
             Thread({
