@@ -2,7 +2,7 @@
 //! Alerts (SRS §12.1) as seen from Kotlin. The app writes each alert's title and
 //! explanation in the user's language from its rule and evidence (ADR-0012).
 
-use sentinel_detect::{Action, AlertState, Delivery, Evidence, Rule, Severity};
+use sentinel_detect::{Action, AlertState, Delivery, Evidence, Feedback, Rule, Severity};
 use sentinel_store::StoredAlert;
 
 /// How urgent an alert is (AL-01).
@@ -59,6 +59,54 @@ pub struct HistoryAlert {
     /// When a notification was posted for it; `None` if it was kept in the app only.
     #[uniffi(default = None)]
     pub notified_ms: Option<i64>,
+    /// What the user said about it (AL-05).
+    #[uniffi(default = None)]
+    pub feedback: Option<AlertFeedback>,
+}
+
+/// What the user says about an alert (AL-05). Kept on the device only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AlertFeedback {
+    /// Later alerts like it wait in the app instead of notifying; Critical ones still
+    /// notify.
+    NotUseful,
+    /// No more alerts from this rule about the same app. Not for Critical alerts.
+    Allowed,
+}
+
+impl From<AlertFeedback> for Feedback {
+    fn from(feedback: AlertFeedback) -> Self {
+        match feedback {
+            AlertFeedback::NotUseful => Feedback::NotUseful,
+            AlertFeedback::Allowed => Feedback::Allowed,
+        }
+    }
+}
+
+impl From<Feedback> for AlertFeedback {
+    fn from(feedback: Feedback) -> Self {
+        match feedback {
+            Feedback::NotUseful => AlertFeedback::NotUseful,
+            Feedback::Allowed => AlertFeedback::Allowed,
+        }
+    }
+}
+
+/// A rule the user allowed for an app, or for Sentinel itself.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AllowedRule {
+    pub rule: AlertRule,
+    /// `None` for alerts about Sentinel itself.
+    pub app: Option<String>,
+    pub created_ms: i64,
+}
+
+impl From<Rule> for AlertRule {
+    fn from(rule: Rule) -> Self {
+        match rule {
+            Rule::MonitoringInterrupted => AlertRule::MonitoringInterrupted,
+        }
+    }
 }
 
 /// How a new alert reaches the user (AL-03, AL-04).
@@ -70,6 +118,8 @@ pub enum AlertDelivery {
     HeldForDoNotDisturb,
     /// The app it is about already had three non-critical notifications this hour.
     HeldForRateLimit,
+    /// The user said alerts like it are not useful.
+    HeldForFeedback,
 }
 
 impl From<Delivery> for AlertDelivery {
@@ -78,6 +128,7 @@ impl From<Delivery> for AlertDelivery {
             Delivery::Notify => AlertDelivery::Notify,
             Delivery::HoldForDoNotDisturb => AlertDelivery::HeldForDoNotDisturb,
             Delivery::HoldForRateLimit => AlertDelivery::HeldForRateLimit,
+            Delivery::HoldForFeedback => AlertDelivery::HeldForFeedback,
         }
     }
 }
@@ -94,9 +145,7 @@ impl From<StoredAlert> for HistoryAlert {
         let alert = stored.alert;
         HistoryAlert {
             id: stored.id,
-            rule: match alert.rule {
-                Rule::MonitoringInterrupted => AlertRule::MonitoringInterrupted,
-            },
+            rule: alert.rule.into(),
             severity: match alert.severity {
                 Severity::Info => AlertSeverity::Info,
                 Severity::Warning => AlertSeverity::Warning,
@@ -125,6 +174,7 @@ impl From<StoredAlert> for HistoryAlert {
                 .collect(),
             open: stored.state == AlertState::Open,
             notified_ms: stored.notified,
+            feedback: stored.feedback.map(Into::into),
         }
     }
 }

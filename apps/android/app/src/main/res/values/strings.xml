@@ -104,6 +104,13 @@
     <string name="alert_action_open_app">See what %1$s did</string>
     <string name="alert_dismiss">Dismiss</string>
     <string name="alert_dismissed">You dismissed this alert.</string>
+    <string name="alert_feedback_title">Was this alert useful?</string>
+    <string name="alert_feedback_not_useful">Not useful</string>
+    <string name="alert_feedback_allow">This is fine. Do not alert me about it again.</string>
+    <string name="alert_feedback_was_not_useful">You said this was not useful. Alerts like it will wait in the app, with no notification.</string>
+    <string name="alert_feedback_was_allowed">You allowed this. Sentinel will not alert you about it again.</string>
+    <string name="alert_feedback_undo">Undo</string>
+    <string name="alert_feedback_note">Your answer stays on this phone. It only changes how Sentinel alerts you.</string>
     <plurals name="alert_more_like_this">
         <item quantity="one">%d more alert like this is open.</item>
         <item quantity="other">%d more alerts like this are open.</item>

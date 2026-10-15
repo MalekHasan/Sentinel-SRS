@@ -35,6 +35,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.malekhasan.sentinel.core.AlertAction
 import io.github.malekhasan.sentinel.core.AlertEvidence
+import io.github.malekhasan.sentinel.core.AlertFeedback
 import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.HistoryAlert
@@ -72,22 +73,30 @@ fun AlertDetailScreen(id: Long, onBack: () -> Unit, onAction: (AlertAction) -> U
     val scope = rememberCoroutineScope()
     var details by remember(id) { mutableStateOf<AlertDetails?>(null) }
 
-    LaunchedEffect(id) {
-        details = withContext(Dispatchers.IO) {
-            try {
-                History.get(context).alert(id)?.let { alert ->
-                    AlertDetails(alert, appsIn(alert).associateWith(names::labelFor))
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "the alert cannot be read", e)
-                null
+    suspend fun load() = withContext(Dispatchers.IO) {
+        try {
+            History.get(context).alert(id)?.let { alert ->
+                AlertDetails(alert, appsIn(alert).associateWith(names::labelFor))
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "the alert cannot be read", e)
+            null
         }
     }
+    LaunchedEffect(id) { details = load() }
     AlertDetail(
         details = details,
         onBack = onBack,
         onAction = onAction,
+        onFeedback = { feedback ->
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    runCatching { History.get(context).setFeedback(id, feedback) }
+                        .onFailure { Log.w(TAG, "the feedback cannot be saved", it) }
+                }
+                details = load()
+            }
+        },
         onDismiss = {
             scope.launch {
                 withContext(Dispatchers.IO) {
@@ -114,6 +123,7 @@ fun AlertDetail(
     onBack: () -> Unit,
     onAction: (AlertAction) -> Unit,
     onDismiss: () -> Unit,
+    onFeedback: (AlertFeedback?) -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -149,7 +159,38 @@ fun AlertDetail(
         } else {
             Text(stringResource(R.string.alert_dismissed), style = MaterialTheme.typography.bodySmall)
         }
+        Feedback(alert, onFeedback)
     }
+}
+
+/**
+ * What the user thinks of the alert (AL-05): not useful, or fine to allow from now on,
+ * and how to take it back. A Critical alert cannot be allowed (ADR-0012).
+ */
+@Composable
+private fun Feedback(alert: HistoryAlert, onFeedback: (AlertFeedback?) -> Unit) {
+    Text(stringResource(R.string.alert_feedback_title), style = MaterialTheme.typography.titleSmall)
+    when (alert.feedback) {
+        null -> {
+            OutlinedButton(onClick = { onFeedback(AlertFeedback.NOT_USEFUL) }) {
+                Text(stringResource(R.string.alert_feedback_not_useful))
+            }
+            if (alert.severity != AlertSeverity.CRITICAL) {
+                OutlinedButton(onClick = { onFeedback(AlertFeedback.ALLOWED) }) {
+                    Text(stringResource(R.string.alert_feedback_allow))
+                }
+            }
+        }
+        AlertFeedback.NOT_USEFUL -> {
+            Text(stringResource(R.string.alert_feedback_was_not_useful), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = { onFeedback(null) }) { Text(stringResource(R.string.alert_feedback_undo)) }
+        }
+        AlertFeedback.ALLOWED -> {
+            Text(stringResource(R.string.alert_feedback_was_allowed), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = { onFeedback(null) }) { Text(stringResource(R.string.alert_feedback_undo)) }
+        }
+    }
+    Text(stringResource(R.string.alert_feedback_note), style = MaterialTheme.typography.bodySmall)
 }
 
 /** One alert in a list: its severity, title and when it was raised. */

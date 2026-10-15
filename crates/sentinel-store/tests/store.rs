@@ -602,12 +602,14 @@ fn alerts_are_kept_with_their_evidence_and_state() {
                 alert: newer.clone(),
                 state: AlertState::Open,
                 notified: None,
+                feedback: None,
             },
             StoredAlert {
                 id: older_id,
                 alert: older.clone(),
                 state: AlertState::Open,
                 notified: None,
+                feedback: None,
             },
         ]
     );
@@ -701,6 +703,123 @@ fn notifications_are_claimed_once_and_rate_limited() {
     assert_eq!(
         store.claim_notification(ids[3], later, false).unwrap(),
         Some(Delivery::Notify)
+    );
+}
+
+/// AL-05: feedback stays in the history, dismisses the alert, and changes only how this
+/// user is alerted: "not useful" holds later alerts like it, "allowed" adds to the
+/// allow-list. Both can be taken back; a Critical alert cannot be allowed.
+#[test]
+fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
+    use sentinel_detect::{Delivery, Evidence, Feedback, Rule, Severity};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let raise = |app: Option<&str>, severity: Severity| {
+        let mut alert = sentinel_detect::monitoring_interrupted(NOW, None, "r");
+        alert.severity = severity;
+        if let Some(app) = app {
+            alert.evidence.push(Evidence::App {
+                package: app.to_owned(),
+            });
+        }
+        store.record_alert(&alert).unwrap()
+    };
+    let chat = Some("org.example.chat");
+    assert!(
+        !store
+            .set_feedback(9_999, Some(Feedback::NotUseful), NOW)
+            .unwrap()
+    );
+
+    // Not useful: dismissed, kept, and later alerts like it wait in the app.
+    let first = raise(chat, Severity::Warning);
+    assert!(
+        store
+            .set_feedback(first, Some(Feedback::NotUseful), NOW)
+            .unwrap()
+    );
+    let stored = store.alert(first).unwrap().unwrap();
+    assert_eq!(stored.feedback, Some(Feedback::NotUseful));
+    assert_eq!(stored.state, AlertState::Dismissed);
+    let like_it = raise(chat, Severity::High);
+    assert_eq!(
+        store.claim_notification(like_it, NOW, false).unwrap(),
+        Some(Delivery::HoldForFeedback)
+    );
+    let other_app = raise(Some("org.example.mail"), Severity::Warning);
+    assert_eq!(
+        store.claim_notification(other_app, NOW, false).unwrap(),
+        Some(Delivery::Notify),
+        "only the same app"
+    );
+    let critical = raise(chat, Severity::Critical);
+    assert_eq!(
+        store.claim_notification(critical, NOW, false).unwrap(),
+        Some(Delivery::Notify),
+        "Critical always notifies"
+    );
+    // Taken back: alerts like it notify again.
+    store.set_feedback(first, None, NOW).unwrap();
+    assert_eq!(store.alert(first).unwrap().unwrap().feedback, None);
+    let after_undo = raise(chat, Severity::Warning);
+    assert_eq!(
+        store.claim_notification(after_undo, NOW, false).unwrap(),
+        Some(Delivery::Notify)
+    );
+
+    // Allowed: on the allow-list, for this rule and app only.
+    assert!(!store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
+    let allow = raise(chat, Severity::Warning);
+    store
+        .set_feedback(allow, Some(Feedback::Allowed), NOW + 1)
+        .unwrap();
+    assert!(store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
+    assert!(!store.is_allowed(Rule::MonitoringInterrupted, None).unwrap());
+    let own = raise(None, Severity::Warning);
+    store
+        .set_feedback(own, Some(Feedback::Allowed), NOW + 2)
+        .unwrap();
+    assert_eq!(
+        store.allowed().unwrap(),
+        vec![
+            sentinel_store::AllowedEntry {
+                rule: Rule::MonitoringInterrupted,
+                app: None,
+                created: NOW + 2,
+            },
+            sentinel_store::AllowedEntry {
+                rule: Rule::MonitoringInterrupted,
+                app: chat.map(str::to_owned),
+                created: NOW + 1,
+            },
+        ]
+    );
+    // Changing the feedback from allowed takes the app off the list.
+    store
+        .set_feedback(allow, Some(Feedback::NotUseful), NOW)
+        .unwrap();
+    assert!(!store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
+    assert!(store.is_allowed(Rule::MonitoringInterrupted, None).unwrap());
+
+    // A Critical alert cannot be allowed; it can be marked not useful.
+    assert!(matches!(
+        store.set_feedback(critical, Some(Feedback::Allowed), NOW),
+        Err(StoreError::FeedbackNotAllowed(id)) if id == critical
+    ));
+    assert!(
+        store
+            .set_feedback(critical, Some(Feedback::NotUseful), NOW)
+            .unwrap()
+    );
+
+    // It all stays in the encrypted history.
+    drop(store);
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    assert!(store.is_allowed(Rule::MonitoringInterrupted, None).unwrap());
+    assert_eq!(
+        store.alert(first).unwrap().unwrap().state,
+        AlertState::Dismissed
     );
 }
 

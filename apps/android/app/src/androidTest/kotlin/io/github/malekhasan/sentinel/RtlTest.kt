@@ -23,6 +23,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.ResolvedTextDirection
@@ -269,6 +270,9 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_evidence_app, isolate(LABEL))))
         compose.onNodeWithText(arabic.getString(R.string.alert_action_open_app, isolate(LABEL)), useUnmergedTree = true)
             .assertExists()
+        // Feedback (AL-05).
+        compose.onNodeWithText(arabic.getString(R.string.alert_feedback_title)).performScrollTo().assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_feedback_note)).performScrollTo())
     }
 
     private fun alert() = HistoryAlert(

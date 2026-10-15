@@ -132,6 +132,40 @@ impl Alert {
     }
 }
 
+/// What the user said about an alert (AL-05). It stays on the device and changes only
+/// how Sentinel alerts this user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feedback {
+    /// Alerts like this are not useful: later ones about the same app wait in the app
+    /// instead of notifying. Critical alerts still notify.
+    NotUseful,
+    /// Allow what the alert was about: no more alerts from this rule about the same app.
+    /// Not offered for Critical alerts (see [`Feedback::allowed_for`]).
+    Allowed,
+}
+
+impl Feedback {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Feedback::NotUseful => "not_useful",
+            Feedback::Allowed => "allowed",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Feedback> {
+        [Feedback::NotUseful, Feedback::Allowed]
+            .into_iter()
+            .find(|f| f.as_str() == name)
+    }
+
+    /// Whether this feedback may be given on an alert of `severity`. A Critical alert
+    /// cannot be allowed: someone else holding the phone could otherwise silence what
+    /// it found for good.
+    pub fn allowed_for(self, severity: Severity) -> bool {
+        self != Feedback::Allowed || severity < Severity::Critical
+    }
+}
+
 /// Whether an alert still asks for attention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlertState {
@@ -236,6 +270,17 @@ mod tests {
         assert_eq!(evidence_from_json(&json).unwrap(), evidence);
         assert!(evidence_from_json(r#"[{"type":"unknown"}]"#).is_err());
         assert!(evidence_from_json("not json").is_err());
+    }
+
+    #[test]
+    fn feedback_is_named_and_critical_alerts_cannot_be_allowed() {
+        for feedback in [Feedback::NotUseful, Feedback::Allowed] {
+            assert_eq!(Feedback::from_name(feedback.as_str()), Some(feedback));
+            assert!(feedback.allowed_for(Severity::High));
+        }
+        assert!(Feedback::NotUseful.allowed_for(Severity::Critical));
+        assert!(!Feedback::Allowed.allowed_for(Severity::Critical));
+        assert_eq!(Feedback::from_name("useful"), None);
     }
 
     #[test]

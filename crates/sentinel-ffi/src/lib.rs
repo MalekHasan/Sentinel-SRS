@@ -11,8 +11,8 @@ mod flows;
 mod history;
 
 pub use alerts::{
-    AlertAction, AlertDelivery, AlertEvidence, AlertListener, AlertRule, AlertSeverity,
-    HistoryAlert,
+    AlertAction, AlertDelivery, AlertEvidence, AlertFeedback, AlertListener, AlertRule,
+    AlertSeverity, AllowedRule, HistoryAlert,
 };
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
 pub use enrich::{

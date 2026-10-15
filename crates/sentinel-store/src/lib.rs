@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use sentinel_detect::{Alert, AlertState, Delivery, Rule, Sent, Severity};
+use sentinel_detect::{Alert, AlertState, Delivery, Feedback, Rule, Sent, Severity};
 use zeroize::Zeroizing;
 
 mod schema;
@@ -189,6 +189,18 @@ pub struct StoredAlert {
     /// When a notification was posted for it, Unix milliseconds; `None` if it was kept
     /// in the app only (AL-03, AL-04).
     pub notified: Option<i64>,
+    /// What the user said about it (AL-05).
+    pub feedback: Option<Feedback>,
+}
+
+/// A rule the user allowed for an app, or for Sentinel itself (AL-05).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AllowedEntry {
+    pub rule: Rule,
+    /// `None` for alerts about Sentinel itself.
+    pub app: Option<String>,
+    /// Unix milliseconds.
+    pub created: i64,
 }
 
 /// One app's traffic while the user was away (SRS CM-06).
@@ -213,6 +225,9 @@ pub enum StoreError {
     /// evidence that is not the stored format.
     #[error("alert {0} cannot be read")]
     BadAlert(i64),
+    /// Feedback that this alert cannot take, such as allowing a Critical alert.
+    #[error("alert {0} cannot take this feedback")]
+    FeedbackNotAllowed(i64),
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -429,7 +444,9 @@ impl Store {
             })
             .collect::<Result<Vec<_>>>()?;
         drop(stmt);
-        let delivery = sentinel_detect::delivery(&stored.alert, now, do_not_disturb, &sent);
+        let not_useful = marked_not_useful(&tx, &stored.alert)?;
+        let delivery =
+            sentinel_detect::delivery(&stored.alert, now, do_not_disturb, &sent, not_useful);
         if delivery == Delivery::Notify {
             tx.execute(
                 "UPDATE alert SET notified = ?2 WHERE id = ?1",
@@ -438,6 +455,91 @@ impl Store {
         }
         tx.commit()?;
         Ok(Some(delivery))
+    }
+
+    /// Record what the user said about alert `id` (AL-05), or take it back with `None`.
+    /// Any feedback also dismisses the alert. Allowing it adds its rule and app to the
+    /// allow-list; taking that back removes them. Returns whether there is an alert with
+    /// this id.
+    pub fn set_feedback(&self, id: i64, feedback: Option<Feedback>, now: i64) -> Result<bool> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let Some(row) = tx
+            .query_row(&format!("{ALERT_COLUMNS} WHERE id = ?1"), [id], alert_row)
+            .optional()?
+        else {
+            return Ok(false);
+        };
+        let stored = stored_alert(row)?;
+        if feedback.is_some_and(|f| !f.allowed_for(stored.alert.severity)) {
+            return Err(StoreError::FeedbackNotAllowed(id));
+        }
+        let rule = stored.alert.rule.id();
+        let subject = stored.alert.app().unwrap_or_default();
+        if stored.feedback == Some(Feedback::Allowed) && feedback != Some(Feedback::Allowed) {
+            tx.execute(
+                "DELETE FROM allowed WHERE rule_id = ?1 AND subject = ?2",
+                params![rule, subject],
+            )?;
+        }
+        if feedback == Some(Feedback::Allowed) {
+            tx.execute(
+                "INSERT OR IGNORE INTO allowed (rule_id, subject, created) VALUES (?1, ?2, ?3)",
+                params![rule, subject, now],
+            )?;
+        }
+        tx.execute(
+            "UPDATE alert SET user_feedback = ?2 WHERE id = ?1",
+            params![id, feedback.map(Feedback::as_str)],
+        )?;
+        if feedback.is_some() {
+            tx.execute(
+                "UPDATE alert SET state = ?2 WHERE id = ?1",
+                params![id, AlertState::Dismissed.as_str()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Whether the user allowed `rule` for `app` (`None`: Sentinel itself), so that it
+    /// raises no alerts about it (AL-05).
+    pub fn is_allowed(&self, rule: Rule, app: Option<&str>) -> Result<bool> {
+        let found: Option<i64> = lock(&self.conn)
+            .query_row(
+                "SELECT 1 FROM allowed WHERE rule_id = ?1 AND subject = ?2",
+                params![rule.id(), app.unwrap_or_default()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    /// Everything the user allowed, newest first. Entries for rules this version does
+    /// not know are left out.
+    pub fn allowed(&self) -> Result<Vec<AllowedEntry>> {
+        let conn = lock(&self.conn);
+        let mut stmt =
+            conn.prepare("SELECT rule_id, subject, created FROM allowed ORDER BY created DESC")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(rule, subject, created)| {
+                Some(AllowedEntry {
+                    rule: Rule::from_id(&rule)?,
+                    app: (!subject.is_empty()).then_some(subject),
+                    created,
+                })
+            })
+            .collect())
     }
 
     /// Change an alert's state. Returns whether there is an alert with this id.
@@ -840,39 +942,70 @@ fn proto_from(name: &str) -> Proto {
 }
 
 /// The columns [`alert_row`] reads.
-const ALERT_COLUMNS: &str =
-    "SELECT id, rule_id, severity, evidence, created, state, notified FROM alert";
+const ALERT_COLUMNS: &str = "SELECT id, rule_id, severity, evidence, created, state, notified,
+                                    user_feedback FROM alert";
 
-/// An alert row as read: id, rule id, severity, evidence, created, state, notified.
-type AlertRow = (i64, String, String, String, i64, String, Option<i64>);
-
-fn alert_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AlertRow> {
-    Ok((
-        r.get(0)?,
-        r.get(1)?,
-        r.get(2)?,
-        r.get(3)?,
-        r.get(4)?,
-        r.get(5)?,
-        r.get(6)?,
-    ))
+/// An alert row as read, before its names are checked.
+struct AlertRow {
+    id: i64,
+    rule: String,
+    severity: String,
+    evidence: String,
+    created: i64,
+    state: String,
+    notified: Option<i64>,
+    feedback: Option<String>,
 }
 
-fn stored_alert(
-    (id, rule, severity, evidence, created, state, notified): AlertRow,
-) -> Result<StoredAlert> {
-    let bad = || StoreError::BadAlert(id);
-    Ok(StoredAlert {
-        id,
-        alert: Alert {
-            rule: Rule::from_id(&rule).ok_or_else(bad)?,
-            severity: Severity::from_name(&severity).ok_or_else(bad)?,
-            created,
-            evidence: sentinel_detect::evidence_from_json(&evidence).map_err(|_| bad())?,
-        },
-        state: AlertState::from_name(&state).ok_or_else(bad)?,
-        notified,
+fn alert_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<AlertRow> {
+    Ok(AlertRow {
+        id: r.get(0)?,
+        rule: r.get(1)?,
+        severity: r.get(2)?,
+        evidence: r.get(3)?,
+        created: r.get(4)?,
+        state: r.get(5)?,
+        notified: r.get(6)?,
+        feedback: r.get(7)?,
     })
+}
+
+fn stored_alert(row: AlertRow) -> Result<StoredAlert> {
+    let bad = || StoreError::BadAlert(row.id);
+    Ok(StoredAlert {
+        id: row.id,
+        alert: Alert {
+            rule: Rule::from_id(&row.rule).ok_or_else(bad)?,
+            severity: Severity::from_name(&row.severity).ok_or_else(bad)?,
+            created: row.created,
+            evidence: sentinel_detect::evidence_from_json(&row.evidence).map_err(|_| bad())?,
+        },
+        state: AlertState::from_name(&row.state).ok_or_else(bad)?,
+        notified: row.notified,
+        feedback: match row.feedback {
+            Some(name) => Some(Feedback::from_name(&name).ok_or_else(bad)?),
+            None => None,
+        },
+    })
+}
+
+/// Whether the user marked an alert of the same rule about the same app "not useful".
+fn marked_not_useful(tx: &Transaction<'_>, alert: &Alert) -> Result<bool> {
+    let mut stmt = tx.prepare(&format!(
+        "{ALERT_COLUMNS} WHERE rule_id = ?1 AND user_feedback = ?2"
+    ))?;
+    let rows = stmt
+        .query_map(
+            params![alert.rule.id(), Feedback::NotUseful.as_str()],
+            alert_row,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    for row in rows {
+        if stored_alert(row)?.alert.app() == alert.app() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn hostname_src_name(source: HostnameSource) -> &'static str {

@@ -122,7 +122,18 @@ CREATE INDEX alert_by_created ON alert (created);
 /// When each alert was notified (AL-03, AL-04): NULL if it was kept in the app only.
 const V7: &str = "ALTER TABLE alert ADD COLUMN notified INTEGER;";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
+/// What the user allowed (AL-05): a rule for an app, or for Sentinel itself (an empty
+/// `subject`). `alert.user_feedback` (V6) holds "not_useful" or "allowed".
+const V8: &str = "
+CREATE TABLE allowed (
+  rule_id TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  created INTEGER NOT NULL,
+  PRIMARY KEY (rule_id, subject)
+);
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

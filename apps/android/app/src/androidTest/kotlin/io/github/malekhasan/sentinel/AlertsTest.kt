@@ -2,6 +2,9 @@
 package io.github.malekhasan.sentinel
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -17,6 +20,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.AlertAction
 import io.github.malekhasan.sentinel.core.AlertEvidence
+import io.github.malekhasan.sentinel.core.AlertFeedback
 import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.HistoryAlert
@@ -111,6 +115,61 @@ class AlertsTest {
         assertEquals(listOf(AlertAction.StartMonitoring, AlertAction.OpenApp(app = "org.example.vpn")), chosen)
         compose.onNodeWithText(context.getString(R.string.alert_dismiss)).performScrollTo().performClick()
         assertTrue(dismissed)
+    }
+
+    /** AL-05: allowing a gap alert stops the next gaps from raising one, until undone. */
+    @Test
+    fun allowingAnAlertStopsTheNextOnesLikeIt() {
+        History.wipe(context)
+        val history = History.get(context)
+        GapLog.open(context, 1_000L, "first")
+        GapLog.closeOpen(context, 2_000L)
+        val first = history.alerts(true, 10u).single()
+        assertTrue(history.setFeedback(first.id, AlertFeedback.ALLOWED))
+        assertTrue("allowing dismisses it", history.alerts(true, 10u).isEmpty())
+        GapLog.open(context, 3_000L, "second")
+        GapLog.closeOpen(context, 4_000L)
+        assertEquals("no alert for an allowed kind", 1, history.alerts(false, 10u).size)
+
+        assertTrue(history.setFeedback(first.id, null))
+        GapLog.open(context, 5_000L, "third")
+        GapLog.closeOpen(context, 6_000L)
+        assertEquals("alerts again once undone", 1, history.alerts(true, 10u).size)
+        History.wipe(context)
+    }
+
+    /** AL-05: feedback on the screen, its result, and undo; a Critical alert cannot be allowed. */
+    @Test
+    fun feedbackCanBeGivenAndTakenBack() {
+        val given = mutableListOf<AlertFeedback?>()
+        var shown by mutableStateOf(alert())
+        compose.setContent {
+            SentinelTheme {
+                AlertDetail(AlertDetails(shown, emptyMap()), {}, {}, {}, onFeedback = { given += it })
+            }
+        }
+        fun tap(text: Int) = compose.onNodeWithText(context.getString(text)).performScrollTo().performClick()
+        tap(R.string.alert_feedback_not_useful)
+        tap(R.string.alert_feedback_allow)
+        assertEquals(listOf(AlertFeedback.NOT_USEFUL, AlertFeedback.ALLOWED), given)
+
+        shown = alert().copy(feedback = AlertFeedback.NOT_USEFUL, open = false)
+        compose.waitForIdle()
+        compose.onNodeWithText(context.getString(R.string.alert_feedback_was_not_useful))
+            .performScrollTo().assertIsDisplayed()
+        tap(R.string.alert_feedback_undo)
+        assertEquals(null, given.last())
+
+        shown = alert().copy(feedback = AlertFeedback.ALLOWED, open = false)
+        compose.waitForIdle()
+        compose.onNodeWithText(context.getString(R.string.alert_feedback_was_allowed))
+            .performScrollTo().assertIsDisplayed()
+
+        shown = alert(AlertSeverity.CRITICAL)
+        compose.waitForIdle()
+        compose.onNodeWithText(context.getString(R.string.alert_feedback_not_useful))
+            .performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText(context.getString(R.string.alert_feedback_allow)).assertCountEquals(0)
     }
 
     /** A dismissed alert says so and offers no Dismiss button. */

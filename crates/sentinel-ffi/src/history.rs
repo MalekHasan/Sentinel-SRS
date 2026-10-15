@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sentinel_store::{KEY_LEN, Store, StoreError};
 
-use crate::alerts::{AlertDelivery, AlertListener, HistoryAlert};
+use crate::alerts::{AlertDelivery, AlertFeedback, AlertListener, AllowedRule, HistoryAlert};
 use crate::enrich::{CategoryFact, CompanyFact};
 use crate::flows::{FlowProto, NameSource};
 
@@ -275,6 +275,34 @@ impl HistoryStore {
         Ok(())
     }
 
+    /// Record what the user said about alert `id`, or take it back with `None` (AL-05).
+    /// Any feedback dismisses the alert; allowing it stops its rule from raising alerts
+    /// about the same app. A Critical alert cannot be allowed. Returns whether there is
+    /// an alert with this id.
+    pub fn set_feedback(
+        &self,
+        id: i64,
+        feedback: Option<AlertFeedback>,
+    ) -> Result<bool, HistoryError> {
+        Ok(self
+            .store
+            .set_feedback(id, feedback.map(Into::into), now_ms())?)
+    }
+
+    /// Everything the user allowed, newest first.
+    pub fn allowed(&self) -> Result<Vec<AllowedRule>, HistoryError> {
+        Ok(self
+            .store
+            .allowed()?
+            .into_iter()
+            .map(|entry| AllowedRule {
+                rule: entry.rule.into(),
+                app: entry.app,
+                created_ms: entry.created,
+            })
+            .collect())
+    }
+
     /// Tell `listener` about every new alert from now on, or no one.
     pub fn set_alert_listener(&self, listener: Option<Arc<dyn AlertListener>>) {
         *self
@@ -353,9 +381,13 @@ pub fn wipe_history(path: String) -> Result<(), HistoryError> {
 }
 
 impl HistoryStore {
-    /// Keep a new alert and tell the listener, if any. The listener is called without
-    /// any lock held, so it may read the history.
+    /// Keep a new alert and tell the listener, if any, unless the user allowed what it
+    /// is about (AL-05). The listener is called without any lock held, so it may read
+    /// the history.
     fn raise(&self, alert: &sentinel_detect::Alert) -> Result<(), HistoryError> {
+        if self.store.is_allowed(alert.rule, alert.app())? {
+            return Ok(());
+        }
         let id = self.store.record_alert(alert)?;
         let listener = self
             .alert_listener
@@ -538,5 +570,58 @@ mod tests {
         assert_eq!(quiet.heard.lock().unwrap().len(), 1);
         assert_eq!(history.claim_notification(9_999, false).unwrap(), None);
         drop(notifier);
+    }
+
+    /// AL-05: allowing a gap alert stops the next gaps from raising alerts, until the
+    /// user takes it back; "not useful" holds the next one's notification.
+    #[test]
+    fn feedback_tunes_later_alerts_only() {
+        use crate::alerts::AlertRule;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        let gap = |at: i64| {
+            history.open_gap(Some(at), "r".into()).unwrap();
+            history.close_gap(at + 1).unwrap();
+        };
+        let open_count = || history.alerts(true, 10).unwrap().len();
+
+        gap(0);
+        let first = history.alerts(true, 10).unwrap()[0].id;
+        assert!(
+            history
+                .set_feedback(first, Some(AlertFeedback::Allowed))
+                .unwrap()
+        );
+        assert_eq!(open_count(), 0, "allowing dismisses it");
+        assert_eq!(
+            history.alert(first).unwrap().unwrap().feedback,
+            Some(AlertFeedback::Allowed)
+        );
+        assert_eq!(
+            history.allowed().unwrap()[0].rule,
+            AlertRule::MonitoringInterrupted
+        );
+        assert_eq!(history.allowed().unwrap()[0].app, None);
+        gap(10);
+        assert_eq!(history.alerts(false, 10).unwrap().len(), 1, "no new alert");
+
+        history.set_feedback(first, None).unwrap();
+        assert!(history.allowed().unwrap().is_empty());
+        gap(20);
+        assert_eq!(open_count(), 1, "alerts again after taking it back");
+
+        let second = history.alerts(true, 10).unwrap()[0].id;
+        history
+            .set_feedback(second, Some(AlertFeedback::NotUseful))
+            .unwrap();
+        gap(30);
+        let third = history.alerts(true, 10).unwrap()[0].id;
+        assert_eq!(
+            history.claim_notification(third, false).unwrap(),
+            Some(AlertDelivery::HeldForFeedback)
+        );
+        assert!(!history.set_feedback(9_999, None).unwrap());
     }
 }

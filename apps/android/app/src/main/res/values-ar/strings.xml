@@ -119,6 +119,13 @@
     <string name="alert_action_open_app">شوف شو عمل %1$s</string>
     <string name="alert_dismiss">إخفاء</string>
     <string name="alert_dismissed">أخفيت هالتنبيه.</string>
+    <string name="alert_feedback_title">هالتنبيه كان مفيد؟</string>
+    <string name="alert_feedback_not_useful">مش مفيد</string>
+    <string name="alert_feedback_allow">هاد طبيعي. لا تنبّهني عنه مرة تانية.</string>
+    <string name="alert_feedback_was_not_useful">قلت إنه هالتنبيه مش مفيد. التنبيهات اللي متله رح تستنى بالتطبيق، بدون إشعار.</string>
+    <string name="alert_feedback_was_allowed">سمحت بهاد. Sentinel ما رح ينبّهك عنه مرة تانية.</string>
+    <string name="alert_feedback_undo">تراجع</string>
+    <string name="alert_feedback_note">جوابك بيضل على هالموبايل، وبيغيّر بس طريقة تنبيه Sentinel إلك.</string>
     <plurals name="alert_more_like_this">
         <item quantity="zero">ما في تنبيهات تانية متلو مفتوحة.</item>
         <item quantity="one">في تنبيه واحد تاني متلو مفتوح.</item>

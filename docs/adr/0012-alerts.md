@@ -2,7 +2,7 @@
 
 - Status: **Accepted** (Sprint 5; `crates/sentinel-detect`, `crates/sentinel-store`, `apps/android`)
 - Date: 2026-10-15
-- Implements: SRS AL-01, AL-02, the alert for monitoring gaps (SP-03), and delivery as notifications (AL-03, AL-04, AL-06); prepares AL-05
+- Implements: SRS AL-01, AL-02, the alert for monitoring gaps (SP-03), delivery as notifications (AL-03, AL-04, AL-06), and feedback (AL-05)
 
 ## Context
 
@@ -51,6 +51,15 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
 11. **Nothing on a locked phone.** Alert notifications are secret: on a phone locked with a PIN, pattern or password they make their sound but show nothing until it is unlocked, whatever the lock screen setting. What was found, and about which app, can matter to someone who looks at another person's phone. THREAT-MODEL-A's B5 is that person with the phone unlocked; a locked phone should not show more. A "private" notification with a neutral public version is not enough. Android shows private notifications in full when the user's lock screen setting shows all notification content, which is a common default. Android also ignores lock screen visibility that an app sets on its own channel.
 12. Tapping a notification opens the alert in the app, and a notification offers no other action. Every alert also lives in the app, so a notification that imitates Sentinel's leads nowhere new (THREAT-MODEL-A S4).
 
+### Feedback (AL-05)
+
+13. **Every alert asks whether it was useful.** The user can answer:
+    - **Not useful.** The alert is dismissed. Later alerts from the same rule about the same app are still kept and shown in the app, but they no longer notify.
+    - **Allow.** The alert is dismissed, and its rule and app go on an allow-list. That rule raises no more alerts about that app; what it watches, such as monitoring gaps, is still recorded.
+14. **Both can be undone** from the alert. Taking back "allow" removes the allow-list entry.
+15. **A Critical alert cannot be allowed, and "not useful" never holds a Critical notification.** Someone else holding the phone could otherwise silence what such an alert found, such as spyware (THREAT-MODEL-A B5).
+16. **Feedback is kept in the encrypted history and changes only this user's alerts.** It is stored in `alert.user_feedback` and, for allowing, in an `allowed` table (schema version 8). It never leaves the phone (NF-11), and it tunes nothing but these two local thresholds.
+
 ## Verification
 
 - `sentinel-detect` unit tests:
@@ -70,6 +79,12 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
   - the `delivery` unit tests cover each severity with and without Do Not Disturb, the per-app count, critical alerts never being held, and the one-hour window;
   - AL-03's load test sends one alert per second for two hours and gets exactly three notifications in each hour, with every critical one notified;
   - the store and FFI tests check the atomic claim, that a claim is never counted twice, and that the app's listener can claim from inside the call.
+- Feedback:
+  - the store test checks that "not useful" holds later alerts like it but not other apps' or Critical ones;
+  - it checks that allowing adds to the allow-list and that changing or undoing the feedback removes the entry;
+  - it checks that a Critical alert cannot be allowed, and that everything survives reopening;
+  - the FFI test shows that an allowed gap rule raises nothing until undone.
+  - `AlertsTest` on the emulator does the same with gaps recorded by the app, and checks the buttons, their results and Undo (no Allow on a Critical alert); `RtlTest` checks them in Arabic.
 - `AlertNotificationTest` on the emulator checks:
   - the four channels' importance, sounds and vibrations;
   - that a gap posts a secret Warning notification;
@@ -82,4 +97,5 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
 - A gap's reason is stored as text in the language of the moment it was recorded (the gap log predates this decision); the alert shows it as evidence, as recorded.
 - **Do Not Disturb on Android.** Android lets only the user allow an app's channel through Do Not Disturb. Sentinel asks for it on the High and Critical channels, and posts those alerts during Do Not Disturb. Whether they make a sound depends on the user allowing Sentinel in Do Not Disturb. Quiet hours on Android are Do Not Disturb schedules, so Sentinel has no quiet-hours setting of its own. A settings screen that shows the user how to let Critical alerts through comes with the settings work.
 - Alerts held for Do Not Disturb or the rate limit are not notified later; they wait in the app's list.
-- Feedback (AL-05) builds on this model in the rest of Sprint 5.
+- The allow-list has no screen of its own yet: an allowed rule is undone from one of its alerts. A list of everything allowed comes with the settings screen (the store already provides it).
+- Someone holding the unlocked phone can still allow Warning and High alerts, such as "monitoring stopped". That person can also turn Sentinel off, so this adds no new risk (THREAT-MODEL-A B5).
