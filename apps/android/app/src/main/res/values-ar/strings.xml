@@ -19,6 +19,12 @@
     <string name="back">رجوع</string>
 
     <string name="live_action">الاتصالات هلأ</string>
+    <string name="isolation_title">هالتلفون معزول</string>
+    <string name="isolation_text">من %1$s، بس Sentinel وDNS والتطبيقات اللي سمحتلها بتقدر تستعمل الإنترنت.</string>
+    <string name="isolation_off_note">العزل بيشتغل بس والمراقبة شغّالة.</string>
+    <string name="isolation_end">وقّف العزل</string>
+    <string name="isolation_start">اعزل هالتلفون</string>
+    <string name="isolation_start_text">بيقطع الإنترنت فورًا عن كل التطبيقات إلا Sentinel والتطبيقات اللي سمحتلها. بكبسة وحدة بتوقفه.</string>
     <string name="firewall_title">الجدار الناري</string>
     <string name="firewall_mode_monitor">مراقبة بس</string>
     <string name="firewall_mode_monitor_text">كل اتصال بيتسجّل، وما بينحجب إلا اللي بتحجبه إنت بقواعدك.</string>

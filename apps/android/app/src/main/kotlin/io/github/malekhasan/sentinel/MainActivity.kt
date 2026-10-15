@@ -242,6 +242,7 @@ fun MonitorScreen(
     var away by remember { mutableStateOf(emptyList<AwayRow>()) }
     var alerts by remember { mutableStateOf(emptyList<HistoryAlert>()) }
     var mode by remember { mutableStateOf<FirewallMode?>(null) }
+    var isolated by remember { mutableStateOf<Long?>(null) }
     val names = remember(context) { AppNames(context) }
     val scope = rememberCoroutineScope()
     var confirmWipe by remember { mutableStateOf(false) }
@@ -255,6 +256,7 @@ fun MonitorScreen(
             away = withContext(Dispatchers.IO) { awayRows(context, names) }
             alerts = withContext(Dispatchers.IO) { openAlerts(context, ALERTS_SHOWN) }
             mode = withContext(Dispatchers.IO) { firewallMode(context) }
+            isolated = withContext(Dispatchers.IO) { isolatedSince(context) }
         }
         snapshot = null
         reload()
@@ -300,6 +302,23 @@ fun MonitorScreen(
         onOpenApp = onOpenApp,
         onOpenAlert = onOpenAlert,
         onWipe = { confirmWipe = true },
+        isolatedSince = isolated,
+        onIsolate = {
+            scope.launch {
+                isolated = withContext(Dispatchers.IO) {
+                    isolatePhone(context)
+                    isolatedSince(context)
+                }
+            }
+        },
+        onEndIsolation = {
+            scope.launch {
+                isolated = withContext(Dispatchers.IO) {
+                    endIsolation(context)
+                    isolatedSince(context)
+                }
+            }
+        },
         firewallMode = mode,
         onFirewallMode = { chosen ->
             scope.launch {
@@ -330,6 +349,9 @@ fun MonitorContent(
     onWipe: () -> Unit,
     firewallMode: FirewallMode? = null,
     onFirewallMode: (FirewallMode) -> Unit = {},
+    isolatedSince: Long? = null,
+    onIsolate: () -> Unit = {},
+    onEndIsolation: () -> Unit = {},
 ) {
     val context = LocalContext.current
     Column(
@@ -341,6 +363,11 @@ fun MonitorContent(
     ) {
         Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
         Text(stringResource(R.string.tagline), style = MaterialTheme.typography.bodyLarge)
+
+        // Isolation first: while it is on, almost nothing reaches the internet (RA-03).
+        if (isolatedSince != null) {
+            Isolated(isolatedSince, monitoring = status == Monitor.Status.ON, onEndIsolation)
+        }
 
         // Open alerts first: they are what needs the user (AL-01, AL-02).
         if (alerts.isNotEmpty()) {
@@ -372,6 +399,10 @@ fun MonitorContent(
                 }
                 Button(onClick = onShowLive) { Text(stringResource(R.string.live_action)) }
                 OutlinedButton(onClick = onStop) { Text(stringResource(R.string.action_stop)) }
+                if (isolatedSince == null) {
+                    OutlinedButton(onClick = onIsolate) { Text(stringResource(R.string.isolation_start)) }
+                    Text(stringResource(R.string.isolation_start_text), style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
 
@@ -424,6 +455,28 @@ fun MonitorContent(
             stringResource(R.string.core_version, isolate(coreVersion)),
             style = MaterialTheme.typography.labelMedium,
         )
+    }
+}
+
+/** That the phone is isolated, since when, and how to end it (RA-03). */
+@Composable
+private fun Isolated(since: Long, monitoring: Boolean, onEnd: () -> Unit) {
+    val format = DateFormat.getDateTimeInstance(
+        DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],
+    )
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(stringResource(R.string.isolation_title), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.isolation_text, format.format(Date(since))), style = MaterialTheme.typography.bodyMedium)
+            if (!monitoring) {
+                Text(stringResource(R.string.isolation_off_note), style = MaterialTheme.typography.bodyMedium)
+            }
+            Button(onClick = onEnd) { Text(stringResource(R.string.isolation_end)) }
+        }
     }
 }
 

@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use sentinel_detect::{FirewallMode as Mode, Place, RuleSet};
+use sentinel_detect::{FirewallMode as Mode, Isolation, Place, RuleSet};
 use sentinel_store::{KEY_LEN, Store, StoreError};
 
 use crate::alerts::{AlertDelivery, AlertFeedback, AlertListener, AllowedRule, HistoryAlert};
@@ -173,6 +173,8 @@ pub struct HistoryStore {
     rules: RwLock<Arc<RuleSet>>,
     /// The firewall mode in force (CM-08).
     mode: RwLock<Mode>,
+    /// Network isolation, while on (RA-03).
+    isolation: RwLock<Option<Arc<Isolation>>>,
     /// Bumped whenever the rules or the mode change, so that running engines ask again
     /// about their open connections.
     firewall_changes: tokio::sync::watch::Sender<u64>,
@@ -189,11 +191,13 @@ impl HistoryStore {
         })?;
         let store = Store::open(Path::new(&path), &key)?;
         let mode = store.firewall_mode()?;
+        let isolation = store.isolation()?.map(Arc::new);
         let history = HistoryStore {
             store,
             alert_listener: Mutex::new(None),
             rules: RwLock::new(Arc::new(RuleSet::default())),
             mode: RwLock::new(mode),
+            isolation: RwLock::new(isolation),
             firewall_changes: tokio::sync::watch::Sender::new(0),
         };
         history.reload_rules()?;
@@ -234,6 +238,44 @@ impl HistoryStore {
     /// The firewall mode in force.
     pub fn firewall_mode(&self) -> FirewallMode {
         self.mode_in_force().into()
+    }
+
+    /// Isolate the phone (RA-03): from now on, and for open connections at once, only
+    /// DNS, `own_app` (Sentinel itself) and the apps a rule allows as a whole may use the
+    /// network. Kept until [`Self::end_isolation`], across restarts. Isolating while
+    /// isolated keeps when it began.
+    pub fn isolate(&self, own_app: String) -> Result<(), HistoryError> {
+        let isolation = Isolation {
+            since: now_ms(),
+            own_app,
+        };
+        let mut in_force = self
+            .isolation
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.store.set_isolation(Some(&isolation))?;
+        *in_force = self.store.isolation()?.map(Arc::new);
+        drop(in_force);
+        self.firewall_changed();
+        Ok(())
+    }
+
+    /// End isolation: the rules and the mode decide again.
+    pub fn end_isolation(&self) -> Result<(), HistoryError> {
+        let mut in_force = self
+            .isolation
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.store.set_isolation(None)?;
+        *in_force = None;
+        drop(in_force);
+        self.firewall_changed();
+        Ok(())
+    }
+
+    /// When isolation began, Unix milliseconds; `None` when the phone is not isolated.
+    pub fn isolated_since_ms(&self) -> Option<i64> {
+        self.isolation_in_force().map(|isolation| isolation.since)
     }
 
     /// Whether `app`, installed at `installed_ms` if known, may use the network as a
@@ -519,6 +561,14 @@ impl HistoryStore {
     /// The firewall rules in force. Cheap: the engine asks for every connection.
     pub(crate) fn rule_set(&self) -> Arc<RuleSet> {
         Arc::clone(&self.rules.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Network isolation, while on.
+    pub(crate) fn isolation_in_force(&self) -> Option<Arc<Isolation>> {
+        self.isolation
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The firewall mode in force, with when it was turned on.

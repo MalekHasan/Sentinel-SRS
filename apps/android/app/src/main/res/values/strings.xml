@@ -20,6 +20,12 @@
     <string name="back">Back</string>
 
     <string name="live_action">Live connections</string>
+    <string name="isolation_title">This phone is isolated</string>
+    <string name="isolation_text">Since %1$s, only Sentinel, DNS and the apps you allowed can use the internet.</string>
+    <string name="isolation_off_note">Isolation works only while monitoring is on.</string>
+    <string name="isolation_end">End isolation</string>
+    <string name="isolation_start">Isolate this phone</string>
+    <string name="isolation_start_text">Cuts the internet at once for every app but Sentinel and the apps you allowed. One tap ends it.</string>
     <string name="firewall_title">Firewall</string>
     <string name="firewall_mode_monitor">Watch only</string>
     <string name="firewall_mode_monitor_text">Every connection is recorded. Only the rules you make block anything.</string>

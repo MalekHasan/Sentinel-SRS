@@ -1219,3 +1219,39 @@ fn a_blocked_first_connection_is_reported_as_blocked() {
         }]
     );
 }
+
+/// RA-03: isolation is kept while on, keeps when it was turned on, survives reopening,
+/// and is gone when turned off or wiped.
+#[test]
+fn isolation_is_kept_until_turned_off() {
+    use sentinel_detect::Isolation;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.isolation().unwrap(), None);
+    let on = Isolation {
+        since: NOW,
+        own_app: "io.github.malekhasan.sentinel".to_owned(),
+    };
+    store.set_isolation(Some(&on)).unwrap();
+    store
+        .set_isolation(Some(&Isolation {
+            since: NOW + 5,
+            ..on.clone()
+        }))
+        .unwrap();
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(
+        store.isolation().unwrap(),
+        Some(on.clone()),
+        "since it was first turned on"
+    );
+    store.set_isolation(None).unwrap();
+    assert_eq!(store.isolation().unwrap(), None);
+    store.set_isolation(Some(&on)).unwrap();
+    drop(store);
+    wipe(&path).unwrap();
+    assert_eq!(Store::open(&path, &KEY).unwrap().isolation().unwrap(), None);
+}

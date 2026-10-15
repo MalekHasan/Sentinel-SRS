@@ -202,7 +202,17 @@ CREATE TABLE firewall_mode (
 );
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
+/// Network isolation (RA-03, ADR-0017): one row while it is on, with when it was turned
+/// on and Sentinel's own app, which keeps the network.
+const V13: &str = "
+CREATE TABLE isolation (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  since INTEGER NOT NULL,
+  own_app TEXT NOT NULL
+);
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

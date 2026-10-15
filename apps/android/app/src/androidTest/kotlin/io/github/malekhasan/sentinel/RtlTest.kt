@@ -48,6 +48,8 @@ import io.github.malekhasan.sentinel.core.HistoryFlow
 import io.github.malekhasan.sentinel.core.LiveApp
 import io.github.malekhasan.sentinel.core.NameSource
 import io.github.malekhasan.sentinel.core.RuleAction
+import java.text.DateFormat
+import java.util.Date
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -115,10 +117,15 @@ class RtlTest {
                     onOpenAlert = {},
                     onWipe = {},
                     firewallMode = FirewallMode.BLOCK_UNKNOWN,
+                    isolatedSince = now,
                 )
             }
         }
         compose.onNodeWithText(arabic.getString(R.string.tagline)).assertIsDisplayed()
+        // Isolation (RA-03), with its time in the Arabic sentence.
+        compose.onNodeWithText(arabic.getString(R.string.isolation_title)).assertAtTheRight()
+        val format = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, Locale.forLanguageTag("ar"))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.isolation_text, format.format(Date(now)))))
         compose.onNodeWithText(arabic.getString(R.string.alerts_title)).assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.severity_warning), useUnmergedTree = true).assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.action_start)).assertAtTheRight()

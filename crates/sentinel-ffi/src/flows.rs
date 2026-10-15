@@ -316,13 +316,27 @@ impl FlowEvents {
         self.ready.notify_one();
     }
 
-    /// What the firewall says: its rules, then its mode (CM-10, CM-08; ADR-0015,
+    /// What the firewall says about a connection or lookup on `port`: isolation first,
+    /// then its rules, then its mode (RA-03, CM-10, CM-08; ADR-0017, ADR-0015,
     /// ADR-0016). A name's company comes from the tracker list, if one is set. Without a
-    /// history there are no rules and no mode, and everything is allowed.
-    fn verdict(&self, owner: &FlowOwner, address: Option<IpAddr>, name: Option<&str>) -> Verdict {
+    /// history there are no rules, no mode and no isolation, and everything is allowed.
+    fn verdict(
+        &self,
+        owner: &FlowOwner,
+        address: Option<IpAddr>,
+        port: u16,
+        name: Option<&str>,
+    ) -> Verdict {
         let Some(history) = &self.history else {
             return Verdict::Allow;
         };
+        if let Some(isolation) = history.isolation_in_force()
+            && !history
+                .rule_set()
+                .isolation_lets_through(&isolation, owner.app.as_deref(), port)
+        {
+            return Verdict::Block;
+        }
         let company = match (name, &self.databases().trackers) {
             (Some(name), Some(trackers)) => trackers.company(name),
             _ => None,
@@ -359,7 +373,7 @@ impl Observer for FlowEvents {
         }
         // The app and the address are known for sure; a name from an earlier DNS answer
         // is not, so it is not matched (ADR-0015).
-        let verdict = self.verdict(&owner, Some(flow.dst.ip()), None);
+        let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), None);
         let blocked = verdict == Verdict::Block;
         self.push(record(flow, &owner, None, blocked, &self.databases()));
         lock(&self.open).insert(flow.id, (flow.clone(), owner));
@@ -375,7 +389,7 @@ impl Observer for FlowEvents {
             }
             None => FlowOwner::unknown(),
         };
-        self.verdict(&owner, Some(flow.dst.ip()), Some(hostname))
+        self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), Some(hostname))
     }
 
     fn dns_query(&self, flow: &FlowInfo, qname: &str) -> Verdict {
@@ -383,7 +397,7 @@ impl Observer for FlowEvents {
             .get(&flow.id)
             .map_or_else(FlowOwner::unknown, |(_, owner)| owner.clone());
         // The address is the resolver's, not the destination's: only names count here.
-        self.verdict(&owner, None, Some(qname))
+        self.verdict(&owner, None, flow.dst.port(), Some(qname))
     }
 
     fn recheck(&self, flow: &FlowInfo) -> Verdict {
@@ -396,7 +410,12 @@ impl Observer for FlowEvents {
             Some(HostnameSource::Sni) => open.hostname,
             _ => None,
         };
-        self.verdict(&owner, Some(flow.dst.ip()), name.as_deref())
+        self.verdict(
+            &owner,
+            Some(flow.dst.ip()),
+            flow.dst.port(),
+            name.as_deref(),
+        )
     }
 
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
@@ -1077,6 +1096,98 @@ mod tests {
         // No history, no rules: nothing is blocked.
         let bare = FlowEvents::new(observer, None, 2);
         assert_eq!(bare.flow_started(&at(6, "198.51.100.9:2")), Verdict::Allow);
+    }
+
+    /// RA-03: isolation lets through DNS, Sentinel itself and apps allowed as a whole,
+    /// whatever the mode, until it ends; the rules still apply to what it lets through.
+    /// It is kept across reopening the history.
+    #[test]
+    fn isolation_lets_through_only_dns_sentinel_and_allowed_apps() {
+        use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
+
+        let (dir, history) = history();
+        let old = Some(history.began_ms() - 1);
+        let observer = listen(
+            &history,
+            vec![
+                (1, installed("org.example.chat", old)),
+                (2, installed("io.github.malekhasan.sentinel", old)),
+                (53, installed("org.example.chat", old)),
+            ],
+        );
+        let events = FlowEvents::new(observer, Some(Arc::clone(&history)), 1);
+        let at = |id: u64, port: u16| flow(id, &format!("203.0.113.5:{port}"), None);
+        assert_eq!(history.isolated_since_ms(), None);
+        let before = now_ms();
+        history
+            .isolate("io.github.malekhasan.sentinel".into())
+            .unwrap();
+        assert!(
+            history
+                .isolated_since_ms()
+                .is_some_and(|since| since >= before)
+        );
+
+        assert_eq!(
+            events.flow_started(&at(1, 1)),
+            Verdict::Block,
+            "any other app"
+        );
+        assert_eq!(
+            events.flow_started(&at(2, 2)),
+            Verdict::Allow,
+            "Sentinel itself"
+        );
+        let dns = at(3, 53);
+        assert_eq!(events.flow_started(&dns), Verdict::Allow, "DNS");
+        assert_eq!(events.dns_query(&dns, "chat.example"), Verdict::Allow);
+        let rule = |destination, action| FirewallRule {
+            app: Some("org.example.chat".into()),
+            destination,
+            action,
+        };
+        history
+            .set_firewall_rule(rule(
+                Some(RuleDestination::Domain {
+                    name: "ads.example".into(),
+                }),
+                RuleAction::Block,
+            ))
+            .unwrap();
+        assert_eq!(
+            events.dns_query(&dns, "ads.example"),
+            Verdict::Block,
+            "rules still apply"
+        );
+        history
+            .set_firewall_rule(rule(None, RuleAction::Allow))
+            .unwrap();
+        let allowed = at(4, 1);
+        assert_eq!(
+            events.flow_started(&allowed),
+            Verdict::Allow,
+            "allowed as a whole"
+        );
+        assert_eq!(
+            events.hostname_seen(&allowed, "x.ads.example"),
+            Verdict::Block
+        );
+
+        // Kept across reopening, until it ends.
+        drop(events);
+        drop(history);
+        let path = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![7; 32]).unwrap();
+        assert!(history.isolated_since_ms().is_some());
+        history.end_isolation().unwrap();
+        assert_eq!(history.isolated_since_ms(), None);
+        let observer = listen(&history, vec![(1, installed("org.example.maps", old))]);
+        let events = FlowEvents::new(observer, Some(Arc::clone(&history)), 2);
+        assert_eq!(
+            events.flow_started(&at(1, 1)),
+            Verdict::Allow,
+            "isolation ended"
+        );
     }
 
     /// RA-01: a company rule blocks the names the tracker list gives that company, at a

@@ -15,7 +15,8 @@ mod network;
 
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
 pub use firewall::{
-    Destination, FirewallMode, FirewallRule, Network, Place, RuleAction, RuleError, RuleSet,
+    Destination, FirewallMode, FirewallRule, Isolation, Network, Place, RuleAction, RuleError,
+    RuleSet,
 };
 pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,

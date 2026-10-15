@@ -39,6 +39,16 @@ pub enum Destination {
     Company { company: String },
 }
 
+/// Network isolation (RA-03, ADR-0017): while on, only DNS, Sentinel itself and the
+/// apps a rule allows as a whole may use the network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Isolation {
+    /// When it was turned on, Unix milliseconds.
+    pub since: i64,
+    /// Sentinel's own app, which keeps the network for its updates.
+    pub own_app: String,
+}
+
 /// What is known for sure about where a connection or lookup goes when the firewall is
 /// asked (ADR-0015).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -322,6 +332,23 @@ impl RuleSet {
     pub fn blocks_new_app(&self, mode: FirewallMode, app: &str, installed: Option<i64>) -> bool {
         mode.decide(installed) == RuleAction::Block
             && self.decide(Some(app), Place::default()).is_none()
+    }
+
+    /// Whether `isolation` lets `app`'s connection to `port` through: DNS (port 53),
+    /// Sentinel itself, and apps a rule allows as a whole. The rules still apply to what
+    /// it lets through.
+    pub fn isolation_lets_through(
+        &self,
+        isolation: &Isolation,
+        app: Option<&str>,
+        port: u16,
+    ) -> bool {
+        const DNS: u16 = 53;
+        port == DNS
+            || app == Some(isolation.own_app.as_str())
+            || app.is_some_and(|app| {
+                self.decide(Some(app), Place::default()) == Some(RuleAction::Allow)
+            })
     }
 }
 
@@ -918,6 +945,37 @@ mod tests {
             rule(None, domain("ads.example"), RuleAction::Block),
         ]);
         assert!(about_a_place.blocks_new_app(on, CHAT, Some(1_000)));
+    }
+
+    /// RA-03: isolation lets through DNS, Sentinel itself and the apps a rule allows as a
+    /// whole, and nothing else: not other apps, not unknown owners, not apps allowed only
+    /// some places.
+    #[test]
+    fn isolation_lets_through_dns_sentinel_and_allowed_apps() {
+        let isolation = Isolation {
+            since: 1_000,
+            own_app: "io.github.malekhasan.sentinel".to_owned(),
+        };
+        let rules = RuleSet::new(vec![
+            rule(Some(CHAT), None, RuleAction::Allow),
+            rule(Some(MAPS), domain("tiles.example"), RuleAction::Allow),
+            rule(Some("org.example.blocked"), None, RuleAction::Block),
+        ]);
+        let through = |app, port| rules.isolation_lets_through(&isolation, app, port);
+        assert!(through(Some(CHAT), 443), "allowed as a whole");
+        assert!(
+            through(Some("io.github.malekhasan.sentinel"), 443),
+            "Sentinel itself"
+        );
+        for app in [
+            Some(MAPS),
+            Some("org.example.blocked"),
+            Some("android.uid.system:1000"),
+            None,
+        ] {
+            assert!(!through(app, 443), "{app:?}");
+            assert!(through(app, 53), "DNS for {app:?}");
+        }
     }
 
     /// The stored names are part of the history's format.

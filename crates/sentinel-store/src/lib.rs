@@ -12,8 +12,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sentinel_detect::{
-    Alert, AlertState, Delivery, Feedback, FirewallMode, FirewallRule, NetworkState, Rule, Sent,
-    Severity,
+    Alert, AlertState, Delivery, Feedback, FirewallMode, FirewallRule, Isolation, NetworkState,
+    Rule, Sent, Severity,
 };
 use zeroize::Zeroizing;
 
@@ -717,6 +717,37 @@ impl Store {
         let now_in_force = read_firewall_mode(&tx)?.unwrap_or(FirewallMode::Monitor);
         tx.commit()?;
         Ok(now_in_force)
+    }
+
+    /// Network isolation (RA-03), while it is on.
+    pub fn isolation(&self) -> Result<Option<Isolation>> {
+        Ok(lock(&self.conn)
+            .query_row(
+                "SELECT since, own_app FROM isolation WHERE id = 1",
+                [],
+                |r| {
+                    Ok(Isolation {
+                        since: r.get(0)?,
+                        own_app: r.get(1)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Turn isolation on, or off with `None`. Turning it on while it is on keeps when it
+    /// was turned on.
+    pub fn set_isolation(&self, isolation: Option<&Isolation>) -> Result<()> {
+        let conn = lock(&self.conn);
+        match isolation {
+            Some(isolation) => conn.execute(
+                "INSERT INTO isolation (id, since, own_app) VALUES (1, ?1, ?2)
+                 ON CONFLICT (id) DO UPDATE SET own_app = excluded.own_app",
+                params![isolation.since, isolation.own_app],
+            )?,
+            None => conn.execute("DELETE FROM isolation", [])?,
+        };
+        Ok(())
     }
 
     /// Remove the firewall rule with this key. Returns whether there was one.

@@ -86,6 +86,39 @@ fun removeRule(context: Context, key: String): Boolean =
         false
     }
 
+/** When isolation began (RA-03), or null if the phone is not isolated or the history cannot be read. */
+fun isolatedSince(context: Context): Long? =
+    try {
+        History.get(context).isolatedSinceMs()
+    } catch (e: Exception) {
+        Log.w(TAG, "isolation cannot be read", e)
+        null
+    }
+
+/**
+ * Isolates the phone (RA-03): only DNS, Sentinel itself and the apps a rule allows as a
+ * whole keep the internet, open connections included. Returns whether it took. Call off
+ * the main thread.
+ */
+fun isolatePhone(context: Context): Boolean =
+    try {
+        History.get(context).isolate(context.packageName)
+        true
+    } catch (e: Exception) {
+        Log.w(TAG, "the phone cannot be isolated", e)
+        false
+    }
+
+/** Ends isolation. Returns whether it took. Call off the main thread. */
+fun endIsolation(context: Context): Boolean =
+    try {
+        History.get(context).endIsolation()
+        true
+    } catch (e: Exception) {
+        Log.w(TAG, "isolation cannot be ended", e)
+        false
+    }
+
 /** Whether [app] may use the network as a whole, or null if the history cannot be read. */
 fun appAccess(context: Context, app: String, installedMs: Long?): AppAccess? =
     try {

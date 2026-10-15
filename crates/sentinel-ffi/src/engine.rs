@@ -887,6 +887,77 @@ mod tests {
         assert_eq!(engine.snapshot().history_failures, 0);
     }
 
+    /// RA-03 through the real packet engine: isolating the phone ends an app's open
+    /// connection within a second, unless a rule allows the app as a whole; ending
+    /// isolation lets it through again.
+    #[test]
+    fn isolation_ends_open_connections_of_apps_not_allowed() {
+        use crate::firewall::{FirewallRule, RuleAction};
+
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let (_dir, history) = blocking_history();
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let (flows, batches) = recording_flows();
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            flows,
+            Some(Arc::clone(&history)),
+        )
+        .unwrap();
+        let echoed = |source_port: u16| {
+            peer.send(&udp_packet_from(source_port, [127, 0, 0, 1], port))
+                .unwrap();
+            (&peer).read(&mut [0u8; 2048]).is_ok()
+        };
+        assert!(echoed(40_000));
+
+        let isolated_at = std::time::Instant::now();
+        history
+            .isolate("io.github.malekhasan.sentinel".into())
+            .unwrap();
+        let ended = loop {
+            let batch = batches
+                .recv_timeout(Duration::from_secs(1))
+                .expect("the open flow ends");
+            if let Some(ended) = batch.into_iter().find(|r| r.ended_ms.is_some()) {
+                break ended;
+            }
+        };
+        let took = isolated_at.elapsed();
+        assert!(ended.blocked, "{ended:?}");
+        assert!(took < Duration::from_secs(1), "took {took:?}");
+        assert!(!echoed(40_001), "isolated");
+
+        history
+            .set_firewall_rule(FirewallRule {
+                app: Some(OWNER_APP.into()),
+                destination: None,
+                action: RuleAction::Allow,
+            })
+            .unwrap();
+        assert!(echoed(40_002), "an app allowed as a whole");
+        history.firewall_rules().unwrap().iter().for_each(|rule| {
+            history.remove_firewall_rule(rule.key.clone()).unwrap();
+        });
+        assert!(!echoed(40_003), "isolated again without the rule");
+        history.end_isolation().unwrap();
+        assert!(echoed(40_004), "isolation ended");
+        engine.stop();
+    }
+
     /// Bytes relayed while the user is away are counted apart in the same flow, stored,
     /// and totalled per app (CM-06).
     #[test]
