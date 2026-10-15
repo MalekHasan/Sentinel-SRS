@@ -161,7 +161,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 
 ### Sprint 5 — Alerts
 
-- [ ] Alert framework: four severities, title, one-sentence explanation, evidence, actions (AL-01, AL-02). In progress: `sentinel-detect` holds the alert model (rule, severity, evidence, actions); alerts are kept in the history (schema 6) and the app writes their text in the user's language ([ADR-0012](adr/0012-alerts.md)). The first rule raises a Warning when monitoring stops without the user asking (SP-03). Waiting for the emulator run in CI
+- [x] Alert framework: four severities, title, one-sentence explanation, evidence, actions (AL-01, AL-02). `sentinel-detect` holds the alert model (rule, severity, evidence, actions); alerts are kept in the history (schema 6) and the app writes their text in the user's language ([ADR-0012](adr/0012-alerts.md)). The first rule raises a Warning when monitoring stops without the user asking (SP-03). On the Android 14 emulator in CI: a recorded gap raises one alert; the detail screen shows severity, title, explanation, evidence, then actions, in English and in Arabic right to left; the four severities have four different colours and names; the English alert texts read at grade 8 or lower (Flesch-Kincaid). Distinct sounds per severity come with the notification channels (next item)
 - [ ] Grouping, rate limits, Do Not Disturb, notification channels (AL-03, AL-04, AL-06)
 - [ ] "Not useful" and allow-list feedback, stored locally (AL-05)
 - [ ] First-ever network use and first-seen destinations (CM-04); Private DNS, proxy and VPN changes (CM-07)
