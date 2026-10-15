@@ -1,6 +1,6 @@
 [package]
 name = "sentinel-enrich"
-description = "Offline destination data per IP address: network (ASN), its owner and approximate country (SRS DT-01)"
+description = "Offline destination data: network (ASN), its owner and approximate country per IP address (SRS DT-01); company and category per hostname from tracker lists (DT-06)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,8 +8,18 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# Readers for the JSON tracker lists, for the build tool; the app does not need them.
+tracker-lists = ["dep:serde", "dep:serde_json"]
+
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.154", optional = true }
 thiserror = "2.0.21"
+
+[[test]]
+name = "trackers"
+required-features = ["tracker-lists"]
 
 [lints]
 workspace = true
