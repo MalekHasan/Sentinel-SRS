@@ -41,10 +41,19 @@ Names are the hard part. The engine learns a name for an address from the DNS an
   - an app-and-destination rule needs both;
   - the most specific rule decides, and blocking wins a tie;
   - bad apps, domains and ranges are refused; keys ignore the action; the stored JSON is fixed by a test.
-- The store, engine and device tests are added with each part.
+- `sentinel-store`: rules are kept encrypted, replaced by key, removed, survive reopening, and are wiped with the history.
+- `sentinel-ffi`:
+  - rules are checked when kept (a rule with nothing, a bad name and a badly written range are refused) and stored as matched (lower case, no trailing dot);
+  - with rules for an app, a range and a domain, a connection is blocked by its app or address when it starts, and by its TLS server name once seen;
+  - an app-and-domain allow wins over a domain block;
+  - a name from an earlier DNS answer is not matched, and taking a rule back applies to the next connection;
+  - blocked connections are stored as blocked, and without a history nothing is blocked;
+  - through the real packet engine, an app's blocked datagram never reaches the server.
+- The DNS and device tests are added with those parts.
 
 ## Consequences
 
 - **Apps that bypass the tunnel's DNS** (their own DNS over HTTPS, or addresses built in) are stopped by domain rules only on TLS connections that name the server. Address rules still apply. QUIC traffic that never looked a name up through the tunnel is not stopped by a domain rule.
 - **Per-app domain rules at DNS lookups** depend on Android saying which app a lookup belongs to. Lookups that Android attributes to the system match only rules for every app.
+- **An app blocked as a whole stays blocked.** A rule allowing it one domain does not open its TLS connections, because they are refused when they start, before their name is known. Allowing it an address range works. Domain allows are for exceptions to domain blocks.
 - **Not yet:** company, country, port and direction rules (CM-10), and Android's per-network profiles. Companies and countries can be added as destinations once the app can block "a company or a country" (RA-01).

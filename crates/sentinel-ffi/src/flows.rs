@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
+use std::net::IpAddr;
+
 use sentinel_vpn::{FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 use tokio::sync::Notify;
 
@@ -288,6 +290,19 @@ impl FlowEvents {
         lock(&self.pending).push(record);
         self.ready.notify_one();
     }
+
+    /// What the firewall rules say (CM-10, ADR-0015). Without a history there are no
+    /// rules, and everything is allowed.
+    fn verdict(&self, app: Option<&str>, address: Option<IpAddr>, name: Option<&str>) -> Verdict {
+        let decision = self
+            .history
+            .as_ref()
+            .and_then(|history| history.rule_set().decide(app, address, name));
+        match decision {
+            Some(sentinel_detect::RuleAction::Block) => Verdict::Block,
+            Some(sentinel_detect::RuleAction::Allow) | None => Verdict::Allow,
+        }
+    }
 }
 
 impl Observer for FlowEvents {
@@ -302,17 +317,25 @@ impl Observer for FlowEvents {
         if let (Some(app), Some(installed)) = (&owner.app, owner.installed_ms) {
             lock(&self.installed).insert(app.clone(), installed);
         }
-        self.push(record(flow, &owner, None, false, &self.databases()));
+        // The app and the address are known for sure; a name from an earlier DNS answer
+        // is not, so it is not matched (ADR-0015).
+        let verdict = self.verdict(owner.app.as_deref(), Some(flow.dst.ip()), None);
+        let blocked = verdict == Verdict::Block;
+        self.push(record(flow, &owner, None, blocked, &self.databases()));
         lock(&self.open).insert(flow.id, (flow.clone(), owner));
-        Verdict::Allow
+        verdict
     }
 
     fn hostname_seen(&self, flow: &FlowInfo, hostname: &str) -> Verdict {
-        if let Some((open, _)) = lock(&self.open).get_mut(&flow.id) {
-            open.hostname = Some(hostname.to_owned());
-            open.hostname_source = Some(HostnameSource::Sni);
-        }
-        Verdict::Allow
+        let app = match lock(&self.open).get_mut(&flow.id) {
+            Some((open, owner)) => {
+                open.hostname = Some(hostname.to_owned());
+                open.hostname_source = Some(HostnameSource::Sni);
+                owner.app.clone()
+            }
+            None => None,
+        };
+        self.verdict(app.as_deref(), Some(flow.dst.ip()), Some(hostname))
     }
 
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
@@ -874,5 +897,101 @@ mod tests {
         connect(1, Some("d.example"), now);
         assert!(history.alerts(true, 10).unwrap().is_empty(), "allowed");
         assert_eq!(observer.heard.lock().unwrap().len(), 2);
+    }
+
+    /// CM-10: the rules decide each connection with what is known for sure: the app and
+    /// the address when it starts, and the TLS server name once seen. The most specific
+    /// rule wins; changing the rules applies to the next connection; without a history
+    /// nothing is blocked.
+    #[test]
+    fn rules_block_by_app_address_and_server_name() {
+        use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
+
+        let (_dir, history) = history();
+        let observer = listen(
+            &history,
+            vec![
+                (1, installed("org.example.maps", None)),
+                (2, installed("org.example.chat", None)),
+            ],
+        );
+        let rule = |app: Option<&str>, destination: Option<RuleDestination>, action| {
+            history
+                .set_firewall_rule(FirewallRule {
+                    app: app.map(str::to_owned),
+                    destination,
+                    action,
+                })
+                .unwrap()
+        };
+        let domain = |name: &str| Some(RuleDestination::Domain { name: name.into() });
+        let maps = rule(Some("org.example.maps"), None, RuleAction::Block);
+        rule(None, domain("ads.example"), RuleAction::Block);
+        rule(
+            None,
+            Some(RuleDestination::Network {
+                range: "198.51.100.0/24".into(),
+            }),
+            RuleAction::Block,
+        );
+        rule(
+            Some("org.example.chat"),
+            domain("ok.ads.example"),
+            RuleAction::Allow,
+        );
+
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let at = |id: u64, dst: &str| flow(id, dst, None);
+        // The maps app is blocked whatever it reaches.
+        assert_eq!(events.flow_started(&at(1, "203.0.113.5:1")), Verdict::Block);
+        // A blocked range, for every app.
+        assert_eq!(
+            events.flow_started(&at(2, "198.51.100.9:2")),
+            Verdict::Block
+        );
+        // Allowed when it starts; the server name decides later.
+        let named = at(3, "203.0.113.5:2");
+        assert_eq!(events.flow_started(&named), Verdict::Allow);
+        assert_eq!(
+            events.hostname_seen(&named, "x.ads.example"),
+            Verdict::Block
+        );
+        assert_eq!(
+            events.hostname_seen(&named, "ok.ads.example"),
+            Verdict::Allow
+        );
+        assert_eq!(events.hostname_seen(&named, "chat.example"), Verdict::Allow);
+        // A name from an earlier DNS answer is not matched: it may be another site's.
+        let guessed = flow(4, "203.0.113.5:2", Some("ads.example"));
+        assert_eq!(events.flow_started(&guessed), Verdict::Allow);
+
+        // Taking a rule back applies to the next connection.
+        assert!(history.remove_firewall_rule(maps).unwrap());
+        assert_eq!(events.flow_started(&at(5, "203.0.113.5:1")), Verdict::Allow);
+
+        // The blocked connection is recorded as blocked when it starts and ends.
+        let blocked = at(1, "203.0.113.5:1");
+        events.flow_ended(
+            &blocked,
+            FlowTotals {
+                bytes_up: 0,
+                bytes_down: 0,
+                bytes_up_away: 0,
+                bytes_down_away: 0,
+                ended_ms: 10,
+                verdict: Verdict::Block,
+            },
+        );
+        events.close_all(20);
+        let stored = history.recent_flows(10).unwrap();
+        let maps_flow = stored
+            .iter()
+            .find(|f| f.app.as_deref() == Some("org.example.maps") && f.ended_ms == Some(10))
+            .unwrap();
+        assert!(maps_flow.blocked);
+
+        // No history, no rules: nothing is blocked.
+        let bare = FlowEvents::new(observer, None, 2);
+        assert_eq!(bare.flow_started(&at(6, "198.51.100.9:2")), Verdict::Allow);
     }
 }

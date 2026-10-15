@@ -11,7 +11,9 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use sentinel_detect::{Alert, AlertState, Delivery, Feedback, NetworkState, Rule, Sent, Severity};
+use sentinel_detect::{
+    Alert, AlertState, Delivery, Feedback, FirewallRule, NetworkState, Rule, Sent, Severity,
+};
 use zeroize::Zeroizing;
 
 mod schema;
@@ -216,6 +218,17 @@ pub struct AllowedEntry {
     /// `None` for alerts about Sentinel itself.
     pub app: Option<String>,
     /// Unix milliseconds.
+    pub created: i64,
+}
+
+/// A firewall rule as stored (CM-10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredRule {
+    /// What the rule is about ([`FirewallRule::key`]); a new rule with the same key
+    /// replaces it.
+    pub key: String,
+    pub rule: FirewallRule,
+    /// When it was made or last changed, Unix milliseconds.
     pub created: i64,
 }
 
@@ -657,6 +670,57 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(previous.and_then(|json| NetworkState::from_json(&json).ok()))
+    }
+
+    /// Keep a firewall rule, replacing one about the same app and destination (CM-10).
+    /// Returns its key.
+    pub fn set_firewall_rule(&self, rule: &FirewallRule, now: i64) -> Result<String> {
+        let key = rule.key();
+        lock(&self.conn).execute(
+            "INSERT INTO rule (id, kind, body, enabled, source, version, created)
+             VALUES (?1, 'firewall', ?2, 1, 'user', 1, ?3)
+             ON CONFLICT (id) DO UPDATE SET body = excluded.body, created = excluded.created",
+            params![key, rule.to_json(), now],
+        )?;
+        Ok(key)
+    }
+
+    /// Remove the firewall rule with this key. Returns whether there was one.
+    pub fn remove_firewall_rule(&self, key: &str) -> Result<bool> {
+        let removed = lock(&self.conn).execute(
+            "DELETE FROM rule WHERE id = ?1 AND kind = 'firewall'",
+            [key],
+        )?;
+        Ok(removed == 1)
+    }
+
+    /// The firewall rules in force, newest first. A rule this version cannot read is
+    /// left out.
+    pub fn firewall_rules(&self) -> Result<Vec<StoredRule>> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT id, body, created FROM rule WHERE kind = 'firewall' AND enabled = 1
+             ORDER BY created DESC, id",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(key, body, created)| {
+                Some(StoredRule {
+                    key,
+                    rule: FirewallRule::from_json(&body)?,
+                    created,
+                })
+            })
+            .collect())
     }
 
     /// Monitoring is back: close the open gap, if any.

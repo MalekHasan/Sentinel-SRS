@@ -7,6 +7,7 @@
 mod alerts;
 mod engine;
 mod enrich;
+mod firewall;
 mod flows;
 mod history;
 
@@ -19,6 +20,7 @@ pub use enrich::{
     CategoryFact, CompanyFact, IpDatabase, IpDatabaseError, IpSources, TrackerDatabase,
     TrackerDatabaseError,
 };
+pub use firewall::{FirewallRule, HistoryRule, RuleAction, RuleDestination};
 pub use flows::{FlowObserver, FlowOwner, FlowProto, FlowRecord, LiveApp, NameSource};
 pub use history::{
     HistoryApp, HistoryAway, HistoryCompany, HistoryDestination, HistoryError, HistoryFlow,

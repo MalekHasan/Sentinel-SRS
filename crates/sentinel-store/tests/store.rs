@@ -1097,3 +1097,65 @@ fn the_network_settings_last_seen_are_kept() {
     let store = Store::open(&path, &KEY).unwrap();
     assert_eq!(store.swap_network_state(&proxied, NOW + 3).unwrap(), None);
 }
+
+/// CM-10: firewall rules are kept, encrypted, keyed by what they are about: a second
+/// rule about the same app and destination replaces the first. They survive reopening,
+/// can be removed, and a wipe removes them.
+#[test]
+fn firewall_rules_are_kept_and_replaced_by_key() {
+    use sentinel_detect::{Destination, FirewallRule, RuleAction};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert!(store.firewall_rules().unwrap().is_empty());
+    let ads = Destination::domain("ads.example").unwrap();
+    let block = FirewallRule::new(
+        Some("org.example.chat"),
+        Some(ads.clone()),
+        RuleAction::Block,
+    )
+    .unwrap();
+    let range = FirewallRule::new(
+        None,
+        Some(Destination::network("192.0.2.0/24").unwrap()),
+        RuleAction::Block,
+    )
+    .unwrap();
+    let key = store.set_firewall_rule(&block, NOW).unwrap();
+    assert_eq!(key, "org.example.chat domain:ads.example");
+    store.set_firewall_rule(&range, NOW + 1).unwrap();
+    let allow = FirewallRule::new(Some("org.example.chat"), Some(ads), RuleAction::Allow).unwrap();
+    assert_eq!(store.set_firewall_rule(&allow, NOW + 2).unwrap(), key);
+
+    let kept: Vec<_> = store
+        .firewall_rules()
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.key, r.rule, r.created))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            (key.clone(), allow.clone(), NOW + 2),
+            ("* network:192.0.2.0/24".to_owned(), range.clone(), NOW + 1),
+        ]
+    );
+    assert!(!file_contains(&path, b"ads.example"), "encrypted on disk");
+
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.firewall_rules().unwrap().len(), 2);
+    assert!(store.remove_firewall_rule(&key).unwrap());
+    assert!(!store.remove_firewall_rule(&key).unwrap());
+    assert_eq!(store.firewall_rules().unwrap()[0].rule, range);
+    drop(store);
+    wipe(&path).unwrap();
+    assert!(
+        Store::open(&path, &KEY)
+            .unwrap()
+            .firewall_rules()
+            .unwrap()
+            .is_empty()
+    );
+}

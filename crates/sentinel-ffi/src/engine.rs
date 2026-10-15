@@ -726,6 +726,59 @@ mod tests {
         assert_eq!(history.alerts(true, 10).unwrap(), heard);
     }
 
+    /// CM-10 through the real packet engine: with a rule blocking the app, its datagram
+    /// never reaches the server, and the flow is stored as blocked.
+    #[test]
+    fn a_blocking_rule_stops_an_apps_traffic() {
+        use crate::firewall::{FirewallRule, RuleAction};
+
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        echo.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![7; 32]).unwrap();
+        history
+            .set_firewall_rule(FirewallRule {
+                app: Some(OWNER_APP.into()),
+                destination: None,
+                action: RuleAction::Block,
+            })
+            .unwrap();
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let (flows, batches) = recording_flows();
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            flows,
+            Some(Arc::clone(&history)),
+        )
+        .unwrap();
+        peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
+        let mut records = Vec::new();
+        while !records.iter().any(|r: &FlowRecord| r.ended_ms.is_some()) {
+            records.extend(
+                batches
+                    .recv_timeout(Duration::from_secs(1))
+                    .expect("the blocked flow is reported"),
+            );
+        }
+        assert!(
+            echo.recv_from(&mut [0u8; 64]).is_err(),
+            "nothing reached the server"
+        );
+        assert!(records.iter().all(|r| r.blocked));
+        engine.stop();
+        let stored = history.recent_flows(10).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(stored[0].blocked);
+        assert_eq!(engine.snapshot().history_failures, 0);
+    }
+
     /// Bytes relayed while the user is away are counted apart in the same flow, stored,
     /// and totalled per app (CM-06).
     #[test]

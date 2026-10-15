@@ -2,12 +2,14 @@
 //! The encrypted local history (SRS §13), as seen from Kotlin.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
+use sentinel_detect::RuleSet;
 use sentinel_store::{KEY_LEN, Store, StoreError};
 
 use crate::alerts::{AlertDelivery, AlertFeedback, AlertListener, AllowedRule, HistoryAlert};
 use crate::enrich::{CategoryFact, CompanyFact};
+use crate::firewall::{FirewallRule, HistoryRule};
 use crate::flows::{FlowProto, NameSource};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -19,6 +21,10 @@ pub enum HistoryError {
     WrongKey,
     #[error("the history failed: {reason}")]
     Failed { reason: String },
+    /// A firewall rule that cannot be kept: for example a domain that is not a name, or
+    /// a rule with neither an app nor a destination.
+    #[error("the rule cannot be kept: {reason}")]
+    BadRule { reason: String },
 }
 
 impl From<StoreError> for HistoryError {
@@ -163,6 +169,8 @@ pub struct HistoryAway {
 pub struct HistoryStore {
     pub(crate) store: Store,
     alert_listener: Mutex<Option<Arc<dyn AlertListener>>>,
+    /// The firewall rules in force, as the engine asks them (CM-10).
+    rules: RwLock<Arc<RuleSet>>,
 }
 
 #[uniffi::export]
@@ -175,10 +183,43 @@ impl HistoryStore {
             expected: KEY_LEN as u32,
         })?;
         let store = Store::open(Path::new(&path), &key)?;
-        Ok(Arc::new(HistoryStore {
+        let history = HistoryStore {
             store,
             alert_listener: Mutex::new(None),
-        }))
+            rules: RwLock::new(Arc::new(RuleSet::default())),
+        };
+        history.reload_rules()?;
+        Ok(Arc::new(history))
+    }
+
+    /// Keep a firewall rule, replacing one about the same app and destination, and apply
+    /// it to connections from now on (CM-10). Returns its key.
+    pub fn set_firewall_rule(&self, rule: FirewallRule) -> Result<String, HistoryError> {
+        let rule = sentinel_detect::FirewallRule::try_from(rule)?;
+        let key = self.store.set_firewall_rule(&rule, now_ms())?;
+        self.reload_rules()?;
+        Ok(key)
+    }
+
+    /// Remove the firewall rule with this key. Returns whether there was one.
+    pub fn remove_firewall_rule(&self, key: String) -> Result<bool, HistoryError> {
+        let removed = self.store.remove_firewall_rule(&key)?;
+        self.reload_rules()?;
+        Ok(removed)
+    }
+
+    /// The firewall rules in force, newest first.
+    pub fn firewall_rules(&self) -> Result<Vec<HistoryRule>, HistoryError> {
+        Ok(self
+            .store
+            .firewall_rules()?
+            .into_iter()
+            .map(|stored| HistoryRule {
+                key: stored.key,
+                rule: stored.rule.into(),
+                created_ms: stored.created,
+            })
+            .collect())
     }
 
     /// The most recent flows, newest first.
@@ -437,6 +478,22 @@ pub fn wipe_history(path: String) -> Result<(), HistoryError> {
 }
 
 impl HistoryStore {
+    /// The firewall rules in force. Cheap: the engine asks for every connection.
+    pub(crate) fn rule_set(&self) -> Arc<RuleSet> {
+        Arc::clone(&self.rules.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    fn reload_rules(&self) -> Result<(), HistoryError> {
+        let rules = self
+            .store
+            .firewall_rules()?
+            .into_iter()
+            .map(|stored| stored.rule)
+            .collect();
+        *self.rules.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(RuleSet::new(rules));
+        Ok(())
+    }
+
     /// Keep a new alert and tell the listener, if any, unless the user allowed what it
     /// is about (AL-05). The listener is called without any lock held, so it may read
     /// the history.
@@ -766,5 +823,83 @@ mod tests {
                 after: Some("dns.example".into())
             }]
         );
+    }
+
+    /// CM-10: rules are checked when kept, listed newest first, replaced by key and
+    /// removed; they survive reopening.
+    #[test]
+    fn firewall_rules_are_kept_checked_and_replaced() {
+        use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path.clone(), vec![1; 32]).unwrap();
+        let block_range = FirewallRule {
+            app: None,
+            destination: Some(RuleDestination::Network {
+                range: "192.0.2.0/24".into(),
+            }),
+            action: RuleAction::Block,
+        };
+        let key = history.set_firewall_rule(block_range.clone()).unwrap();
+        assert_eq!(key, "* network:192.0.2.0/24");
+        let allow_range = FirewallRule {
+            action: RuleAction::Allow,
+            ..block_range.clone()
+        };
+        assert_eq!(history.set_firewall_rule(allow_range.clone()).unwrap(), key);
+        let named = FirewallRule {
+            app: Some("org.example.chat".into()),
+            destination: Some(RuleDestination::Domain {
+                name: "Ads.Example.".into(),
+            }),
+            action: RuleAction::Block,
+        };
+        history.set_firewall_rule(named).unwrap();
+        let rules = history.firewall_rules().unwrap();
+        assert_eq!(rules.len(), 2);
+        let by_key = |key: &str| rules.iter().find(|r| r.key == key).unwrap().rule.clone();
+        assert_eq!(
+            by_key("org.example.chat domain:ads.example").destination,
+            Some(RuleDestination::Domain {
+                name: "ads.example".into()
+            }),
+            "stored as matched: lower case, no trailing dot"
+        );
+        assert_eq!(by_key(&key), allow_range);
+
+        for bad in [
+            FirewallRule {
+                app: None,
+                destination: None,
+                action: RuleAction::Block,
+            },
+            FirewallRule {
+                app: None,
+                destination: Some(RuleDestination::Domain {
+                    name: "not a name".into(),
+                }),
+                action: RuleAction::Block,
+            },
+            FirewallRule {
+                app: None,
+                destination: Some(RuleDestination::Network {
+                    range: "192.0.2.1/24".into(),
+                }),
+                action: RuleAction::Block,
+            },
+        ] {
+            assert!(matches!(
+                history.set_firewall_rule(bad),
+                Err(HistoryError::BadRule { .. })
+            ));
+        }
+
+        drop(history);
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        assert_eq!(history.firewall_rules().unwrap().len(), 2);
+        assert!(history.remove_firewall_rule(key.clone()).unwrap());
+        assert!(!history.remove_firewall_rule(key).unwrap());
+        assert_eq!(history.firewall_rules().unwrap().len(), 1);
     }
 }

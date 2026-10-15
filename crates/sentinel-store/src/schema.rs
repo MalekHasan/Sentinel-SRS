@@ -177,7 +177,21 @@ CREATE TABLE network_state (
 );
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
+/// Rules (SRS §13.1 `rule`): firewall rules for now (CM-10, ADR-0015), keyed by what
+/// they are about, with the rule as JSON in `body`. `created` is not in the SRS.
+const V11: &str = "
+CREATE TABLE rule (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,                -- firewall|detection|auto_response
+  body TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  source TEXT,
+  version INTEGER,
+  created INTEGER NOT NULL
+);
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
