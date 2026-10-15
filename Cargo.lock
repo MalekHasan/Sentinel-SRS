@@ -1065,6 +1065,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sentinel-enrich"
+version = "0.0.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
+name = "sentinel-enrich-tool"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "sentinel-enrich",
+]
+
+[[package]]
 name = "sentinel-feed"
 version = "0.0.0"
 dependencies = [

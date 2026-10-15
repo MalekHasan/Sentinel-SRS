@@ -1,0 +1,15 @@
+[package]
+name = "sentinel-enrich"
+description = "Offline destination data per IP address: network (ASN), its owner and approximate country (SRS DT-01)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = "2.0.21"
+
+[lints]
+workspace = true
