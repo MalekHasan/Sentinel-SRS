@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use tokio::sync::watch;
+
 use crate::DnsForward;
 
 #[derive(Debug, Clone)]
@@ -29,6 +31,10 @@ pub struct EngineConfig {
     /// Set while the user is away (on Android: the screen is off or locked). Bytes
     /// relayed meanwhile are also counted as "while away" in each flow (CM-06).
     pub away: Arc<AtomicBool>,
+    /// Changes whenever the firewall may decide differently (its rules or mode). Every
+    /// open flow then asks [`crate::Observer::recheck`] again, and ends if it is now
+    /// blocked. `None`: verdicts never change while a flow is open.
+    pub firewall_changes: Option<watch::Receiver<u64>>,
 }
 
 impl Default for EngineConfig {
@@ -43,6 +49,7 @@ impl Default for EngineConfig {
             tcp_buffer: Some(32 * 1024),
             dns_forward: None,
             away: Arc::new(AtomicBool::new(false)),
+            firewall_changes: None,
         }
     }
 }

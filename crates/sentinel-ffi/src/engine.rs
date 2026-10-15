@@ -125,6 +125,8 @@ impl Engine {
         let config = EngineConfig {
             dns_forward: Some(Arc::clone(&dns)),
             away: Arc::clone(&away),
+            // A rule or mode change decides open connections again (RA-01).
+            firewall_changes: history.as_ref().map(|history| history.firewall_changes()),
             ..EngineConfig::default()
         };
         let running = Arc::new(AtomicBool::new(true));
@@ -816,6 +818,72 @@ mod tests {
         let stored = history.recent_flows(10).unwrap();
         assert_eq!(stored.len(), 1);
         assert!(stored[0].blocked);
+        assert_eq!(engine.snapshot().history_failures, 0);
+    }
+
+    /// RA-01 through the real packet engine: blocking an app ends its open connection
+    /// within a second, so nothing more reaches the server, and the connection is
+    /// stored as blocked.
+    #[test]
+    fn blocking_an_app_ends_its_open_connections() {
+        use crate::firewall::{FirewallRule, RuleAction};
+
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let (_dir, history) = blocking_history();
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let (flows, batches) = recording_flows();
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            flows,
+            Some(Arc::clone(&history)),
+        )
+        .unwrap();
+        peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
+        assert!((&peer).read(&mut [0u8; 2048]).expect("no echo") > 0);
+
+        let blocked_at = std::time::Instant::now();
+        history
+            .set_firewall_rule(FirewallRule {
+                app: Some(OWNER_APP.into()),
+                destination: None,
+                action: RuleAction::Block,
+            })
+            .unwrap();
+        let ended = loop {
+            let batch = batches
+                .recv_timeout(Duration::from_secs(1))
+                .expect("the open flow ends");
+            if let Some(ended) = batch.into_iter().find(|r| r.ended_ms.is_some()) {
+                break ended;
+            }
+        };
+        let took = blocked_at.elapsed();
+        assert!(ended.blocked, "{ended:?}");
+        assert!(took < Duration::from_secs(1), "took {took:?}");
+        peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
+        assert!(
+            (&peer).read(&mut [0u8; 2048]).is_err(),
+            "nothing comes back once blocked"
+        );
+        engine.stop();
+        let stored = history.recent_flows(10).unwrap();
+        assert!(
+            !stored.is_empty() && stored.iter().all(|f| f.blocked),
+            "{stored:?}"
+        );
         assert_eq!(engine.snapshot().history_failures, 0);
     }
 

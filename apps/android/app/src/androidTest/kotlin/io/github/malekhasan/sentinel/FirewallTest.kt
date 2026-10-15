@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
+import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.FirewallRule
 import io.github.malekhasan.sentinel.core.HistoryStore
 import io.github.malekhasan.sentinel.core.RuleAction
 import io.github.malekhasan.sentinel.core.RuleDestination
+import java.io.IOException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.SocketTimeoutException
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -24,7 +28,8 @@ import org.junit.runner.RunWith
 /**
  * CM-10 on a device (ADR-0015): firewall rules kept in the history stop this app's own
  * connections through the tunnel, by address when they start, by the TLS server name,
- * and at the DNS lookup, and removing a rule lets them through again.
+ * and at the DNS lookup, and removing a rule lets them through again. A rule made while
+ * a connection is open ends it.
  *
  * The connections go to the test server described at [testServer], which answers any
  * request, so an answer means the connection got through.
@@ -84,6 +89,35 @@ class FirewallTest {
         val flows = history.recentFlows(100u).filter { it.remoteIp == address && it.remotePort.toInt() == port }
         assertEquals("stored as blocked: $flows", TRIES, flows.count { it.blocked })
         assertEquals("stored as allowed: $flows", TRIES, flows.count { !it.blocked })
+    }
+
+    /** RA-01: a rule blocking the app ends its connection that is already open. */
+    @Test
+    fun aRuleMadeWhileAConnectionIsOpenEndsIt() {
+        val (host, port) = testServer()
+        val address = checkNotNull(InetAddress.getByName(host).hostAddress)
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(address, port), 5_000)
+            socket.soTimeout = 5_000
+            // An unfinished request: the server waits for the rest, so the connection stays open.
+            socket.getOutputStream().write("GET / HTTP/1.0\r\n".toByteArray())
+            socket.getOutputStream().flush()
+            val blocked = SystemClock.elapsedRealtime()
+            history.setFirewallRule(FirewallRule(context.packageName, null, RuleAction.BLOCK))
+            val ended = try {
+                socket.getInputStream().read() == -1
+            } catch (timeout: SocketTimeoutException) {
+                false
+            } catch (reset: IOException) {
+                true
+            }
+            val took = SystemClock.elapsedRealtime() - blocked
+            assertTrue("the connection is still open after $took ms", ended)
+            assertTrue("ended after $took ms", took < 1_000)
+        }
+        stopMonitoring()
+        val flows = history.recentFlows(100u).filter { it.remoteIp == address && it.remotePort.toInt() == port }
+        assertTrue("stored as blocked: $flows", flows.any { it.blocked })
     }
 
     @Test

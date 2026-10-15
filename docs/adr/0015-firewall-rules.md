@@ -27,6 +27,7 @@ Names are the hard part. The engine learns a name for an address from the DNS an
    - **A new connection:** its app and address. App rules and address rules decide here, and a blocked connection never reaches the server.
    - **A TLS server name:** the app, the address and that name. Domain rules decide here too.
    - **A DNS lookup through the tunnel:** the app that sent it and the name looked up. A blocked name is answered "no such name" at once, so the app never learns the address. This is what blocks a domain over QUIC and plain HTTP, which carry no TLS server name the engine reads.
+   - **A change of the rules or the mode, while a connection is open:** the same app, address and TLS server name, if one was seen. A connection now blocked ends at once, in both directions, and is stored as blocked. Blocking an app (RA-01) therefore also stops what it is already sending. The history signals each change to the running engine, and every open connection asks again.
 
    A name learned only from an earlier DNS answer is never matched against a rule, for the reason above. It still names the connection in the history.
 4. **Rules are stored in the encrypted history**, in the SRS `rule` table (`kind` = `firewall`, the rule as JSON in `body`), keyed by what the rule is about. A second rule for the same app and destination replaces the first: allowing something that was blocked is one change, not two rules.
@@ -47,15 +48,19 @@ Names are the hard part. The engine learns a name for an address from the DNS an
   - with rules for an app, a range and a domain, a connection is blocked by its app or address when it starts, and by its TLS server name once seen;
   - an app-and-domain allow wins over a domain block;
   - a name from an earlier DNS answer is not matched, and taking a rule back applies to the next connection;
+  - when the rules change, an open connection is decided again by its app, address and server name, but not by a name from a DNS answer, and an ended one is not asked;
+  - through the real packet engine, blocking an app ends its open connection within a second; nothing more reaches the server, and it is stored as blocked;
   - blocked connections are stored as blocked, and without a history nothing is blocked;
   - through the real packet engine, an app's blocked datagram never reaches the server.
 - `sentinel-vpn`:
+  - when the firewall changes, every open flow is asked again; one still allowed goes on, one now blocked ends at once and is reported as blocked, and without a change no flow is asked;
   - a query's name is read, and answers or garbage are not queries;
   - the "no such name" reply repeats the query's id and question and names no address;
   - through the engine, a blocked lookup is answered at once and never reaches the resolver, while other lookups are forwarded as before.
 - `sentinel-ffi`: a lookup is decided by the app that sends it and the name looked up, never by the resolver's address. A domain rule for every app blocks it whoever asks, and an app's exception needs that app.
 - On the Android 14 emulator (`FirewallTest`), with this app's own connections through the tunnel:
   - a rule blocking the test server's address stops the request, and it gets through once the rule is removed, five times over with monitoring restarted in between. The history stores five connections as blocked and five as allowed;
+  - a rule blocking this app ends its connection that is already open, within a second, and the history stores it as blocked;
   - a domain rule stops a connection whose TLS ClientHello names a host below it, while another name gets through;
   - a domain rule for `localhost` (which resolves anywhere) makes the tunnel's resolver answer "no such name" with no address, and once it is removed the network's resolver answers.
 

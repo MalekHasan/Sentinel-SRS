@@ -2,7 +2,8 @@
 //! Firewall rules by app, domain and address (SRS CM-10, the Phase A subset; ADR-0015).
 //!
 //! A rule names an app, a destination, or both, and allows or blocks what matches. The
-//! engine asks [`RuleSet::verdict`] at three moments, with what it knows then:
+//! engine asks [`RuleSet::verdict`] at three moments, with what it knows then, and asks
+//! again about every open connection when the rules or the mode change:
 //! - a new connection: its app and address;
 //! - the TLS server name of a connection: its app, address and that name;
 //! - a DNS lookup through the tunnel: its app and the name looked up.

@@ -173,6 +173,9 @@ pub struct HistoryStore {
     rules: RwLock<Arc<RuleSet>>,
     /// The firewall mode in force (CM-08).
     mode: RwLock<Mode>,
+    /// Bumped whenever the rules or the mode change, so that running engines ask again
+    /// about their open connections.
+    firewall_changes: tokio::sync::watch::Sender<u64>,
 }
 
 #[uniffi::export]
@@ -191,6 +194,7 @@ impl HistoryStore {
             alert_listener: Mutex::new(None),
             rules: RwLock::new(Arc::new(RuleSet::default())),
             mode: RwLock::new(mode),
+            firewall_changes: tokio::sync::watch::Sender::new(0),
         };
         history.reload_rules()?;
         Ok(Arc::new(history))
@@ -222,6 +226,8 @@ impl HistoryStore {
         };
         let mut in_force = self.mode.write().unwrap_or_else(PoisonError::into_inner);
         *in_force = self.store.set_firewall_mode(mode)?;
+        drop(in_force);
+        self.firewall_changed();
         Ok(())
     }
 
@@ -510,6 +516,17 @@ impl HistoryStore {
         *self.mode.read().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Changes whenever the rules or the mode change: an engine's open connections are
+    /// then decided again (RA-01).
+    pub(crate) fn firewall_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.firewall_changes.subscribe()
+    }
+
+    fn firewall_changed(&self) {
+        self.firewall_changes
+            .send_modify(|version| *version = version.wrapping_add(1));
+    }
+
     fn reload_rules(&self) -> Result<(), HistoryError> {
         let rules = self
             .store
@@ -518,6 +535,7 @@ impl HistoryStore {
             .map(|stored| stored.rule)
             .collect();
         *self.rules.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(RuleSet::new(rules));
+        self.firewall_changed();
         Ok(())
     }
 

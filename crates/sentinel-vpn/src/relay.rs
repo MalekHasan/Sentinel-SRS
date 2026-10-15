@@ -12,6 +12,7 @@ use std::time::Duration;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpSocket, TcpStream, UdpSocket};
+use tokio::sync::watch;
 use tokio::time::{Instant, timeout_at};
 
 use crate::dns::{DnsCache, name_error_reply, parse_dns_query, parse_dns_response};
@@ -59,6 +60,14 @@ impl Ctx {
         }
     }
 
+    /// A view of the firewall's changes from now on: taken before a flow is first
+    /// decided, so that no change after that decision goes unseen.
+    fn firewall_changes(&self) -> Option<watch::Receiver<u64>> {
+        let mut changes = self.config.firewall_changes.clone()?;
+        changes.mark_unchanged();
+        Some(changes)
+    }
+
     fn finish(&self, flow: &FlowInfo, verdict: Verdict) {
         if verdict == Verdict::Block {
             self.stats.flows_blocked.fetch_add(1, Ordering::Relaxed);
@@ -101,6 +110,7 @@ where
 {
     let _active = ActiveGuard::new(&ctx.stats);
     let mut flow = ctx.new_flow(Proto::Tcp, src, dst);
+    let changes = ctx.firewall_changes();
     if ctx.observer.flow_started(&flow) == Verdict::Block {
         // Dropping the stream resets the app's connection.
         ctx.finish(&flow, Verdict::Block);
@@ -157,7 +167,11 @@ where
         flow.counters.add_up(first.len());
         copy_counted(&mut client_rx, &mut up_tx, |n| flow.counters.add_up(n)).await
     };
-    run_both(to_server, to_client).await;
+    tokio::select! {
+        _ = run_both(to_server, to_client) => {}
+        // Dropping both directions resets the app's connection and the server's.
+        _ = blocked_later(&ctx, &flow, changes) => blocked.store(true, Ordering::Relaxed),
+    }
 
     if let Some(name) = sni.into_inner() {
         flow.hostname = Some(name);
@@ -261,6 +275,7 @@ where
 {
     let _active = ActiveGuard::new(&ctx.stats);
     let flow = ctx.new_flow(Proto::Udp, src, dst);
+    let changes = ctx.firewall_changes();
     if ctx.observer.flow_started(&flow) == Verdict::Block {
         ctx.finish(&flow, Verdict::Block);
         return;
@@ -294,11 +309,27 @@ where
     let to_server = udp_to_server(&mut client_rx, &upstream, &flow.counters, idle, lookups);
     let to_client = udp_to_client(&upstream, &mut client_tx, &ctx, &flow, replies_rx);
     // UDP has no half-close: the flow ends when either side stops.
-    tokio::select! {
-        _ = to_server => {}
-        _ = to_client => {}
+    let verdict = tokio::select! {
+        _ = to_server => Verdict::Allow,
+        _ = to_client => Verdict::Allow,
+        _ = blocked_later(&ctx, &flow, changes) => Verdict::Block,
+    };
+    ctx.finish(&flow, verdict);
+}
+
+/// Resolves once a firewall change makes the observer block `flow`; never resolves
+/// without changes to watch.
+async fn blocked_later(ctx: &Ctx, flow: &FlowInfo, changes: Option<watch::Receiver<u64>>) {
+    let Some(mut changes) = changes else {
+        return std::future::pending().await;
+    };
+    // Ends with an error only when the firewall is gone, and then nothing changes.
+    while changes.changed().await.is_ok() {
+        if ctx.observer.recheck(flow) == Verdict::Block {
+            return;
+        }
     }
-    ctx.finish(&flow, Verdict::Allow);
+    std::future::pending().await
 }
 
 /// The lookups of a DNS flow, each asked about before it is sent.

@@ -138,6 +138,13 @@ pub trait Observer: Send + Sync + 'static {
     /// A DNS response passed through the tunnel.
     fn dns_answer(&self, _flow: &FlowInfo, _qname: &str, _ips: &[IpAddr]) {}
 
+    /// The firewall changed ([`crate::EngineConfig::firewall_changes`]) while `flow` was
+    /// open: may it go on? Returning [`Verdict::Block`] ends it at once, in both
+    /// directions. Called for every open flow on each change.
+    fn recheck(&self, _flow: &FlowInfo) -> Verdict {
+        Verdict::Allow
+    }
+
     fn flow_ended(&self, _flow: &FlowInfo, _totals: FlowTotals) {}
 }
 

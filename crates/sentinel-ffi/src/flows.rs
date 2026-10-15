@@ -377,6 +377,19 @@ impl Observer for FlowEvents {
         self.verdict(&owner, None, Some(qname))
     }
 
+    fn recheck(&self, flow: &FlowInfo) -> Verdict {
+        let Some((open, owner)) = lock(&self.open).get(&flow.id).cloned() else {
+            return Verdict::Allow;
+        };
+        // As when it was first decided: its app, its address, and a TLS server name if
+        // one was seen. A name from an earlier DNS answer is still not matched.
+        let name = match open.hostname_source {
+            Some(HostnameSource::Sni) => open.hostname,
+            _ => None,
+        };
+        self.verdict(&owner, Some(flow.dst.ip()), name.as_deref())
+    }
+
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
         let owner = lock(&self.open)
             .remove(&flow.id)
@@ -1050,6 +1063,72 @@ mod tests {
         // No history, no rules: nothing is blocked.
         let bare = FlowEvents::new(observer, None, 2);
         assert_eq!(bare.flow_started(&at(6, "198.51.100.9:2")), Verdict::Allow);
+    }
+
+    /// RA-01: when the rules change, an open connection is decided again with what was
+    /// known for sure: its app, its address, and its TLS server name once seen. A name
+    /// from an earlier DNS answer still does not count. Ended connections are not asked.
+    #[test]
+    fn open_connections_are_decided_again_with_what_is_known() {
+        use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
+
+        let (_dir, history) = history();
+        let observer = listen(
+            &history,
+            vec![(
+                1,
+                installed("org.example.chat", Some(history.began_ms() - 1)),
+            )],
+        );
+        let events = FlowEvents::new(observer, Some(Arc::clone(&history)), 1);
+        let named = flow(1, "203.0.113.5:1", None);
+        let guessed = flow(2, "203.0.113.6:1", Some("ads.example"));
+        assert_eq!(events.flow_started(&named), Verdict::Allow);
+        assert_eq!(
+            events.hostname_seen(&named, "x.ads.example"),
+            Verdict::Allow
+        );
+        assert_eq!(events.flow_started(&guessed), Verdict::Allow);
+
+        history
+            .set_firewall_rule(FirewallRule {
+                app: None,
+                destination: Some(RuleDestination::Domain {
+                    name: "ads.example".into(),
+                }),
+                action: RuleAction::Block,
+            })
+            .unwrap();
+        assert_eq!(events.recheck(&named), Verdict::Block, "by its server name");
+        assert_eq!(
+            events.recheck(&guessed),
+            Verdict::Allow,
+            "a DNS name is a guess"
+        );
+
+        let chat = history
+            .set_firewall_rule(FirewallRule {
+                app: Some("org.example.chat".into()),
+                destination: None,
+                action: RuleAction::Block,
+            })
+            .unwrap();
+        assert_eq!(events.recheck(&guessed), Verdict::Block, "by its app");
+        assert!(history.remove_firewall_rule(chat).unwrap());
+        assert_eq!(events.recheck(&guessed), Verdict::Allow);
+
+        events.flow_ended(
+            &guessed,
+            FlowTotals {
+                bytes_up: 0,
+                bytes_down: 0,
+                bytes_up_away: 0,
+                bytes_down_away: 0,
+                ended_ms: 5,
+                verdict: Verdict::Allow,
+            },
+        );
+        assert_eq!(events.recheck(&guessed), Verdict::Allow, "no longer open");
     }
 
     /// CM-08: a new app whose first connection a rule about its destination stopped, in
