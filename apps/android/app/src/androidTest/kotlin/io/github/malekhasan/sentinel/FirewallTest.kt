@@ -19,6 +19,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -58,7 +59,15 @@ class FirewallTest {
         val key = history.setFirewallRule(
             FirewallRule(context.packageName, RuleDestination.Network(address), RuleAction.BLOCK),
         )
-        assertNull("blocked by address", answer(host, port, REQUEST))
+        assertEquals(listOf(key), history.firewallRules().map { it.key })
+        val blocked = answer(host, port, REQUEST)
+        if (blocked != null) {
+            // Say what the engine saw, to tell a wrong owner from a wrong address.
+            stopMonitoring()
+            val seen = history.recentFlows(100u).filter { it.remoteIp == address }
+                .map { "${it.app} ${it.proto} ${it.remoteIp}:${it.remotePort} blocked=${it.blocked}" }
+            fail("blocked by address, but the server answered (${blocked.size} bytes); rule $key; flows: $seen")
+        }
         assertTrue(history.removeFirewallRule(key))
         assertNotNull("allowed again", answer(host, port, REQUEST))
 
@@ -85,8 +94,12 @@ class FirewallTest {
         assertEquals("no addresses", 0, blocked.answers)
 
         history.firewallRules().forEach { history.removeFirewallRule(it.key) }
-        val allowed = lookup(0x5e11, "localhost")
-        assertNotNull("answered by the network's resolver once the rule is gone", allowed)
+        val allowed = checkNotNull(lookup(0x5e11, "localhost")) { "no answer once the rule is gone" }
+        // Otherwise the network's resolver could have said the same, and the rule proved nothing.
+        assertTrue(
+            "the network's resolver answers differently: rcode ${allowed.rcode}, ${allowed.answers} answers",
+            allowed.rcode != 3 || allowed.answers > 0,
+        )
     }
 
     /** What the test server sent back, or null if the connection was refused or closed. */
