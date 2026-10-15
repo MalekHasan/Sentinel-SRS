@@ -6,6 +6,25 @@ use sentinel_detect::{Destination, Network};
 
 use crate::history::HistoryError;
 
+/// What the firewall does with what no rule matches (CM-08, ADR-0016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FirewallMode {
+    /// Only the rules block.
+    Monitor,
+    /// Apps installed since this mode was turned on are blocked until a rule allows
+    /// them.
+    BlockUnknown,
+}
+
+impl From<sentinel_detect::FirewallMode> for FirewallMode {
+    fn from(mode: sentinel_detect::FirewallMode) -> Self {
+        match mode {
+            sentinel_detect::FirewallMode::Monitor => FirewallMode::Monitor,
+            sentinel_detect::FirewallMode::BlockUnknown { .. } => FirewallMode::BlockUnknown,
+        }
+    }
+}
+
 /// What a rule does with what it matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RuleAction {

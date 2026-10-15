@@ -63,6 +63,9 @@ pub enum AlertEvidence {
         before: Option<String>,
         after: Option<String>,
     },
+    /// Block-unknown kept the app off the network: it was installed since the mode was
+    /// turned on, and no rule allows it.
+    NewAppBlocked,
 }
 
 /// What the user can do from an alert (SRS §9).
@@ -75,6 +78,11 @@ pub enum AlertAction {
     },
     /// Open Android's network settings.
     OpenNetworkSettings,
+    /// Let the app use the network: keep a firewall rule allowing it
+    /// (`HistoryStore.set_firewall_rule`).
+    AllowApp {
+        app: String,
+    },
 }
 
 /// One alert from the history.
@@ -199,6 +207,7 @@ impl From<StoredAlert> for HistoryAlert {
                     Action::StartMonitoring => AlertAction::StartMonitoring,
                     Action::OpenApp { package } => AlertAction::OpenApp { app: package },
                     Action::OpenNetworkSettings => AlertAction::OpenNetworkSettings,
+                    Action::AllowApp { package } => AlertAction::AllowApp { app: package },
                 })
                 .collect(),
             evidence: alert
@@ -220,6 +229,7 @@ impl From<StoredAlert> for HistoryAlert {
                         AlertEvidence::PrivateDns { before, after }
                     }
                     Evidence::Proxy { before, after } => AlertEvidence::Proxy { before, after },
+                    Evidence::NewAppBlocked => AlertEvidence::NewAppBlocked,
                 })
                 .collect(),
             open: stored.state == AlertState::Open,

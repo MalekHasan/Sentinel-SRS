@@ -14,7 +14,9 @@ mod first_seen;
 mod network;
 
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
-pub use firewall::{Destination, FirewallRule, Network, RuleAction, RuleError, RuleSet};
+pub use firewall::{
+    Destination, FirewallMode, FirewallRule, Network, RuleAction, RuleError, RuleSet,
+};
 pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,
     join_destinations, new_destinations,
@@ -106,6 +108,15 @@ impl Rule {
                 vec![Action::OpenNetworkSettings]
             }
         };
+        // A new app that Block-unknown stopped can be let through (CM-08).
+        if evidence.contains(&Evidence::NewAppBlocked) {
+            actions.extend(evidence.iter().filter_map(|e| match e {
+                Evidence::App { package } => Some(Action::AllowApp {
+                    package: package.clone(),
+                }),
+                _ => None,
+            }));
+        }
         // Any app the alert is about can be looked at.
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } => Some(Action::OpenApp {
@@ -151,6 +162,9 @@ pub enum Evidence {
         before: Option<String>,
         after: Option<String>,
     },
+    /// Block-unknown kept the app the alert is about off the network: it was installed
+    /// since the mode was turned on, and no rule allows it (CM-08).
+    NewAppBlocked,
 }
 
 /// What the user can do from an alert (SRS §9). Actions that change the device come
@@ -164,6 +178,10 @@ pub enum Action {
     },
     /// Android's network settings, where DNS, Private DNS and proxies are set.
     OpenNetworkSettings,
+    /// Let an app use the network: a firewall rule allowing it (CM-08, CM-10).
+    AllowApp {
+        package: String,
+    },
 }
 
 /// One alert.
@@ -324,11 +342,12 @@ mod tests {
                 destinations: vec!["a.example".to_owned(), "192.0.2.1".to_owned()],
                 more: 3,
             },
+            Evidence::NewAppBlocked,
         ];
         let json = evidence_to_json(&evidence);
         assert_eq!(
             json,
-            r#"[{"type":"gap","started":1000,"reason":"revoked"},{"type":"gap","started":null,"reason":"killed"},{"type":"app","package":"org.example.chat"},{"type":"destinations","destinations":["a.example","192.0.2.1"],"more":3}]"#
+            r#"[{"type":"gap","started":1000,"reason":"revoked"},{"type":"gap","started":null,"reason":"killed"},{"type":"app","package":"org.example.chat"},{"type":"destinations","destinations":["a.example","192.0.2.1"],"more":3},{"type":"new_app_blocked"}]"#
         );
         assert_eq!(evidence_from_json(&json).unwrap(), evidence);
         assert!(evidence_from_json(r#"[{"type":"unknown"}]"#).is_err());

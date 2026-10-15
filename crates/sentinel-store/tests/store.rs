@@ -926,7 +926,8 @@ fn first_connections_and_first_names_are_reported_once() {
         store.record_flows(1, &[event(1, first.clone())]).unwrap(),
         [FirstSeen::App {
             app: "org.example.chat".to_owned(),
-            destination: "chat.example".to_owned()
+            destination: "chat.example".to_owned(),
+            blocked: false,
         }]
     );
     // Its name counts when the connection ends.
@@ -974,7 +975,8 @@ fn first_connections_and_first_names_are_reported_once() {
         [
             FirstSeen::App {
                 app: "org.example.maps".to_owned(),
-                destination: "93.184.215.14".to_owned()
+                destination: "93.184.215.14".to_owned(),
+                blocked: false,
             },
             FirstSeen::Destination {
                 app: "org.example.maps".to_owned(),
@@ -1157,5 +1159,63 @@ fn firewall_rules_are_kept_and_replaced_by_key() {
             .firewall_rules()
             .unwrap()
             .is_empty()
+    );
+}
+
+/// CM-08: the firewall mode is Monitor until set, survives reopening, and a wipe forgets
+/// it. Setting the mode already in force keeps when Block-unknown was turned on.
+#[test]
+fn the_firewall_mode_is_kept() {
+    use sentinel_detect::FirewallMode;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.firewall_mode().unwrap(), FirewallMode::Monitor);
+    let on = FirewallMode::BlockUnknown { since: NOW };
+    assert_eq!(store.set_firewall_mode(on).unwrap(), on);
+    assert_eq!(
+        store
+            .set_firewall_mode(FirewallMode::BlockUnknown { since: NOW + 5 })
+            .unwrap(),
+        on,
+        "still on since it was turned on"
+    );
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.firewall_mode().unwrap(), on);
+    assert_eq!(
+        store.set_firewall_mode(FirewallMode::Monitor).unwrap(),
+        FirewallMode::Monitor
+    );
+    let again = FirewallMode::BlockUnknown { since: NOW + 10 };
+    assert_eq!(
+        store.set_firewall_mode(again).unwrap(),
+        again,
+        "a new start"
+    );
+    drop(store);
+    wipe(&path).unwrap();
+    assert_eq!(
+        Store::open(&path, &KEY).unwrap().firewall_mode().unwrap(),
+        FirewallMode::Monitor
+    );
+}
+
+/// CM-08: an app's first connection says whether the firewall refused it, so that the
+/// alert can say so.
+#[test]
+fn a_blocked_first_connection_is_reported_as_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let mut refused = flow("org.example.new", "new.example", NOW);
+    refused.blocked = true;
+    assert_eq!(
+        store.record_flows(1, &[event(1, refused)]).unwrap(),
+        [FirstSeen::App {
+            app: "org.example.new".to_owned(),
+            destination: "new.example".to_owned(),
+            blocked: true,
+        }]
     );
 }

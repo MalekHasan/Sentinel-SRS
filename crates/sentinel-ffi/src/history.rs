@@ -4,12 +4,12 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use sentinel_detect::RuleSet;
+use sentinel_detect::{FirewallMode as Mode, RuleSet};
 use sentinel_store::{KEY_LEN, Store, StoreError};
 
 use crate::alerts::{AlertDelivery, AlertFeedback, AlertListener, AllowedRule, HistoryAlert};
 use crate::enrich::{CategoryFact, CompanyFact};
-use crate::firewall::{FirewallRule, HistoryRule};
+use crate::firewall::{FirewallMode, FirewallRule, HistoryRule};
 use crate::flows::{FlowProto, NameSource};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -171,6 +171,8 @@ pub struct HistoryStore {
     alert_listener: Mutex<Option<Arc<dyn AlertListener>>>,
     /// The firewall rules in force, as the engine asks them (CM-10).
     rules: RwLock<Arc<RuleSet>>,
+    /// The firewall mode in force (CM-08).
+    mode: RwLock<Mode>,
 }
 
 #[uniffi::export]
@@ -183,10 +185,12 @@ impl HistoryStore {
             expected: KEY_LEN as u32,
         })?;
         let store = Store::open(Path::new(&path), &key)?;
+        let mode = store.firewall_mode()?;
         let history = HistoryStore {
             store,
             alert_listener: Mutex::new(None),
             rules: RwLock::new(Arc::new(RuleSet::default())),
+            mode: RwLock::new(mode),
         };
         history.reload_rules()?;
         Ok(Arc::new(history))
@@ -206,6 +210,24 @@ impl HistoryStore {
         let removed = self.store.remove_firewall_rule(&key)?;
         self.reload_rules()?;
         Ok(removed)
+    }
+
+    /// Put a firewall mode in force for connections from now on (CM-08). Block-unknown
+    /// blocks the apps installed from now on until a rule allows them; turning it on
+    /// while it is on changes nothing.
+    pub fn set_firewall_mode(&self, mode: FirewallMode) -> Result<(), HistoryError> {
+        let mode = match mode {
+            FirewallMode::Monitor => Mode::Monitor,
+            FirewallMode::BlockUnknown => Mode::BlockUnknown { since: now_ms() },
+        };
+        let mut in_force = self.mode.write().unwrap_or_else(PoisonError::into_inner);
+        *in_force = self.store.set_firewall_mode(mode)?;
+        Ok(())
+    }
+
+    /// The firewall mode in force.
+    pub fn firewall_mode(&self) -> FirewallMode {
+        self.mode_in_force().into()
     }
 
     /// The firewall rules in force, newest first.
@@ -481,6 +503,11 @@ impl HistoryStore {
     /// The firewall rules in force. Cheap: the engine asks for every connection.
     pub(crate) fn rule_set(&self) -> Arc<RuleSet> {
         Arc::clone(&self.rules.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// The firewall mode in force, with when it was turned on.
+    pub(crate) fn mode_in_force(&self) -> Mode {
+        *self.mode.read().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn reload_rules(&self) -> Result<(), HistoryError> {

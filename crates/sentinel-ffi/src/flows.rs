@@ -87,6 +87,17 @@ pub struct FlowOwner {
     pub installed_ms: Option<i64>,
 }
 
+impl FlowOwner {
+    /// A connection Android could not name an owner for.
+    fn unknown() -> FlowOwner {
+        FlowOwner {
+            uid: -1,
+            app: None,
+            installed_ms: None,
+        }
+    }
+}
+
 /// One app's open connections right now, for the live view (SRS CM-03).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct LiveApp {
@@ -244,14 +255,27 @@ impl FlowEvents {
         let mut destinations: Vec<(&str, i64, Vec<String>)> = Vec::new();
         for seen in first_seen {
             match seen {
-                FirstSeen::App { app, destination } => {
+                FirstSeen::App {
+                    app,
+                    destination,
+                    blocked,
+                } => {
                     let installed = lock(&self.installed).get(app).copied();
+                    // Said only when the app was blocked for being new, which allowing
+                    // it undoes, not when a rule about a destination stopped it.
+                    let blocked_as_new = *blocked
+                        && history.rule_set().blocks_new_app(
+                            history.mode_in_force(),
+                            app,
+                            installed,
+                        );
                     alerts.extend(sentinel_detect::first_network_use(
                         now,
                         app,
                         installed,
                         history.store.began(),
                         destination,
+                        blocked_as_new,
                     ));
                 }
                 FirstSeen::Destination {
@@ -291,16 +315,23 @@ impl FlowEvents {
         self.ready.notify_one();
     }
 
-    /// What the firewall rules say (CM-10, ADR-0015). Without a history there are no
-    /// rules, and everything is allowed.
-    fn verdict(&self, app: Option<&str>, address: Option<IpAddr>, name: Option<&str>) -> Verdict {
-        let decision = self
-            .history
-            .as_ref()
-            .and_then(|history| history.rule_set().decide(app, address, name));
+    /// What the firewall says: its rules, then its mode (CM-10, CM-08; ADR-0015,
+    /// ADR-0016). Without a history there are no rules and no mode, and everything is
+    /// allowed.
+    fn verdict(&self, owner: &FlowOwner, address: Option<IpAddr>, name: Option<&str>) -> Verdict {
+        let Some(history) = &self.history else {
+            return Verdict::Allow;
+        };
+        let decision = history.rule_set().verdict(
+            history.mode_in_force(),
+            owner.app.as_deref(),
+            owner.installed_ms,
+            address,
+            name,
+        );
         match decision {
-            Some(sentinel_detect::RuleAction::Block) => Verdict::Block,
-            Some(sentinel_detect::RuleAction::Allow) | None => Verdict::Allow,
+            sentinel_detect::RuleAction::Block => Verdict::Block,
+            sentinel_detect::RuleAction::Allow => Verdict::Allow,
         }
     }
 }
@@ -319,7 +350,7 @@ impl Observer for FlowEvents {
         }
         // The app and the address are known for sure; a name from an earlier DNS answer
         // is not, so it is not matched (ADR-0015).
-        let verdict = self.verdict(owner.app.as_deref(), Some(flow.dst.ip()), None);
+        let verdict = self.verdict(&owner, Some(flow.dst.ip()), None);
         let blocked = verdict == Verdict::Block;
         self.push(record(flow, &owner, None, blocked, &self.databases()));
         lock(&self.open).insert(flow.id, (flow.clone(), owner));
@@ -327,34 +358,29 @@ impl Observer for FlowEvents {
     }
 
     fn hostname_seen(&self, flow: &FlowInfo, hostname: &str) -> Verdict {
-        let app = match lock(&self.open).get_mut(&flow.id) {
+        let owner = match lock(&self.open).get_mut(&flow.id) {
             Some((open, owner)) => {
                 open.hostname = Some(hostname.to_owned());
                 open.hostname_source = Some(HostnameSource::Sni);
-                owner.app.clone()
+                owner.clone()
             }
-            None => None,
+            None => FlowOwner::unknown(),
         };
-        self.verdict(app.as_deref(), Some(flow.dst.ip()), Some(hostname))
+        self.verdict(&owner, Some(flow.dst.ip()), Some(hostname))
     }
 
     fn dns_query(&self, flow: &FlowInfo, qname: &str) -> Verdict {
-        let app = lock(&self.open)
+        let owner = lock(&self.open)
             .get(&flow.id)
-            .and_then(|(_, owner)| owner.app.clone());
+            .map_or_else(FlowOwner::unknown, |(_, owner)| owner.clone());
         // The address is the resolver's, not the destination's: only names count here.
-        self.verdict(app.as_deref(), None, Some(qname))
+        self.verdict(&owner, None, Some(qname))
     }
 
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
-        let owner = lock(&self.open).remove(&flow.id).map_or(
-            FlowOwner {
-                uid: -1,
-                app: None,
-                installed_ms: None,
-            },
-            |(_, owner)| owner,
-        );
+        let owner = lock(&self.open)
+            .remove(&flow.id)
+            .map_or_else(FlowOwner::unknown, |(_, owner)| owner);
         let mut ended = record(
             flow,
             &owner,
@@ -1024,5 +1050,172 @@ mod tests {
         // No history, no rules: nothing is blocked.
         let bare = FlowEvents::new(observer, None, 2);
         assert_eq!(bare.flow_started(&at(6, "198.51.100.9:2")), Verdict::Allow);
+    }
+
+    /// CM-08: a new app whose first connection a rule about its destination stopped, in
+    /// Monitor mode, was not blocked for being new: its alert does not say so.
+    #[test]
+    fn a_rule_about_a_place_does_not_make_a_new_app_blocked() {
+        use crate::alerts::AlertEvidence;
+        use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
+
+        let (_dir, history) = history();
+        let observer = listen(
+            &history,
+            vec![(
+                1,
+                installed("org.example.new", Some(history.began_ms() + 1)),
+            )],
+        );
+        history
+            .set_firewall_rule(FirewallRule {
+                app: None,
+                destination: Some(RuleDestination::Network {
+                    range: "203.0.113.0/24".into(),
+                }),
+                action: RuleAction::Block,
+            })
+            .unwrap();
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        assert_eq!(
+            events.flow_started(&flow(1, "203.0.113.5:1", None)),
+            Verdict::Block
+        );
+        events.close_all(10);
+        let heard = observer.heard.lock().unwrap();
+        assert_eq!(heard.len(), 1);
+        assert!(!heard[0].evidence.contains(&AlertEvidence::NewAppBlocked));
+    }
+
+    /// CM-08: Block-unknown stops the apps installed since it was turned on, from the
+    /// next connection and at every moment the engine asks, until a rule allows them.
+    /// Apps installed before, and connections whose install time is unknown, get
+    /// through. Turning it on again keeps when it was turned on. Monitor lets the new
+    /// app through again. The new app's first connection raises an alert that says it
+    /// was blocked and offers to allow it.
+    #[test]
+    fn block_unknown_stops_new_apps_until_they_are_allowed() {
+        use crate::alerts::{AlertAction, AlertEvidence, AlertRule};
+        use crate::firewall::{FirewallMode, FirewallRule, RuleAction};
+        use std::time::Instant;
+
+        let (_dir, history) = history();
+        let began = history.began_ms();
+        let in_a_minute = now_ms() + 60_000;
+        let observer = listen(
+            &history,
+            vec![
+                (1, installed("org.example.new", Some(in_a_minute))),
+                (2, installed("org.example.old", Some(began - 1))),
+                (3, installed("android.uid.system:1000", None)),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let at = |id: u64, port: u16| flow(id, &format!("203.0.113.5:{port}"), None);
+        let end = |flow: &FlowInfo, verdict| {
+            events.flow_ended(
+                flow,
+                FlowTotals {
+                    bytes_up: 0,
+                    bytes_down: 0,
+                    bytes_up_away: 0,
+                    bytes_down_away: 0,
+                    ended_ms: 10,
+                    verdict,
+                },
+            )
+        };
+
+        assert_eq!(history.firewall_mode(), FirewallMode::Monitor);
+        assert_eq!(events.flow_started(&at(1, 2)), Verdict::Allow);
+
+        let switched = Instant::now();
+        history
+            .set_firewall_mode(FirewallMode::BlockUnknown)
+            .unwrap();
+        let first = at(2, 1);
+        assert_eq!(events.flow_started(&first), Verdict::Block);
+        let took = switched.elapsed();
+        assert!(took < Duration::from_secs(1), "took {took:?}");
+        assert_eq!(history.firewall_mode(), FirewallMode::BlockUnknown);
+        assert_eq!(
+            events.hostname_seen(&first, "api.new.example"),
+            Verdict::Block
+        );
+        assert_eq!(events.dns_query(&first, "api.new.example"), Verdict::Block);
+        end(&first, Verdict::Block);
+        assert_eq!(
+            events.flow_started(&at(3, 2)),
+            Verdict::Allow,
+            "installed before"
+        );
+        assert_eq!(
+            events.flow_started(&at(4, 3)),
+            Verdict::Allow,
+            "install time unknown"
+        );
+
+        // An app installed after the first switch, before turning it on again, stays new.
+        let on = history.mode_in_force();
+        let between = now_ms();
+        std::thread::sleep(Duration::from_millis(5));
+        history
+            .set_firewall_mode(FirewallMode::BlockUnknown)
+            .unwrap();
+        assert_eq!(
+            history.mode_in_force(),
+            on,
+            "on since it was first turned on"
+        );
+        assert_eq!(on.decide(Some(between)), sentinel_detect::RuleAction::Block);
+
+        events.close_all(20);
+        let heard = observer.heard.lock().unwrap().clone();
+        let alert = heard
+            .iter()
+            .find(|alert| alert.rule == AlertRule::FirstNetworkUse)
+            .expect("the new app's first connection raises an alert");
+        assert_eq!(
+            alert.evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.new".into()
+                },
+                AlertEvidence::Destinations {
+                    destinations: vec!["203.0.113.5".into()],
+                    more: 0
+                },
+                AlertEvidence::NewAppBlocked,
+            ]
+        );
+        assert_eq!(
+            alert.actions[0],
+            AlertAction::AllowApp {
+                app: "org.example.new".into()
+            }
+        );
+
+        // What the alert's action does: a rule allowing the app.
+        let allowed = history
+            .set_firewall_rule(FirewallRule {
+                app: Some("org.example.new".into()),
+                destination: None,
+                action: RuleAction::Allow,
+            })
+            .unwrap();
+        assert_eq!(events.flow_started(&at(5, 1)), Verdict::Allow);
+        assert!(history.remove_firewall_rule(allowed).unwrap());
+        assert_eq!(events.flow_started(&at(6, 1)), Verdict::Block);
+        history.set_firewall_mode(FirewallMode::Monitor).unwrap();
+        assert_eq!(events.flow_started(&at(7, 1)), Verdict::Allow);
+
+        events.close_all(30);
+        let first_stored = history
+            .recent_flows(20)
+            .unwrap()
+            .into_iter()
+            .find(|f| f.app.as_deref() == Some("org.example.new") && f.ended_ms == Some(10))
+            .unwrap();
+        assert!(first_stored.blocked);
     }
 }

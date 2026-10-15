@@ -732,13 +732,7 @@ mod tests {
     fn a_blocking_rule_stops_an_apps_traffic() {
         use crate::firewall::{FirewallRule, RuleAction};
 
-        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = echo.local_addr().unwrap().port();
-        echo.set_read_timeout(Some(Duration::from_millis(500)))
-            .unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("history.db").to_string_lossy().into_owned();
-        let history = HistoryStore::open(path, vec![7; 32]).unwrap();
+        let (_dir, history) = blocking_history();
         history
             .set_firewall_rule(FirewallRule {
                 app: Some(OWNER_APP.into()),
@@ -746,16 +740,62 @@ mod tests {
                 action: RuleAction::Block,
             })
             .unwrap();
+        assert_the_engine_blocks(&history, recording_flows());
+    }
+
+    /// CM-08 through the real packet engine: with Block-unknown on, an app installed
+    /// since then has its datagram stopped, and the alert for its first connection says
+    /// it was blocked.
+    #[test]
+    fn block_unknown_stops_a_new_apps_traffic() {
+        use crate::alerts::{AlertAction, AlertEvidence};
+        use crate::firewall::FirewallMode;
+
+        let (_dir, history) = blocking_history();
+        let heard = Arc::new(HeardAlerts::default());
+        history.set_alert_listener(Some(heard.clone()));
+        history
+            .set_firewall_mode(FirewallMode::BlockUnknown)
+            .unwrap();
+        let installed = crate::history::now_ms() + 1;
+        assert_the_engine_blocks(&history, recording_flows_installed(Some(installed)));
+        let heard = heard.0.lock().unwrap();
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert!(heard[0].evidence.contains(&AlertEvidence::NewAppBlocked));
+        assert_eq!(
+            heard[0].actions[0],
+            AlertAction::AllowApp {
+                app: OWNER_APP.into()
+            }
+        );
+    }
+
+    fn blocking_history() -> (tempfile::TempDir, Arc<HistoryStore>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![7; 32]).unwrap();
+        (dir, history)
+    }
+
+    /// Sends one datagram through the engine and checks that the firewall stopped it:
+    /// nothing reaches the server, and the flow is reported and stored as blocked.
+    fn assert_the_engine_blocks(
+        history: &Arc<HistoryStore>,
+        (flows, batches): (Arc<RecordingFlows>, mpsc::Receiver<Vec<FlowRecord>>),
+    ) {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        echo.set_read_timeout(Some(Duration::from_millis(500)))
+            .unwrap();
         let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
         let (tx, _stopped) = mpsc::channel();
-        let (flows, batches) = recording_flows();
         let engine = Engine::start(
             OwnedFd::from(tun).into_raw_fd(),
             Vec::new(),
             Arc::new(CountingProtector(AtomicUsize::new(0))),
             Arc::new(ChannelListener(Mutex::new(tx))),
             flows,
-            Some(Arc::clone(&history)),
+            Some(Arc::clone(history)),
         )
         .unwrap();
         peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();

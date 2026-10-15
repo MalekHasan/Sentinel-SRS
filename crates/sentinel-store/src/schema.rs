@@ -191,7 +191,18 @@ CREATE TABLE rule (
 );
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
+/// The firewall mode (CM-08, ADR-0016): one row, absent until the user picks a mode,
+/// which means Monitor. `since` is when Block-unknown was turned on: it blocks the apps
+/// installed since then.
+const V12: &str = "
+CREATE TABLE firewall_mode (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  mode TEXT NOT NULL,                -- monitor|block-unknown
+  since INTEGER
+);
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

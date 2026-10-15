@@ -2,13 +2,15 @@
 //! Firewall rules by app, domain and address (SRS CM-10, the Phase A subset; ADR-0015).
 //!
 //! A rule names an app, a destination, or both, and allows or blocks what matches. The
-//! engine asks [`RuleSet::decide`] at three moments, with what it knows then:
+//! engine asks [`RuleSet::verdict`] at three moments, with what it knows then:
 //! - a new connection: its app and address;
 //! - the TLS server name of a connection: its app, address and that name;
 //! - a DNS lookup through the tunnel: its app and the name looked up.
 //!
 //! A name learned only from an earlier DNS answer is not matched: several names often
 //! share one address, so it may be another site's name.
+//!
+//! Where no rule matches, the [`FirewallMode`] decides (CM-08, ADR-0016).
 
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -70,6 +72,17 @@ pub struct FirewallRule {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RuleSet {
     rules: Vec<FirewallRule>,
+}
+
+/// What the firewall does with what no rule matches (CM-08, ADR-0016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirewallMode {
+    /// Only the rules block; everything else is let through and recorded.
+    Monitor,
+    /// Apps installed at or after `since` (Unix milliseconds), when this mode was turned
+    /// on, are blocked until a rule allows them. Apps installed before, and connections
+    /// whose app or install time is not known, are let through.
+    BlockUnknown { since: i64 },
 }
 
 impl Network {
@@ -256,6 +269,59 @@ impl RuleSet {
             .filter(|rule| rule.matches(app, address, name))
             .max_by_key(|rule| (rule.specificity(), rule.action == RuleAction::Block))
             .map(|rule| rule.action)
+    }
+
+    /// Whether to let a connection or lookup through: the rules decide, and where none
+    /// matches, `mode` does. `installed` is when `app` was installed, if known.
+    pub fn verdict(
+        &self,
+        mode: FirewallMode,
+        app: Option<&str>,
+        installed: Option<i64>,
+        address: Option<IpAddr>,
+        name: Option<&str>,
+    ) -> RuleAction {
+        self.decide(app, address, name)
+            .unwrap_or_else(|| mode.decide(installed))
+    }
+}
+
+impl RuleSet {
+    /// Whether `mode` keeps `app`, installed at `installed`, off the network as a new
+    /// app: Block-unknown blocks it and no rule is about the app as a whole. Rules about
+    /// some of its destinations may still let it reach those.
+    pub fn blocks_new_app(&self, mode: FirewallMode, app: &str, installed: Option<i64>) -> bool {
+        mode.decide(installed) == RuleAction::Block && self.decide(Some(app), None, None).is_none()
+    }
+}
+
+impl FirewallMode {
+    /// The name stored in the history.
+    pub fn id(self) -> &'static str {
+        match self {
+            FirewallMode::Monitor => "monitor",
+            FirewallMode::BlockUnknown { .. } => "block-unknown",
+        }
+    }
+
+    /// The mode stored as `id`; Block-unknown needs the time it was turned on.
+    pub fn from_id(id: &str, since: Option<i64>) -> Option<FirewallMode> {
+        match id {
+            "monitor" => Some(FirewallMode::Monitor),
+            "block-unknown" => Some(FirewallMode::BlockUnknown { since: since? }),
+            _ => None,
+        }
+    }
+
+    /// What the mode does with a connection or lookup that no rule matches, by an app
+    /// installed at `installed`.
+    pub fn decide(self, installed: Option<i64>) -> RuleAction {
+        match (self, installed) {
+            (FirewallMode::BlockUnknown { since }, Some(installed)) if installed >= since => {
+                RuleAction::Block
+            }
+            _ => RuleAction::Allow,
+        }
     }
 }
 
@@ -573,5 +639,155 @@ mod tests {
         ] {
             assert_eq!(FirewallRule::from_json(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn monitor_mode_lets_through_what_no_rule_blocks() {
+        let rules = RuleSet::new(vec![rule(Some(CHAT), None, RuleAction::Block)]);
+        let mode = FirewallMode::Monitor;
+        assert_eq!(
+            rules.verdict(mode, Some(CHAT), Some(5), None, None),
+            RuleAction::Block
+        );
+        for installed in [None, Some(0), Some(i64::MAX)] {
+            assert_eq!(
+                rules.verdict(mode, Some(MAPS), installed, Some(ip("192.0.2.1")), None),
+                RuleAction::Allow
+            );
+        }
+        assert_eq!(
+            rules.verdict(mode, None, None, None, None),
+            RuleAction::Allow
+        );
+    }
+
+    #[test]
+    fn block_unknown_blocks_apps_installed_since_it_was_turned_on() {
+        let since = 1_000;
+        let mode = FirewallMode::BlockUnknown { since };
+        let none = RuleSet::default();
+        let address = Some(ip("192.0.2.1"));
+        // Installed before: let through. At or after: blocked, at every moment it asks.
+        assert_eq!(
+            none.verdict(mode, Some(MAPS), Some(since - 1), address, None),
+            RuleAction::Allow
+        );
+        for installed in [since, since + 1] {
+            assert_eq!(
+                none.verdict(mode, Some(MAPS), Some(installed), address, None),
+                RuleAction::Block
+            );
+            assert_eq!(
+                none.verdict(
+                    mode,
+                    Some(MAPS),
+                    Some(installed),
+                    address,
+                    Some("maps.example")
+                ),
+                RuleAction::Block
+            );
+            assert_eq!(
+                none.verdict(
+                    mode,
+                    Some(MAPS),
+                    Some(installed),
+                    None,
+                    Some("maps.example")
+                ),
+                RuleAction::Block
+            );
+        }
+        // Without an app or its install time (Android's shared system identities), the
+        // mode cannot tell, so it does not block.
+        assert_eq!(
+            none.verdict(mode, None, None, address, None),
+            RuleAction::Allow
+        );
+        assert_eq!(
+            none.verdict(mode, Some("android.uid.system:1000"), None, address, None),
+            RuleAction::Allow
+        );
+    }
+
+    #[test]
+    fn rules_come_before_the_mode() {
+        let mode = FirewallMode::BlockUnknown { since: 1_000 };
+        let new = Some(2_000);
+        let old = Some(500);
+        let rules = RuleSet::new(vec![
+            rule(Some(CHAT), None, RuleAction::Allow),
+            rule(Some(MAPS), domain("tiles.example"), RuleAction::Allow),
+            rule(None, domain("ads.example"), RuleAction::Block),
+        ]);
+        let address = Some(ip("192.0.2.1"));
+        // Allowing a new app lets it through, except where a rule blocks.
+        assert_eq!(
+            rules.verdict(mode, Some(CHAT), new, address, None),
+            RuleAction::Allow
+        );
+        assert_eq!(
+            rules.verdict(mode, Some(CHAT), new, address, Some("x.ads.example")),
+            RuleAction::Block
+        );
+        // A rule for one domain lets a new app reach that domain once its name is known,
+        // but its connections are refused when they start, before the name is known.
+        assert_eq!(
+            rules.verdict(mode, Some(MAPS), new, None, Some("tiles.example")),
+            RuleAction::Allow
+        );
+        assert_eq!(
+            rules.verdict(mode, Some(MAPS), new, address, None),
+            RuleAction::Block
+        );
+        // Block rules apply to apps the mode lets through.
+        assert_eq!(
+            rules.verdict(mode, Some(MAPS), old, address, Some("ads.example")),
+            RuleAction::Block
+        );
+    }
+
+    #[test]
+    fn a_new_app_is_kept_off_only_by_block_unknown_without_a_rule_about_it() {
+        let on = FirewallMode::BlockUnknown { since: 1_000 };
+        let none = RuleSet::default();
+        assert!(none.blocks_new_app(on, CHAT, Some(1_000)));
+        assert!(!none.blocks_new_app(on, CHAT, Some(999)));
+        assert!(!none.blocks_new_app(on, CHAT, None));
+        assert!(!none.blocks_new_app(FirewallMode::Monitor, CHAT, Some(1_000)));
+        for action in [RuleAction::Allow, RuleAction::Block] {
+            let about_the_app = RuleSet::new(vec![rule(Some(CHAT), None, action)]);
+            assert!(
+                !about_the_app.blocks_new_app(on, CHAT, Some(1_000)),
+                "{action:?}"
+            );
+        }
+        let about_a_place = RuleSet::new(vec![
+            rule(Some(CHAT), domain("chat.example"), RuleAction::Allow),
+            rule(None, domain("ads.example"), RuleAction::Block),
+        ]);
+        assert!(about_a_place.blocks_new_app(on, CHAT, Some(1_000)));
+    }
+
+    /// The stored names are part of the history's format.
+    #[test]
+    fn modes_are_stored_by_name() {
+        for mode in [
+            FirewallMode::Monitor,
+            FirewallMode::BlockUnknown { since: 42 },
+        ] {
+            assert_eq!(FirewallMode::from_id(mode.id(), Some(42)), Some(mode));
+        }
+        assert_eq!(FirewallMode::Monitor.id(), "monitor");
+        assert_eq!(
+            FirewallMode::BlockUnknown { since: 0 }.id(),
+            "block-unknown"
+        );
+        assert_eq!(
+            FirewallMode::from_id("monitor", None),
+            Some(FirewallMode::Monitor)
+        );
+        assert_eq!(FirewallMode::from_id("block-unknown", None), None);
+        assert_eq!(FirewallMode::from_id("lockdown", Some(0)), None);
     }
 }

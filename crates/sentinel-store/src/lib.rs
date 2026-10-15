@@ -12,7 +12,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sentinel_detect::{
-    Alert, AlertState, Delivery, Feedback, FirewallRule, NetworkState, Rule, Sent, Severity,
+    Alert, AlertState, Delivery, Feedback, FirewallMode, FirewallRule, NetworkState, Rule, Sent,
+    Severity,
 };
 use zeroize::Zeroizing;
 
@@ -63,8 +64,13 @@ pub struct Listed<T> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FirstSeen {
     /// The history's first connection by `app`, to `destination`: its name, or its
-    /// address if no name was known when it started.
-    App { app: String, destination: String },
+    /// address if no name was known when it started. `blocked` when the firewall
+    /// refused it.
+    App {
+        app: String,
+        destination: String,
+        blocked: bool,
+    },
     /// `app`'s first connection to the name `destination`. Judged when the connection
     /// ends, by the name it ended with: a name learned from the TLS handshake replaces
     /// one from DNS. `app_first_seen` is when the history first saw the app.
@@ -351,6 +357,7 @@ impl Store {
                         first_seen.push(FirstSeen::App {
                             app: app.clone(),
                             destination: row.hostname.clone().unwrap_or(row.remote_ip.clone()),
+                            blocked: row.blocked,
                         });
                     }
                     if row.ended.is_none() {
@@ -683,6 +690,33 @@ impl Store {
             params![key, rule.to_json(), now],
         )?;
         Ok(key)
+    }
+
+    /// The firewall mode (CM-08): Monitor until another is set. A mode this version
+    /// cannot read counts as Monitor, which blocks nothing on its own.
+    pub fn firewall_mode(&self) -> Result<FirewallMode> {
+        let conn = lock(&self.conn);
+        Ok(read_firewall_mode(&conn)?.unwrap_or(FirewallMode::Monitor))
+    }
+
+    /// Put `mode` in force, and return the mode now in force. Setting the mode already
+    /// in force changes nothing, so Block-unknown keeps the time it was turned on.
+    pub fn set_firewall_mode(&self, mode: FirewallMode) -> Result<FirewallMode> {
+        let since = match mode {
+            FirewallMode::Monitor => None,
+            FirewallMode::BlockUnknown { since } => Some(since),
+        };
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO firewall_mode (id, mode, since) VALUES (1, ?1, ?2)
+             ON CONFLICT (id) DO UPDATE SET mode = excluded.mode, since = excluded.since
+             WHERE mode != excluded.mode",
+            params![mode.id(), since],
+        )?;
+        let now_in_force = read_firewall_mode(&tx)?.unwrap_or(FirewallMode::Monitor);
+        tx.commit()?;
+        Ok(now_in_force)
     }
 
     /// Remove the firewall rule with this key. Returns whether there was one.
@@ -1078,6 +1112,18 @@ fn companies(destinations: &[DestinationTotal]) -> Vec<CompanyTotal> {
 }
 
 /// Returns the new row's id, and whether its app is new to the history.
+/// The stored firewall mode; `None` when none is set or it cannot be read.
+fn read_firewall_mode(conn: &Connection) -> Result<Option<FirewallMode>> {
+    let row: Option<(String, Option<i64>)> = conn
+        .query_row(
+            "SELECT mode, since FROM firewall_mode WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(row.and_then(|(mode, since)| FirewallMode::from_id(&mode, since)))
+}
+
 fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<(i64, bool)> {
     let app = app_id(tx, row.app.as_deref(), row.started)?;
     let new_app = app.is_some_and(|(_, added)| added);

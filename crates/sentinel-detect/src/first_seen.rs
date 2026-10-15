@@ -19,6 +19,9 @@ pub const MAX_LISTED: usize = 20;
 
 /// CM-04: `package` used the network for the first time the history knows of, at
 /// `now`, connecting to `destination` (a name, or an address if no name is known).
+/// `blocked_as_new` when Block-unknown refused that connection because the app is new
+/// (CM-08, [`crate::RuleSet::blocks_new_app`]): the alert then says so and offers to let
+/// the app through.
 ///
 /// Only an app installed since the history began (`installed` at or after
 /// `history_began`, Unix milliseconds) is new: an app that was there before may have
@@ -30,23 +33,28 @@ pub fn first_network_use(
     installed: Option<i64>,
     history_began: i64,
     destination: &str,
+    blocked_as_new: bool,
 ) -> Option<Alert> {
     if installed? < history_began {
         return None;
+    }
+    let mut evidence = vec![
+        Evidence::App {
+            package: package.to_owned(),
+        },
+        Evidence::Destinations {
+            destinations: vec![destination.to_owned()],
+            more: 0,
+        },
+    ];
+    if blocked_as_new {
+        evidence.push(Evidence::NewAppBlocked);
     }
     Some(Alert {
         rule: Rule::FirstNetworkUse,
         severity: Severity::Info,
         created: now,
-        evidence: vec![
-            Evidence::App {
-                package: package.to_owned(),
-            },
-            Evidence::Destinations {
-                destinations: vec![destination.to_owned()],
-                more: 0,
-            },
-        ],
+        evidence,
     })
 }
 
@@ -142,6 +150,7 @@ mod tests {
             Some(BEGAN),
             BEGAN,
             "api.example",
+            false,
         )
         .unwrap();
         assert_eq!(alert.rule, Rule::FirstNetworkUse);
@@ -163,6 +172,33 @@ mod tests {
         );
     }
 
+    /// CM-08: a new app the firewall stopped can be let through from the alert.
+    #[test]
+    fn a_blocked_new_app_can_be_allowed_from_its_alert() {
+        let alert = first_network_use(
+            BEGAN + 60_000,
+            "org.example.new",
+            Some(BEGAN + 1),
+            BEGAN,
+            "api.example",
+            true,
+        )
+        .unwrap();
+        assert_eq!(alert.severity, Severity::Info);
+        assert_eq!(alert.evidence.last(), Some(&Evidence::NewAppBlocked));
+        assert_eq!(
+            alert.actions(),
+            [
+                Action::AllowApp {
+                    package: "org.example.new".to_owned()
+                },
+                Action::OpenApp {
+                    package: "org.example.new".to_owned()
+                }
+            ]
+        );
+    }
+
     #[test]
     fn an_app_installed_before_or_at_an_unknown_time_is_not() {
         assert_eq!(
@@ -171,12 +207,20 @@ mod tests {
                 "org.example.old",
                 Some(BEGAN - 1),
                 BEGAN,
-                "a.example"
+                "a.example",
+                true
             ),
             None
         );
         assert_eq!(
-            first_network_use(BEGAN, "android.uid.system:1000", None, BEGAN, "a.example"),
+            first_network_use(
+                BEGAN,
+                "android.uid.system:1000",
+                None,
+                BEGAN,
+                "a.example",
+                true
+            ),
             None
         );
     }
