@@ -156,7 +156,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 ### Sprint 4 — Where data goes
 
 - [ ] `sentinel-enrich`: offline ASN, country, company and category lookup in under 1 ms per flow (DT-01). Done: network (ASN), its owner and approximate country, from IPtoASN and DB-IP Lite, in a checked range-table file that ships through the feed ([ADR-0010](adr/0010-offline-ip-enrichment.md)); every flow record carries them once the app sets a database. 0.56 µs per lookup at 1.3 million ranges (release build, synthetic data). Still to do: company and category (with DT-06), and measuring the file with the real data sets
-- [ ] "Why we believe this" source and confidence on every destination card (DT-02)
+- [x] "Why we believe this" source and confidence on every destination card (DT-02). Each destination card on the app detail screen says how its name was learned (TLS server name, DNS answer, or address only), its network and owner, and its approximate country, each with its source and date and how far to trust it. Stored in the SRS `destination` table (history schema 4). On the Android 14 emulator in CI: with a small IP database installed, a request to the test server is stored with AS64500, its owner, Jordan and both sources; every line of a card is shown, in Arabic right to left. Confidence is given in words, not as the SRS `confidence` number; company and category join the cards with DT-06
 - [ ] Tracker and SDK matching per app (DT-06)
 
 ### Sprint 5 — Alerts
