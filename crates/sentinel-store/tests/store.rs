@@ -1062,3 +1062,38 @@ fn newer_destinations_join_an_open_alert() {
         "dismissed"
     );
 }
+
+/// CM-07: the network settings last seen are kept across reopening, so that a change
+/// made while Sentinel was not running is found; a wipe forgets them.
+#[test]
+fn the_network_settings_last_seen_are_kept() {
+    use sentinel_detect::NetworkState;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    let home = NetworkState {
+        network: Some("7:100".to_owned()),
+        dns_servers: vec!["192.168.1.1".to_owned()],
+        ..Default::default()
+    };
+    assert_eq!(store.network_state().unwrap(), None);
+    assert_eq!(store.swap_network_state(&home, NOW).unwrap(), None);
+    assert_eq!(store.network_state().unwrap(), Some(home.clone()));
+    let mut proxied = home.clone();
+    proxied.proxy = Some("192.0.2.10:3128".to_owned());
+    assert_eq!(
+        store.swap_network_state(&proxied, NOW + 1).unwrap(),
+        Some(home)
+    );
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(
+        store.swap_network_state(&proxied, NOW + 2).unwrap(),
+        Some(proxied.clone())
+    );
+    drop(store);
+    wipe(&path).unwrap();
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.swap_network_state(&proxied, NOW + 3).unwrap(), None);
+}

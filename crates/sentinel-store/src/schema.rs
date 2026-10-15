@@ -167,7 +167,17 @@ INSERT INTO app_destination (app_id, destination, first_seen)
   GROUP BY app_id, destination;
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
+/// The network settings last seen (CM-07, ADR-0014): one row, the state as JSON, so
+/// that a change is found even when it happened while Sentinel was not running.
+const V10: &str = "
+CREATE TABLE network_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  state TEXT NOT NULL,
+  updated INTEGER NOT NULL
+);
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

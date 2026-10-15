@@ -10,12 +10,14 @@ use serde::{Deserialize, Serialize};
 
 mod delivery;
 mod first_seen;
+mod network;
 
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
 pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,
     join_destinations, new_destinations,
 };
+pub use network::{NetworkState, network_changes};
 
 /// How urgent an alert is (AL-01). Ordered from least to most urgent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -60,6 +62,12 @@ pub enum Rule {
     FirstNetworkUse,
     /// An app connected to names it had not used before (CM-04).
     NewDestination,
+    /// The DNS servers of the network in use changed (CM-07).
+    DnsServersChanged,
+    /// The phone's Private DNS provider changed (CM-07).
+    PrivateDnsChanged,
+    /// The proxy in effect changed (CM-07).
+    ProxyChanged,
 }
 
 impl Rule {
@@ -68,6 +76,9 @@ impl Rule {
             Rule::MonitoringInterrupted => "monitoring-interrupted",
             Rule::FirstNetworkUse => "first-network-use",
             Rule::NewDestination => "new-destination",
+            Rule::DnsServersChanged => "dns-servers-changed",
+            Rule::PrivateDnsChanged => "private-dns-changed",
+            Rule::ProxyChanged => "proxy-changed",
         }
     }
 
@@ -76,6 +87,9 @@ impl Rule {
             Rule::MonitoringInterrupted,
             Rule::FirstNetworkUse,
             Rule::NewDestination,
+            Rule::DnsServersChanged,
+            Rule::PrivateDnsChanged,
+            Rule::ProxyChanged,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -86,13 +100,16 @@ impl Rule {
         let mut actions = match self {
             Rule::MonitoringInterrupted => vec![Action::StartMonitoring],
             Rule::FirstNetworkUse | Rule::NewDestination => Vec::new(),
+            Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
+                vec![Action::OpenNetworkSettings]
+            }
         };
         // Any app the alert is about can be looked at.
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } => Some(Action::OpenApp {
                 package: package.clone(),
             }),
-            Evidence::Gap { .. } | Evidence::Destinations { .. } => None,
+            _ => None,
         }));
         actions
     }
@@ -117,6 +134,21 @@ pub enum Evidence {
         destinations: Vec<String>,
         more: u32,
     },
+    /// The DNS servers of the network in use, before and after a change.
+    DnsServers {
+        before: Vec<String>,
+        after: Vec<String>,
+    },
+    /// The Private DNS provider before and after a change; `None` when none is named.
+    PrivateDns {
+        before: Option<String>,
+        after: Option<String>,
+    },
+    /// The proxy in effect before and after a change; `None` for no proxy.
+    Proxy {
+        before: Option<String>,
+        after: Option<String>,
+    },
 }
 
 /// What the user can do from an alert (SRS §9). Actions that change the device come
@@ -128,6 +160,8 @@ pub enum Action {
     OpenApp {
         package: String,
     },
+    /// Android's network settings, where DNS, Private DNS and proxies are set.
+    OpenNetworkSettings,
 }
 
 /// One alert.
@@ -150,7 +184,7 @@ impl Alert {
     pub fn app(&self) -> Option<&str> {
         self.evidence.iter().find_map(|e| match e {
             Evidence::App { package } => Some(package.as_str()),
-            Evidence::Gap { .. } | Evidence::Destinations { .. } => None,
+            _ => None,
         })
     }
 }

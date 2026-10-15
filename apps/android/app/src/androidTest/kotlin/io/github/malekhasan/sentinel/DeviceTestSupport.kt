@@ -65,11 +65,11 @@ internal fun testServer(): Pair<String, Int> {
     return host to port
 }
 
-internal fun shell(command: String) {
+/** Runs [command] as Android's shell user and returns what it printed. */
+internal fun shell(command: String): String =
     ParcelFileDescriptor.AutoCloseInputStream(
         instrumentation.uiAutomation.executeShellCommand(command),
-    ).use { it.readBytes() }
-}
+    ).use { String(it.readBytes()) }
 
 /** Checks [condition] at once, then every 100 ms until [timeoutMillis] has passed. */
 internal fun waitFor(what: String, timeoutMillis: Long = 10_000, condition: () -> Boolean) {

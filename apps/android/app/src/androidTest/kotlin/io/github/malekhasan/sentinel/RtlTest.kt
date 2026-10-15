@@ -302,6 +302,31 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
     }
 
+    /** CM-07: a changed setting's values, names written left to right, in a right-to-left line. */
+    @Test
+    fun networkSettingAlert() {
+        val alert = HistoryAlert(
+            id = 3,
+            rule = AlertRule.PRIVATE_DNS_CHANGED,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(AlertEvidence.PrivateDns(before = null, after = "dns.example")),
+            actions = listOf(AlertAction.OpenNetworkSettings),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, emptyMap()), {}, {}, {}) }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.alert_private_dns_changed_title)).assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_private_dns_changed_text)))
+        val line = arabic.getString(
+            R.string.alert_evidence_private_dns, arabic.getString(R.string.alert_setting_none), isolate("dns.example"),
+        )
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+        compose.onNodeWithText(arabic.getString(R.string.alert_action_open_network_settings), useUnmergedTree = true)
+            .assertExists()
+    }
+
     private fun alert() = HistoryAlert(
         id = 1,
         rule = AlertRule.MONITORING_INTERRUPTED,

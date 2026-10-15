@@ -115,6 +115,10 @@
     <string name="alert_evidence_gap">وقفت المراقبة بتاريخ %1$s. السبب: %2$s</string>
     <string name="alert_evidence_app">التطبيق: %1$s</string>
     <string name="alert_evidence_destinations">اتصل بـ: %1$s</string>
+    <string name="alert_evidence_dns_servers">خوادم DNS قبل: %1$s. هلأ: %2$s</string>
+    <string name="alert_evidence_private_dns">نظام DNS الخاص قبل: %1$s. هلأ: %2$s</string>
+    <string name="alert_evidence_proxy">البروكسي قبل: %1$s. هلأ: %2$s</string>
+    <string name="alert_setting_none">ولا شي</string>
     <plurals name="alert_evidence_more_destinations">
         <item quantity="zero">وما في أماكن تانية.</item>
         <item quantity="one">ومكان واحد تاني.</item>
@@ -126,6 +130,7 @@
     <string name="alert_actions_title">شو فيك تعمل</string>
     <string name="alert_action_start_monitoring">رجّع شغّل المراقبة</string>
     <string name="alert_action_open_app">شوف شو عمل %1$s</string>
+    <string name="alert_action_open_network_settings">افتح إعدادات الشبكة</string>
     <string name="alert_dismiss">إخفاء</string>
     <string name="alert_dismissed">أخفيت هالتنبيه.</string>
     <string name="alert_feedback_title">هالتنبيه كان مفيد؟</string>
@@ -158,6 +163,12 @@
     <string name="alert_first_network_use_text">هالتطبيق تنزّل بعد ما بلّش Sentinel، وهلأ شافه Sentinel عم يتصل بالإنترنت لأول مرة.</string>
     <string name="alert_new_destination_title">تطبيق اتصل بأماكن جديدة</string>
     <string name="alert_new_destination_text">هالتطبيق اتصل بأماكن ما كان يستعملها قبل، وهاد غالباً طبيعي بعد التحديث.</string>
+    <string name="alert_dns_servers_changed_title">خوادم DNS تغيّرت</string>
+    <string name="alert_dns_servers_changed_text">الشبكة اللي إنت عليها صارت تدوّر على العناوين بخوادم تانية، وهاد ممكن يبعت تطبيقاتك لأماكن غلط.</string>
+    <string name="alert_private_dns_changed_title">نظام DNS الخاص تغيّر</string>
+    <string name="alert_private_dns_changed_text">موبايلك صار يسأل خدمة تانية عن العناوين، وهالخدمة بتقدر تشوف أي مواقع بتزور.</string>
+    <string name="alert_proxy_changed_title">البروكسي تغيّر</string>
+    <string name="alert_proxy_changed_text">ممكن ترافيك الويب تبعك صار يمرق من بروكسي تاني، وهاد البروكسي بيقدر يشوف أو يغيّر اللي بتبعته.</string>
 
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>

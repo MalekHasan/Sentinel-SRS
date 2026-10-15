@@ -42,6 +42,7 @@ class SentinelVpnService : VpnService() {
     private var engine: Engine? = null
     private var listener: Listener? = null
     private var underlyingDns: UnderlyingDns? = null
+    private var networkWatch: NetworkWatch? = null
     private var awayWatcher: AwayWatcher? = null
 
     override fun onCreate() {
@@ -98,7 +99,15 @@ class SentinelVpnService : VpnService() {
         }
         engine = started
         this.listener = listener
-        underlyingDns = UnderlyingDns(this) { servers ->
+        // Changes to DNS, Private DNS and proxies raise alerts (CM-07).
+        val watch = history?.let { NetworkWatch(this, it).also(NetworkWatch::start) }
+        networkWatch = watch
+        underlyingDns = UnderlyingDns(
+            this,
+            onNetwork = { network, properties ->
+                if (engine === started) watch?.networkChanged(network, properties)
+            },
+        ) { servers ->
             // A callback queued before teardown must not reach a closed engine.
             if (engine === started) started.setUpstreamDns(servers)
         }.also { it.start() }
@@ -186,6 +195,8 @@ class SentinelVpnService : VpnService() {
         listener = null
         underlyingDns?.stop()
         underlyingDns = null
+        networkWatch?.stop()
+        networkWatch = null
         awayWatcher?.stop()
         awayWatcher = null
         engine?.let {

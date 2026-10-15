@@ -218,6 +218,45 @@ class AlertsTest {
         )
     }
 
+    /** CM-07: a changed setting shows its value before and after, and opens the settings. */
+    @Test
+    fun aChangedNetworkSettingShowsBothValues() {
+        val chosen = mutableListOf<AlertAction>()
+        compose.setContent {
+            SentinelTheme {
+                AlertDetail(
+                    details = AlertDetails(
+                        HistoryAlert(
+                            id = 9,
+                            rule = AlertRule.PROXY_CHANGED,
+                            severity = AlertSeverity.WARNING,
+                            createdMs = now,
+                            evidence = listOf(AlertEvidence.Proxy(before = null, after = "192.0.2.10:3128")),
+                            actions = listOf(AlertAction.OpenNetworkSettings),
+                            open = true,
+                        ),
+                        emptyMap(),
+                    ),
+                    onBack = {},
+                    onAction = { chosen += it },
+                    onDismiss = {},
+                )
+            }
+        }
+        fun shows(text: String) = compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+        shows(context.getString(R.string.alert_proxy_changed_title))
+        shows(context.getString(R.string.alert_proxy_changed_text))
+        shows(
+            context.getString(
+                R.string.alert_evidence_proxy,
+                context.getString(R.string.alert_setting_none),
+                isolate("192.0.2.10:3128"),
+            ),
+        )
+        shows(context.getString(R.string.alert_action_open_network_settings)).performClick()
+        assertEquals(listOf<AlertAction>(AlertAction.OpenNetworkSettings), chosen)
+    }
+
     /** A dismissed alert says so and offers no Dismiss button. */
     @Test
     fun aDismissedAlertSaysSo() {

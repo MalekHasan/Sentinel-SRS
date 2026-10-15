@@ -129,6 +129,25 @@ pub struct HistoryDestination {
     pub categories: Option<CategoryFact>,
 }
 
+/// What decides where the phone's traffic goes on the network it uses (CM-07). The app
+/// reports it whenever it changes.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct NetworkState {
+    /// The network in use, for as long as the phone stays on it: joining it again, or
+    /// restarting the phone, must give another value. On Android, the boot count and
+    /// the network's id.
+    pub network: Option<String>,
+    /// The network's DNS servers, in its order.
+    pub dns_servers: Vec<String>,
+    /// The Private DNS provider the phone is set to use, if one is named.
+    pub private_dns: Option<String>,
+    /// The proxy set on the network itself, if any.
+    pub network_proxy: Option<String>,
+    /// The proxy in effect on the network: one set for the whole phone, or the
+    /// network's own.
+    pub proxy: Option<String>,
+}
+
 /// One app's traffic while the user was away (CM-06).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct HistoryAway {
@@ -277,6 +296,37 @@ impl HistoryStore {
         if self.store.open_gap(started_ms, &reason)? {
             let alert = sentinel_detect::monitoring_interrupted(now_ms(), started_ms, &reason);
             self.raise(&alert)?;
+        }
+        Ok(())
+    }
+
+    /// The network settings last seen (CM-07), if any.
+    pub fn last_network_state(&self) -> Result<Option<NetworkState>, HistoryError> {
+        Ok(self.store.network_state()?.map(|state| NetworkState {
+            network: state.network,
+            dns_servers: state.dns_servers,
+            private_dns: state.private_dns,
+            network_proxy: state.network_proxy,
+            proxy: state.proxy,
+        }))
+    }
+
+    /// The network settings as they are now (CM-07). Each change from the settings seen
+    /// before, even before Sentinel last stopped, raises an alert. The first state a
+    /// history sees raises nothing.
+    pub fn network_seen(&self, state: NetworkState) -> Result<(), HistoryError> {
+        let state = sentinel_detect::NetworkState {
+            network: state.network,
+            dns_servers: state.dns_servers,
+            private_dns: state.private_dns,
+            network_proxy: state.network_proxy,
+            proxy: state.proxy,
+        };
+        let now = now_ms();
+        if let Some(before) = self.store.swap_network_state(&state, now)? {
+            for alert in sentinel_detect::network_changes(now, &before, &state) {
+                self.raise(&alert)?;
+            }
         }
         Ok(())
     }
@@ -645,5 +695,76 @@ mod tests {
             Some(AlertDelivery::HeldForFeedback)
         );
         assert!(!history.set_feedback(9_999, None).unwrap());
+    }
+
+    /// CM-07: each change of the network settings raises one Warning alert offering
+    /// the network settings, also when it happened while Sentinel was not running; the
+    /// first state seen raises nothing, and an allowed rule raises nothing more.
+    #[test]
+    fn network_setting_changes_raise_alerts() {
+        use crate::alerts::{AlertAction, AlertEvidence, AlertRule, AlertSeverity};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path.clone(), vec![1; 32]).unwrap();
+        let home = NetworkState {
+            network: Some("3:100".into()),
+            dns_servers: vec!["192.168.1.1".into()],
+            private_dns: None,
+            network_proxy: None,
+            proxy: None,
+        };
+        assert_eq!(history.last_network_state().unwrap(), None);
+        history.network_seen(home.clone()).unwrap();
+        history.network_seen(home.clone()).unwrap();
+        assert!(
+            history.alerts(false, 10).unwrap().is_empty(),
+            "first and same"
+        );
+        assert_eq!(history.last_network_state().unwrap(), Some(home.clone()));
+
+        let proxied = NetworkState {
+            proxy: Some("192.0.2.10:3128".into()),
+            ..home.clone()
+        };
+        history.network_seen(proxied.clone()).unwrap();
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].rule, AlertRule::ProxyChanged);
+        assert_eq!(alerts[0].severity, AlertSeverity::Warning);
+        assert_eq!(
+            alerts[0].evidence,
+            [AlertEvidence::Proxy {
+                before: None,
+                after: Some("192.0.2.10:3128".into())
+            }]
+        );
+        assert_eq!(alerts[0].actions, [AlertAction::OpenNetworkSettings]);
+
+        // Allowed: proxy changes raise nothing more; other settings still do.
+        history
+            .set_feedback(alerts[0].id, Some(AlertFeedback::Allowed))
+            .unwrap();
+        history.network_seen(home.clone()).unwrap();
+        assert!(history.alerts(true, 10).unwrap().is_empty());
+
+        // Changed while Sentinel was not running: found when it runs again.
+        drop(history);
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        let private = NetworkState {
+            private_dns: Some("dns.example".into()),
+            ..home
+        };
+        history.network_seen(private).unwrap();
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].rule, AlertRule::PrivateDnsChanged);
+        assert_eq!(
+            alerts[0].evidence,
+            [AlertEvidence::PrivateDns {
+                before: None,
+                after: Some("dns.example".into())
+            }]
+        );
     }
 }

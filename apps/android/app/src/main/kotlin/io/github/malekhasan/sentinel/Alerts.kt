@@ -264,12 +264,18 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_title
     AlertRule.FIRST_NETWORK_USE -> R.string.alert_first_network_use_title
     AlertRule.NEW_DESTINATION -> R.string.alert_new_destination_title
+    AlertRule.DNS_SERVERS_CHANGED -> R.string.alert_dns_servers_changed_title
+    AlertRule.PRIVATE_DNS_CHANGED -> R.string.alert_private_dns_changed_title
+    AlertRule.PROXY_CHANGED -> R.string.alert_proxy_changed_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_text
     AlertRule.FIRST_NETWORK_USE -> R.string.alert_first_network_use_text
     AlertRule.NEW_DESTINATION -> R.string.alert_new_destination_text
+    AlertRule.DNS_SERVERS_CHANGED -> R.string.alert_dns_servers_changed_text
+    AlertRule.PRIVATE_DNS_CHANGED -> R.string.alert_private_dns_changed_text
+    AlertRule.PROXY_CHANGED -> R.string.alert_proxy_changed_text
 }
 
 @Composable
@@ -299,6 +305,28 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
                 if (more > 0) pluralStringResource(R.plurals.alert_evidence_more_destinations, more, more) else null,
             ).joinToString(" ")
         }
+        is AlertEvidence.DnsServers -> stringResource(
+            R.string.alert_evidence_dns_servers, settingValue(evidence.before), settingValue(evidence.after),
+        )
+        is AlertEvidence.PrivateDns -> stringResource(
+            R.string.alert_evidence_private_dns,
+            settingValue(listOfNotNull(evidence.before)),
+            settingValue(listOfNotNull(evidence.after)),
+        )
+        is AlertEvidence.Proxy -> stringResource(
+            R.string.alert_evidence_proxy,
+            settingValue(listOfNotNull(evidence.before)),
+            settingValue(listOfNotNull(evidence.after)),
+        )
+    }
+
+/** A network setting's values as written, each kept left to right, or "none". */
+@Composable
+private fun settingValue(values: List<String>): String =
+    if (values.isEmpty()) {
+        stringResource(R.string.alert_setting_none)
+    } else {
+        ListFormatter.getInstance(LocalConfiguration.current.locales[0]).format(values.map(::isolate))
     }
 
 @Composable
@@ -306,4 +334,5 @@ private fun actionLabel(action: AlertAction, label: (String) -> String): String 
     when (action) {
         is AlertAction.StartMonitoring -> stringResource(R.string.alert_action_start_monitoring)
         is AlertAction.OpenApp -> stringResource(R.string.alert_action_open_app, isolate(label(action.app)))
+        is AlertAction.OpenNetworkSettings -> stringResource(R.string.alert_action_open_network_settings)
     }

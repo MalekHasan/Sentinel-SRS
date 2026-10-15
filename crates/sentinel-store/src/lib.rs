@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
-use sentinel_detect::{Alert, AlertState, Delivery, Feedback, Rule, Sent, Severity};
+use sentinel_detect::{Alert, AlertState, Delivery, Feedback, NetworkState, Rule, Sent, Severity};
 use zeroize::Zeroizing;
 
 mod schema;
@@ -623,6 +623,40 @@ impl Store {
             params![id, state.as_str()],
         )?;
         Ok(changed == 1)
+    }
+
+    /// The network settings last seen (CM-07), if any. A state this version cannot read
+    /// counts as none.
+    pub fn network_state(&self) -> Result<Option<NetworkState>> {
+        let json: Option<String> = lock(&self.conn)
+            .query_row("SELECT state FROM network_state WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(json.and_then(|json| NetworkState::from_json(&json).ok()))
+    }
+
+    /// Keep `state` as the network settings last seen (CM-07) and return the ones seen
+    /// before, if any. A state this version cannot read counts as none.
+    pub fn swap_network_state(
+        &self,
+        state: &NetworkState,
+        now: i64,
+    ) -> Result<Option<NetworkState>> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let previous: Option<String> = tx
+            .query_row("SELECT state FROM network_state WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        tx.execute(
+            "INSERT INTO network_state (id, state, updated) VALUES (1, ?1, ?2)
+             ON CONFLICT (id) DO UPDATE SET state = excluded.state, updated = excluded.updated",
+            params![state.to_json(), now],
+        )?;
+        tx.commit()?;
+        Ok(previous.and_then(|json| NetworkState::from_json(&json).ok()))
     }
 
     /// Monitoring is back: close the open gap, if any.

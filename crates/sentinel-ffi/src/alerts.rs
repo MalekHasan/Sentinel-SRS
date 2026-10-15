@@ -24,6 +24,12 @@ pub enum AlertRule {
     FirstNetworkUse,
     /// An app connected to names it had not used before (CM-04).
     NewDestination,
+    /// The DNS servers of the network in use changed (CM-07).
+    DnsServersChanged,
+    /// The phone's Private DNS provider changed (CM-07).
+    PrivateDnsChanged,
+    /// The proxy in effect changed (CM-07).
+    ProxyChanged,
 }
 
 /// What an alert rests on.
@@ -42,6 +48,21 @@ pub enum AlertEvidence {
         destinations: Vec<String>,
         more: u32,
     },
+    /// The network's DNS servers before and after a change.
+    DnsServers {
+        before: Vec<String>,
+        after: Vec<String>,
+    },
+    /// The Private DNS provider before and after a change; `None` when none is named.
+    PrivateDns {
+        before: Option<String>,
+        after: Option<String>,
+    },
+    /// The proxy in effect before and after a change; `None` for no proxy.
+    Proxy {
+        before: Option<String>,
+        after: Option<String>,
+    },
 }
 
 /// What the user can do from an alert (SRS §9).
@@ -52,6 +73,8 @@ pub enum AlertAction {
     OpenApp {
         app: String,
     },
+    /// Open Android's network settings.
+    OpenNetworkSettings,
 }
 
 /// One alert from the history.
@@ -118,6 +141,9 @@ impl From<Rule> for AlertRule {
             Rule::MonitoringInterrupted => AlertRule::MonitoringInterrupted,
             Rule::FirstNetworkUse => AlertRule::FirstNetworkUse,
             Rule::NewDestination => AlertRule::NewDestination,
+            Rule::DnsServersChanged => AlertRule::DnsServersChanged,
+            Rule::PrivateDnsChanged => AlertRule::PrivateDnsChanged,
+            Rule::ProxyChanged => AlertRule::ProxyChanged,
         }
     }
 }
@@ -172,6 +198,7 @@ impl From<StoredAlert> for HistoryAlert {
                 .map(|action| match action {
                     Action::StartMonitoring => AlertAction::StartMonitoring,
                     Action::OpenApp { package } => AlertAction::OpenApp { app: package },
+                    Action::OpenNetworkSettings => AlertAction::OpenNetworkSettings,
                 })
                 .collect(),
             evidence: alert
@@ -186,6 +213,13 @@ impl From<StoredAlert> for HistoryAlert {
                     Evidence::Destinations { destinations, more } => {
                         AlertEvidence::Destinations { destinations, more }
                     }
+                    Evidence::DnsServers { before, after } => {
+                        AlertEvidence::DnsServers { before, after }
+                    }
+                    Evidence::PrivateDns { before, after } => {
+                        AlertEvidence::PrivateDns { before, after }
+                    }
+                    Evidence::Proxy { before, after } => AlertEvidence::Proxy { before, after },
                 })
                 .collect(),
             open: stored.state == AlertState::Open,

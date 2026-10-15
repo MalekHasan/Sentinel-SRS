@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.text.format.Formatter
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -116,6 +117,8 @@ class MainActivity : ComponentActivity() {
                                             requestStart()
                                         }
                                         is AlertAction.OpenApp -> openApp = action.app
+                                        is AlertAction.OpenNetworkSettings ->
+                                            startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
                                     }
                                 },
                             )
