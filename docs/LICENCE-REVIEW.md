@@ -11,7 +11,8 @@ Sentinel is GPL-3.0-or-later ([ADR-0004](adr/0004-open-source-and-licensing.md))
 | Echap `stalkerware-indicators` | ID-13: stalkerware package names, certificates, domains, IPs | Sources disagree: CC BY 4.0 (a Rust parser's docs) or CC BY-NC-SA (SpyGuard's README) | Attribution; if NC-SA, our derived feed files must use the same licence and stay non-commercial | **Confirm** against the repository's LICENSE file |
 | Amnesty International `mvt-indicators` / `investigations` | ID-13, MS-02: mercenary-spyware domains | Not found | Unknown | **Confirm**; contact Amnesty Tech, who are also a natural partner (MS-13) |
 | Citizen Lab `malware-indicators` | ID-13, MS-02 | Not found; a third-party mirror says CC BY-NC-SA 4.0, but that is the mirror's statement | Unknown | **Confirm** with Citizen Lab |
-| DuckDuckGo Tracker Radar | DT-06: tracker companies and categories | CC BY-NC-SA 4.0 (consistent across secondary sources; commercial use needs a licence from DuckDuckGo) | Attribution; non-commercial; share derived data alike | OK while Sentinel is non-commercial (AM-08). Confirm on the primary repository |
+| DuckDuckGo Tracker Radar | DT-06: tracker companies and categories | CC BY-NC-SA 4.0, confirmed in the repository's LICENSE and README on 2026-10-15 (commercial use needs a licence from DuckDuckGo) | Attribution; non-commercial; share derived data alike | OK while Sentinel is non-commercial (AM-08). Built from websites, so it misses some app-only tracker domains |
+| DuckDuckGo app tracker blocklist (`tracker-blocklists/app/android-tds.json`) | DT-06: tracker companies seen in Android apps, and the data each collects | CC BY-NC-SA 4.0, confirmed in the repository's LICENSE and README on 2026-10-15 | As Tracker Radar | OK while Sentinel is non-commercial. The copy found on 2026-10-15 is dated July 2023 and lists 337 domains without categories |
 | Exodus Privacy tracker signatures | DT-06: tracker SDKs inside apps | No explicit licence found. Exodus says third-party tools reuse its API data | Unknown | **Ask Exodus Privacy** for permission and terms before bundling |
 | DB-IP Lite (country, ASN) | DT-01: country and network owner per IP | CC BY 4.0 | Credit DB-IP.com with a link; link back on web pages that show results | OK |
 | IPtoASN (iptoasn.com) | DT-01: IP to ASN | PDDL 1.0, per projects that redistribute it | None (public-domain dedication) | OK. Confirm on iptoasn.com |
@@ -58,7 +59,7 @@ Checked automatically by `cargo deny` in CI (`deny.toml` allows only GPL-compati
 
 | # | Action | Owner | When |
 | --- | --- | --- | --- |
-| L1 | Read the LICENSE files of Echap, Amnesty, Citizen Lab and DuckDuckGo data repositories; record the exact licence and version here | Feed owner | Before Sprint 7 |
+| L1 | Read the LICENSE files of Echap, Amnesty, Citizen Lab and DuckDuckGo data repositories; record the exact licence and version here | Feed owner | Before Sprint 7. DuckDuckGo done on 2026-10-15 (§1) |
 | L2 | Ask Exodus Privacy about reuse terms for tracker signatures | Feed owner | Before Sprint 4 |
 | L3 | Ask Amnesty Tech and Citizen Lab whether their indicators may be redistributed inside a signed feed | Partner owner | Before Sprint 7 |
 | L4 | Add an "About and licences" screen listing every data source and its attribution | Android | Sprint 10 |
