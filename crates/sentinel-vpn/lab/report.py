@@ -60,6 +60,10 @@ checks["sni_attributed"] = any(f.get("host") == "sni-check.lab.test" and f.get("
 checks["sni_blocked"] = any(f.get("host") == "blocked.lab.test" and f.get("verdict") == "block" for f in flows)
 checks["dns_attributed"] = any(f.get("host") == "web.lab.test" and f.get("host_src") == "dns" for f in flows)
 checks["dns_answers_seen"] = sum(1 for f in flows if f.get("event") == "dns")
+# A flow whose server closed first ends as soon as the app has closed too, not after the
+# stack's 10 s TIME-WAIT (netstack-smoltcp patch 2).
+close_first = [f for f in flows if f.get("event") == "flow" and f.get("dst", "").endswith(":8081")]
+checks["server_close_ok"] = bool(close_first) and all(f.get("ms", 10_000) < 2_000 for f in close_first)
 if engine.get("ipv6"):
     # Direct IPv6 must work too, or the failure is in the lab, not the engine.
     checks["direct_ipv6_ok"] = all(v for k, v in direct["checks"].items() if "6" in k)

@@ -29,7 +29,7 @@ Needs root, `iproute2` (with `tc`), `iperf3` and `python3`. The IPv6 checks are 
 | Idle cost: wake-ups and CPU over 10 s without traffic | `run-lab.sh` |
 | Memory with 500 open connections (SRS CM-03), and engine memory after each phase | `hold.py`, `run-lab.sh` |
 | Backpressure: a 6 s upload while `tc` limits the upstream to 20 Mbit/s | `run-lab.sh` |
-| Correctness: SNI and DNS hostnames, blocking by name, flows that end, half-close | `bench.py`, `report.py` |
+| Correctness: SNI and DNS hostnames, blocking by name, flows that end, half-close, flows whose server closes first ending at once | `bench.py`, `report.py` |
 | IPv6: TCP and UDP echo, SNI, and a hostname from an AAAA answer, each checked direct and through the engine | `bench.py`, `report.py` |
 
 `report.py` prints Markdown tables and exits non-zero if a correctness check fails. The backpressure check fails if the app could send more than 3 times what the server received, or if the engine grew by 50 MB or more during the slow upload: a stack without flow control buffers the difference in memory.
