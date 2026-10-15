@@ -1,0 +1,50 @@
+# ADR-0015: Firewall rules by app, domain and address
+
+- Status: **Accepted** (Sprint 6; `crates/sentinel-detect`, then `crates/sentinel-store`, `crates/sentinel-vpn`, `crates/sentinel-ffi`, `apps/android`)
+- Date: 2026-10-15
+- Implements: SRS CM-10 for Android, the Phase A subset: rules by app, domain and address. Modes (CM-08), blocking from the app (RA-01, RA-03) and the action journal follow in Sprint 6.
+
+## Context
+
+CM-10 lists rules by app (path, signer, hash), destination (address, range, domain, company, country), port, direction and network profile. Phase A needs app, domain and address ([PHASE-A-ANDROID.md](../PHASE-A-ANDROID.md), Sprint 6). On Android an app is its package: Android identifies it by its signature, so the path and hash do not apply.
+
+The packet engine can already refuse a connection in two places ([ADR-0006](0006-android-packet-engine.md)):
+- when it starts, before any connection to the server;
+- when its TLS ClientHello names the server, before the ClientHello is forwarded.
+
+Until now every verdict was "allow".
+
+Names are the hard part. The engine learns a name for an address from the DNS answers it forwards, but it keeps one name per address: the most recent answer. Large services serve many names from the same addresses. Google's front ends serve YouTube and `doubleclick.net`, and a CDN serves thousands of sites. A rule that blocks `ads.example` would block another site on the same address if the address happened to be learned last from `ads.example`. A firewall that breaks unrelated apps will be switched off.
+
+## Decision
+
+1. **A rule names an app, a destination, or both, and allows or blocks.**
+   - The app is a package name.
+   - A destination is a domain or an address range. A domain covers the names below it (`example.com` covers `www.example.com` but not `notexample.com`). A single address is a range of one.
+   - Rules are checked when made: a rule needs an app or a destination; a domain must be a plain name; a range is written one way only (no bits set past its prefix). An IPv4 address written as IPv6 is the IPv4 address.
+2. **The most specific rule decides.** A rule for an app and a destination beats one for a destination, which beats one for an app. Among matching rules equally specific, blocking wins. When no rule matches, the firewall mode decides (CM-08, next task); until then, that means allow.
+3. **The core decides, the engine enforces.** The rules and their decision live in `sentinel-detect` (`firewall`), so every edition decides the same way. The engine asks at three moments, each with only what it knows for sure:
+   - **A new connection:** its app and address. App rules and address rules decide here, and a blocked connection never reaches the server.
+   - **A TLS server name:** the app, the address and that name. Domain rules decide here too.
+   - **A DNS lookup through the tunnel:** the app that sent it and the name looked up. A blocked name is answered "no such name" at once, so the app never learns the address. This is what blocks a domain over QUIC and plain HTTP, which carry no TLS server name the engine reads.
+
+   A name learned only from an earlier DNS answer is never matched against a rule, for the reason above. It still names the connection in the history.
+4. **Rules are stored in the encrypted history**, in the SRS `rule` table (`kind` = `firewall`, the rule as JSON in `body`), keyed by what the rule is about. A second rule for the same app and destination replaces the first: allowing something that was blocked is one change, not two rules.
+5. **Blocked connections are recorded as blocked** (`flow.verdict`), so the history shows what the firewall stopped.
+
+## Verification
+
+- `sentinel-detect` (`firewall` tests), one test per field and per rule of decision:
+  - an app rule covers that app's traffic only, and nothing whose owner is unknown;
+  - a domain rule covers the names below it and no look-alikes (`notads.example`, `ads.example.org`). Case and the trailing dot do not matter, and an address never matches a domain;
+  - an address rule covers that address, also written as IPv4-in-IPv6, and a range covers exactly its range, in IPv4 and IPv6;
+  - an app-and-destination rule needs both;
+  - the most specific rule decides, and blocking wins a tie;
+  - bad apps, domains and ranges are refused; keys ignore the action; the stored JSON is fixed by a test.
+- The store, engine and device tests are added with each part.
+
+## Consequences
+
+- **Apps that bypass the tunnel's DNS** (their own DNS over HTTPS, or addresses built in) are stopped by domain rules only on TLS connections that name the server. Address rules still apply. QUIC traffic that never looked a name up through the tunnel is not stopped by a domain rule.
+- **Per-app domain rules at DNS lookups** depend on Android saying which app a lookup belongs to. Lookups that Android attributes to the system match only rules for every app.
+- **Not yet:** company, country, port and direction rules (CM-10), and Android's per-network profiles. Companies and countries can be added as destinations once the app can block "a company or a country" (RA-01).
