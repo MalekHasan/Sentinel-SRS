@@ -65,6 +65,46 @@
     <string name="dest_network_why">المصدر: %1$s. هاي الشركة اللي بتشغّل الشبكة، ومش دايماً هي اللي بتوصلها البيانات.</string>
     <string name="dest_country">الدولة (تقريباً): %1$s</string>
     <string name="dest_country_why">المصدر: %1$s. هاد مكان تسجيل العنوان، والسيرفر نفسه ممكن يكون بمكان تاني.</string>
+    <string name="dest_company">الشركة: %1$s</string>
+    <string name="dest_categories">نوع الخدمة: %1$s</string>
+    <string name="dest_listed_why">المصدر: %1$s، تحت %2$s.</string>
+    <string name="app_detail_companies_title">الشركات، حسب قوائم المتتبّعات</string>
+    <string name="app_detail_companies_note">من قوائم بالشركات اللي انشافت عم تتتبّع الناس بالمواقع والتطبيقات. هون بس الأماكن المذكورة بالقوائم؛ الباقي ممكن يكون تابع لشركات تانية.</string>
+    <plurals name="company_destinations">
+        <item quantity="zero">ولا مكان</item>
+        <item quantity="one">مكان واحد</item>
+        <item quantity="two">مكانين</item>
+        <item quantity="few">%d أماكن</item>
+        <item quantity="many">%d مكان</item>
+        <item quantity="other">%d مكان</item>
+    </plurals>
+
+    <!-- تصنيفات قوائم المتتبّعات (DuckDuckGo Tracker Radar). -->
+    <string name="category_ad_motivated_tracking">تتبّع لأغراض إعلانية</string>
+    <string name="category_ad_fraud">كشف الاحتيال الإعلاني</string>
+    <string name="category_advertising">إعلانات</string>
+    <string name="category_analytics">تحليلات</string>
+    <string name="category_audience_measurement">قياس الجمهور</string>
+    <string name="category_action_pixels">بكسلات تتبّع الأفعال</string>
+    <string name="category_badge">شارات</string>
+    <string name="category_cdn">شبكة توصيل محتوى (CDN)</string>
+    <string name="category_consent_management">إدارة الموافقة على الخصوصية</string>
+    <string name="category_embedded_content">محتوى مُضمَّن</string>
+    <string name="category_federated_login">تسجيل دخول بحساب تاني</string>
+    <string name="category_fraud_prevention">منع الاحتيال</string>
+    <string name="category_malware">برمجيات خبيثة</string>
+    <string name="category_non_tracking">مش تتبّع</string>
+    <string name="category_obscure_ownership">ملكية مش واضحة</string>
+    <string name="category_online_payment">دفع إلكتروني</string>
+    <string name="category_session_replay">إعادة تشغيل الجلسة (بتسجّل شو بتعمل بالتطبيق)</string>
+    <string name="category_social_comment">تعليقات اجتماعية</string>
+    <string name="category_social_share">مشاركة اجتماعية</string>
+    <string name="category_social_network">شبكة اجتماعية</string>
+    <string name="category_sso">دخول موحّد</string>
+    <string name="category_support_chat">دردشة الدعم</string>
+    <string name="category_tag_manager">إدارة الوسوم</string>
+    <string name="category_third_party_analytics_marketing">تحليلات وتسويق من طرف تالت</string>
+    <string name="category_unknown_high_risk">سلوك عالي الخطورة مش معروف</string>
 
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>

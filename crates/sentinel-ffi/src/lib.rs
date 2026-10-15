@@ -10,11 +10,14 @@ mod flows;
 mod history;
 
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
-pub use enrich::{IpDatabase, IpDatabaseError, IpSources};
+pub use enrich::{
+    CategoryFact, CompanyFact, IpDatabase, IpDatabaseError, IpSources, TrackerDatabase,
+    TrackerDatabaseError,
+};
 pub use flows::{FlowObserver, FlowOwner, FlowProto, FlowRecord, LiveApp, NameSource};
 pub use history::{
-    HistoryApp, HistoryAway, HistoryDestination, HistoryError, HistoryFlow, HistoryGap,
-    HistoryStore, wipe_history,
+    HistoryApp, HistoryAway, HistoryCompany, HistoryDestination, HistoryError, HistoryFlow,
+    HistoryGap, HistoryStore, wipe_history,
 };
 
 uniffi::setup_scaffolding!();

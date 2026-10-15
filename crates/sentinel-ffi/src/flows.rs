@@ -10,7 +10,7 @@ use std::time::Duration;
 use sentinel_vpn::{FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 use tokio::sync::Notify;
 
-use crate::enrich::IpDatabase;
+use crate::enrich::{CategoryFact, CompanyFact, IpDatabase, TrackerDatabase};
 use crate::history::HistoryStore;
 
 /// How long events wait so that several can cross into Kotlin together. Short enough
@@ -63,6 +63,10 @@ pub struct FlowRecord {
     pub network_owner: Option<String>,
     /// Approximate country of the remote address, ISO 3166 two letters.
     pub country: Option<String>,
+    /// The company the hostname belongs to, from the tracker list if one is set (DT-06).
+    pub company: Option<CompanyFact>,
+    /// What kind of service the hostname is, from the tracker list.
+    pub categories: Option<CategoryFact>,
 }
 
 /// Who owns a connection.
@@ -121,7 +125,7 @@ pub(crate) struct FlowEvents {
     /// Flows that have started and not ended, with their owner.
     open: Mutex<HashMap<u64, (FlowInfo, FlowOwner)>>,
     pending: Mutex<Vec<FlowRecord>>,
-    ip_database: RwLock<Option<Arc<IpDatabase>>>,
+    databases: RwLock<Databases>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -138,7 +142,7 @@ impl FlowEvents {
             session,
             open: Mutex::new(HashMap::new()),
             pending: Mutex::new(Vec::new()),
-            ip_database: RwLock::new(None),
+            databases: RwLock::new(Databases::default()),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
@@ -146,14 +150,22 @@ impl FlowEvents {
 
     /// Replace the IP database used for flows from now on (DT-01).
     pub(crate) fn set_ip_database(&self, database: Option<Arc<IpDatabase>>) {
-        *self
-            .ip_database
+        self.databases
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = database;
+            .unwrap_or_else(PoisonError::into_inner)
+            .ip = database;
     }
 
-    fn ip_database(&self) -> Option<Arc<IpDatabase>> {
-        self.ip_database
+    /// Replace the tracker list used for flows from now on (DT-06).
+    pub(crate) fn set_tracker_database(&self, database: Option<Arc<TrackerDatabase>>) {
+        self.databases
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .trackers = database;
+    }
+
+    fn databases(&self) -> Databases {
+        self.databases
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
@@ -178,16 +190,10 @@ impl FlowEvents {
     /// Ends every flow still open (the engine is stopping), then sends what is left.
     pub(crate) fn close_all(&self, ended_ms: u64) {
         let open: Vec<_> = lock(&self.open).drain().map(|(_, entry)| entry).collect();
-        let database = self.ip_database();
+        let databases = self.databases();
         let mut pending = lock(&self.pending);
         for (flow, owner) in open {
-            pending.push(record(
-                &flow,
-                &owner,
-                Some(ended_ms),
-                false,
-                database.as_deref(),
-            ));
+            pending.push(record(&flow, &owner, Some(ended_ms), false, &databases));
         }
         drop(pending);
         self.flush();
@@ -200,7 +206,8 @@ impl FlowEvents {
         }
         if let Some(history) = &self.history {
             let sources = self
-                .ip_database()
+                .databases()
+                .ip
                 .map(|database| database.db.sources().clone());
             let events: Vec<_> = batch
                 .iter()
@@ -236,13 +243,7 @@ impl Observer for FlowEvents {
             flow.dst.ip().to_string(),
             flow.dst.port(),
         );
-        self.push(record(
-            flow,
-            &owner,
-            None,
-            false,
-            self.ip_database().as_deref(),
-        ));
+        self.push(record(flow, &owner, None, false, &self.databases()));
         lock(&self.open).insert(flow.id, (flow.clone(), owner));
         Verdict::Allow
     }
@@ -264,7 +265,7 @@ impl Observer for FlowEvents {
             &owner,
             Some(totals.ended_ms),
             totals.verdict == Verdict::Block,
-            self.ip_database().as_deref(),
+            &self.databases(),
         );
         ended.bytes_up = totals.bytes_up;
         ended.bytes_down = totals.bytes_down;
@@ -274,14 +275,25 @@ impl Observer for FlowEvents {
     }
 }
 
+/// The offline data the flows are enriched from.
+#[derive(Clone, Default)]
+struct Databases {
+    ip: Option<Arc<IpDatabase>>,
+    trackers: Option<Arc<TrackerDatabase>>,
+}
+
 fn record(
     flow: &FlowInfo,
     owner: &FlowOwner,
     ended_ms: Option<u64>,
     blocked: bool,
-    database: Option<&IpDatabase>,
+    databases: &Databases,
 ) -> FlowRecord {
-    let ip = database.map(|database| database.db.lookup(flow.dst.ip()));
+    let ip = databases.ip.as_ref().map(|db| db.db.lookup(flow.dst.ip()));
+    let (company, categories) = match (&databases.trackers, &flow.hostname) {
+        (Some(trackers), Some(hostname)) => trackers.lookup(hostname),
+        _ => (None, None),
+    };
     FlowRecord {
         id: flow.id,
         proto: proto(flow.proto),
@@ -306,6 +318,8 @@ fn record(
         asn: ip.and_then(|ip| ip.asn),
         network_owner: ip.and_then(|ip| ip.network_owner).map(str::to_owned),
         country: ip.and_then(|ip| ip.country).map(str::to_owned),
+        company,
+        categories,
     }
 }
 
@@ -315,14 +329,21 @@ fn history_event(
     sources: Option<&sentinel_enrich::Sources>,
 ) -> sentinel_store::FlowEvent {
     let signed = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
-    // What the IP database said about the destination, with where it comes from (DT-02).
-    let destination = sources.map(|sources| sentinel_store::DestinationFacts {
-        asn: record.asn,
-        network_owner: record.network_owner.clone(),
-        network_source: record.asn.map(|_| sources.network.clone()),
-        country: record.country.clone(),
-        country_source: record.country.as_ref().map(|_| sources.country.clone()),
-    });
+    // What the IP database and the tracker list said about the destination, with where
+    // each answer comes from (DT-02).
+    let mut facts = sentinel_store::DestinationFacts {
+        company: record.company.as_ref().map(Into::into),
+        categories: record.categories.as_ref().map(Into::into),
+        ..Default::default()
+    };
+    if let Some(sources) = sources {
+        facts.asn = record.asn;
+        facts.network_owner = record.network_owner.clone();
+        facts.network_source = record.asn.map(|_| sources.network.clone());
+        facts.country = record.country.clone();
+        facts.country_source = record.country.as_ref().map(|_| sources.country.clone());
+    }
+    let destination = (facts != sentinel_store::DestinationFacts::default()).then_some(facts);
     sentinel_store::FlowEvent {
         engine_id: record.id,
         destination,
@@ -422,6 +443,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::HistoryCompany;
     use sentinel_vpn::FlowCounters;
 
     fn flow(id: u64, dst: &str, hostname: Option<&str>) -> FlowInfo {
@@ -510,6 +532,111 @@ mod tests {
                 "192.0.2.5",
                 "192.0.2.4"
             ]
+        );
+    }
+
+    /// Records what the app would be told.
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<FlowRecord>>);
+
+    impl FlowObserver for Recorder {
+        fn owner(&self, _: FlowProto, _: String, _: u16, _: String, _: u16) -> FlowOwner {
+            owner(10_001, "org.example.chat")
+        }
+
+        fn flows(&self, records: Vec<FlowRecord>) {
+            self.0.lock().unwrap().extend(records);
+        }
+    }
+
+    /// With a tracker list set, a flow with a hostname carries its company and
+    /// categories, each with where it comes from, and the history keeps them (DT-02,
+    /// DT-06). A flow without a name, or with a name no list covers, carries none.
+    #[test]
+    fn enriches_named_flows_from_the_tracker_list() {
+        let mut builder = sentinel_enrich::TrackerDbBuilder::new();
+        let radar = builder.add_source("Tracker Radar test").unwrap();
+        let apps = builder.add_source("App list test").unwrap();
+        builder
+            .add_domain(radar, "ads.example", Some("Example Ads"), &["Advertising"])
+            .unwrap();
+        builder
+            .add_domain(apps, "g.ads.example", Some("Example Ads"), &[])
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trackers.db");
+        std::fs::write(&path, builder.build().unwrap()).unwrap();
+        let trackers = TrackerDatabase::open(path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(trackers.sources(), ["Tracker Radar test", "App list test"]);
+        let history_path = dir.path().join("history.db");
+        let history =
+            HistoryStore::open(history_path.to_string_lossy().into_owned(), vec![5; 32]).unwrap();
+
+        let recorder = Arc::new(Recorder::default());
+        let events = FlowEvents::new(recorder.clone(), Some(Arc::clone(&history)), 1);
+        let early = flow(1, "203.0.113.5:443", Some("x.g.ads.example"));
+        events.flow_started(&early);
+        events.set_tracker_database(Some(trackers));
+        let named = flow(2, "203.0.113.5:443", Some("x.g.ads.example"));
+        let bare = flow(3, "203.0.113.6:443", None);
+        let unlisted = flow(4, "203.0.113.7:443", Some("plain.example"));
+        for flow in [&named, &bare, &unlisted] {
+            events.flow_started(flow);
+        }
+        events.close_all(1_000);
+
+        let company = CompanyFact {
+            company: "Example Ads".into(),
+            listed_domain: "g.ads.example".into(),
+            sources: vec!["App list test".into()],
+        };
+        let categories = CategoryFact {
+            categories: vec!["Advertising".into()],
+            listed_domain: "ads.example".into(),
+            sources: vec!["Tracker Radar test".into()],
+        };
+        let records = recorder.0.lock().unwrap().clone();
+        let started = |id: u64| {
+            records
+                .iter()
+                .find(|r| r.id == id && r.ended_ms.is_none())
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(started(1).company, None, "no tracker list yet");
+        assert_eq!(started(2).company.as_ref(), Some(&company));
+        assert_eq!(started(2).categories.as_ref(), Some(&categories));
+        for id in [3, 4] {
+            assert_eq!((started(id).company, started(id).categories), (None, None));
+        }
+        // A flow that ends after the list was set carries it, even if it started before.
+        let early_end = records
+            .iter()
+            .find(|r| r.id == 1 && r.ended_ms.is_some())
+            .unwrap();
+        assert_eq!(early_end.company.as_ref(), Some(&company));
+
+        let app = history
+            .app_summary("org.example.chat".into(), 10)
+            .unwrap()
+            .unwrap();
+        let stored = app
+            .destinations
+            .iter()
+            .find(|d| d.destination == "x.g.ads.example")
+            .unwrap();
+        assert_eq!(stored.company.as_ref(), Some(&company));
+        assert_eq!(stored.categories.as_ref(), Some(&categories));
+        assert_eq!(stored.asn, None, "no IP database");
+        assert_eq!(
+            app.companies,
+            [HistoryCompany {
+                company: "Example Ads".into(),
+                categories: vec!["Advertising".into()],
+                destinations: 1,
+                bytes_up: 0,
+                bytes_down: 0,
+            }]
         );
     }
 }

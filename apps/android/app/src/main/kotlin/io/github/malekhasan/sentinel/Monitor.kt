@@ -49,6 +49,7 @@ object Monitor {
     internal fun stopped() {
         engine = null
         ipSources = null
+        trackerSources = null
         mutableStatus.value = Status.OFF
     }
 
@@ -59,6 +60,15 @@ object Monitor {
 
     internal fun ipDataLoaded(sources: IpSources) {
         ipSources = sources
+    }
+
+    /** The lists the engine's tracker list was built from, or null while it has none. */
+    @Volatile
+    var trackerSources: List<String>? = null
+        private set
+
+    internal fun trackerDataLoaded(sources: List<String>) {
+        trackerSources = sources
     }
 
     private const val RECENT_FLOWS = 500

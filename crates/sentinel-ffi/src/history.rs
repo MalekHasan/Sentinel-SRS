@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use sentinel_store::{KEY_LEN, Store, StoreError};
 
+use crate::enrich::{CategoryFact, CompanyFact};
 use crate::flows::{FlowProto, NameSource};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -72,6 +73,21 @@ pub struct HistoryApp {
     pub destination_count: u32,
     /// Most data sent first.
     pub destinations: Vec<HistoryDestination>,
+    /// The companies all of its destinations belong to, as far as the tracker lists
+    /// know, most data sent first (DT-06).
+    #[uniffi(default = [])]
+    pub companies: Vec<HistoryCompany>,
+}
+
+/// One app's traffic to one company's destinations (DT-06).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HistoryCompany {
+    pub company: String,
+    /// The categories of those destinations.
+    pub categories: Vec<String>,
+    pub destinations: u32,
+    pub bytes_up: i64,
+    pub bytes_down: i64,
 }
 
 /// One app's traffic to one destination, over the whole history.
@@ -104,6 +120,12 @@ pub struct HistoryDestination {
     pub country: Option<String>,
     #[uniffi(default = None)]
     pub country_source: Option<String>,
+    /// The company it belongs to and what kind of service it is, from the tracker lists,
+    /// with where each comes from (DT-06).
+    #[uniffi(default = None)]
+    pub company: Option<CompanyFact>,
+    #[uniffi(default = None)]
+    pub categories: Option<CategoryFact>,
 }
 
 /// One app's traffic while the user was away (CM-06).
@@ -204,6 +226,19 @@ impl HistoryStore {
                         network_source: d.facts.network_source,
                         country: d.facts.country,
                         country_source: d.facts.country_source,
+                        company: d.facts.company.map(Into::into),
+                        categories: d.facts.categories.map(Into::into),
+                    })
+                    .collect(),
+                companies: summary
+                    .companies
+                    .into_iter()
+                    .map(|c| HistoryCompany {
+                        company: c.company,
+                        categories: c.categories,
+                        destinations: c.destinations,
+                        bytes_up: c.bytes_up,
+                        bytes_down: c.bytes_down,
                     })
                     .collect(),
             }))

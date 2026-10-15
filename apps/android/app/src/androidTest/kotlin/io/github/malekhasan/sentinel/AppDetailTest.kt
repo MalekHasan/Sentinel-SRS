@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
+import android.icu.text.ListFormatter
 import android.text.format.Formatter
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
@@ -11,7 +12,10 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.malekhasan.sentinel.core.CategoryFact
+import io.github.malekhasan.sentinel.core.CompanyFact
 import io.github.malekhasan.sentinel.core.HistoryApp
+import io.github.malekhasan.sentinel.core.HistoryCompany
 import io.github.malekhasan.sentinel.core.HistoryDestination
 import io.github.malekhasan.sentinel.core.LiveApp
 import io.github.malekhasan.sentinel.core.NameSource
@@ -150,6 +154,16 @@ class AppDetailTest {
             networkSource = "IPtoASN 2026-10-15",
             country = "JO",
             countrySource = "DB-IP Lite 2026-10",
+            company = CompanyFact(
+                company = "Example Chat Inc",
+                listedDomain = "chat.example.com",
+                sources = listOf("App tracker list 2023-07-06"),
+            ),
+            categories = CategoryFact(
+                categories = listOf("Analytics", "Session Replay", "Some New Kind"),
+                listedDomain = "example.com",
+                sources = listOf("Tracker Radar 2026-10-09", "App tracker list 2023-07-06"),
+            ),
         )
         val bare = named.copy(
             destination = "192.0.2.7",
@@ -160,6 +174,8 @@ class AppDetailTest {
             networkSource = null,
             country = null,
             countrySource = null,
+            company = null,
+            categories = null,
         )
         val history = HistoryApp(
             app = "org.example.chat",
@@ -179,14 +195,88 @@ class AppDetailTest {
         }
         val jordan = Locale.Builder().setRegion("JO").build()
             .getDisplayCountry(context.resources.configuration.locales[0])
+        val locale = context.resources.configuration.locales[0]
+        val lists = ListFormatter.getInstance(locale)
         val list = compose.onNodeWithTag(APP_DETAIL_TAG)
         for (line in listOf(
             context.getString(R.string.dest_named_sni),
+            context.getString(R.string.dest_company, isolate("Example Chat Inc")),
+            context.getString(
+                R.string.dest_listed_why, isolate("App tracker list 2023-07-06"), isolate("chat.example.com"),
+            ),
+            // Categories the app knows are in the screen's language; others as listed.
+            context.getString(
+                R.string.dest_categories,
+                lists.format(
+                    context.getString(R.string.category_analytics),
+                    context.getString(R.string.category_session_replay),
+                    isolate("Some New Kind"),
+                ),
+            ),
+            context.getString(
+                R.string.dest_listed_why,
+                lists.format(isolate("Tracker Radar 2026-10-09"), isolate("App tracker list 2023-07-06")),
+                isolate("example.com"),
+            ),
             context.getString(R.string.dest_network, isolate("AS64500 EXAMPLE-NET")),
             context.getString(R.string.dest_network_why, isolate("IPtoASN 2026-10-15")),
             context.getString(R.string.dest_country, jordan),
             context.getString(R.string.dest_country_why, isolate("DB-IP Lite 2026-10")),
             context.getString(R.string.dest_address_only),
+        )) {
+            list.performScrollToNode(hasText(line))
+            compose.onNodeWithText(line).assertIsDisplayed()
+        }
+    }
+
+    /** The companies its destinations belong to, from the tracker lists (DT-06). */
+    @Test
+    fun showsTheCompaniesItsDestinationsBelongTo() {
+        val history = HistoryApp(
+            app = "org.example.chat",
+            firstSeenMs = 0,
+            flows = 3,
+            bytesUp = 3_000,
+            bytesDown = 0,
+            bytesUpAway = 0,
+            bytesDownAway = 0,
+            destinationCount = 3u,
+            destinations = emptyList(),
+            companies = listOf(
+                HistoryCompany(
+                    company = "Example Ads",
+                    categories = listOf("Advertising"),
+                    destinations = 2u,
+                    bytesUp = 2_048,
+                    bytesDown = 0,
+                ),
+                HistoryCompany(
+                    company = "Metrics",
+                    categories = emptyList(),
+                    destinations = 1u,
+                    bytesUp = 1_000,
+                    bytesDown = 0,
+                ),
+            ),
+        )
+        compose.setContent {
+            SentinelTheme {
+                AppDetail("org.example.chat", AppDetails("Chat", history, openFlows = 0), onBack = {})
+            }
+        }
+        val list = compose.onNodeWithTag(APP_DETAIL_TAG)
+        for (line in listOf(
+            context.getString(R.string.app_detail_companies_title),
+            "Example Ads",
+            context.getString(R.string.category_advertising),
+            context.resources.getQuantityString(R.plurals.company_destinations, 2, 2),
+            context.getString(
+                R.string.traffic,
+                Formatter.formatShortFileSize(context, 2_048),
+                Formatter.formatShortFileSize(context, 0),
+            ),
+            "Metrics",
+            context.getString(R.string.app_detail_companies_note),
         )) {
             list.performScrollToNode(hasText(line))
             compose.onNodeWithText(line).assertIsDisplayed()

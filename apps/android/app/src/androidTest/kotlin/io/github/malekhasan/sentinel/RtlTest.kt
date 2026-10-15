@@ -14,19 +14,27 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.malekhasan.sentinel.core.CategoryFact
+import io.github.malekhasan.sentinel.core.CompanyFact
 import io.github.malekhasan.sentinel.core.FlowProto
 import io.github.malekhasan.sentinel.core.HistoryApp
 import io.github.malekhasan.sentinel.core.HistoryAway
+import io.github.malekhasan.sentinel.core.HistoryCompany
 import io.github.malekhasan.sentinel.core.HistoryDestination
 import io.github.malekhasan.sentinel.core.HistoryFlow
 import io.github.malekhasan.sentinel.core.LiveApp
@@ -173,6 +181,25 @@ class RtlTest {
                     networkSource = "IPtoASN 2026-10-15",
                     country = "JO",
                     countrySource = "DB-IP Lite 2026-10",
+                    company = CompanyFact(
+                        company = "Example Chat Inc",
+                        listedDomain = "example.com",
+                        sources = listOf("Tracker Radar 2026-10-09"),
+                    ),
+                    categories = CategoryFact(
+                        categories = listOf("Analytics"),
+                        listedDomain = "example.com",
+                        sources = listOf("Tracker Radar 2026-10-09"),
+                    ),
+                ),
+            ),
+            companies = listOf(
+                HistoryCompany(
+                    company = "Example Chat Inc",
+                    categories = listOf("Analytics"),
+                    destinations = 1u,
+                    bytesUp = 2_048,
+                    bytesDown = 100,
                 ),
             ),
         )
@@ -181,7 +208,6 @@ class RtlTest {
         }
         compose.onNodeWithText(arabic.getString(R.string.back)).assertAtTheRight()
         compose.onNodeWithText(LABEL).assertAtTheRight()
-        compose.onNodeWithText(HOST).assertAtTheRight()
         compose.onNodeWithText(
             arabic.resources.getQuantityString(R.plurals.history_connections, 2, 2),
         ).assertIsDisplayed()
@@ -191,16 +217,29 @@ class RtlTest {
             Formatter.formatShortFileSize(arabic, 0),
         )
         assertRightToLeft(compose.onNodeWithText(away))
+        // The companies, from the tracker lists (DT-06).
+        scrollTo(arabic.getString(R.string.app_detail_companies_title)).assertAtTheRight()
+        scrollTo(arabic.getString(R.string.category_analytics)).assertAtTheRight()
         // The destination's facts and their sources: Latin names inside Arabic lines.
-        assertRightToLeft(
-            compose.onNodeWithText(arabic.getString(R.string.dest_network, isolate("AS64500 EXAMPLE-NET"))),
+        scrollTo(HOST).assertAtTheRight()
+        assertRightToLeft(scrollTo(arabic.getString(R.string.dest_company, isolate("Example Chat Inc"))))
+        scrollTo(arabic.getString(R.string.dest_categories, arabic.getString(R.string.category_analytics)))
+        val listedWhy = arabic.getString(
+            R.string.dest_listed_why, isolate("Tracker Radar 2026-10-09"), isolate("example.com"),
         )
-        assertRightToLeft(
-            compose.onNodeWithText(arabic.getString(R.string.dest_network_why, isolate("IPtoASN 2026-10-15"))),
-        )
+        scrollTo(listedWhy, count = 2) // the company and the categories come from that entry
+        assertRightToLeft(compose.onAllNodesWithText(listedWhy)[0])
+        assertRightToLeft(scrollTo(arabic.getString(R.string.dest_network, isolate("AS64500 EXAMPLE-NET"))))
+        assertRightToLeft(scrollTo(arabic.getString(R.string.dest_network_why, isolate("IPtoASN 2026-10-15"))))
         val jordan = Locale.Builder().setRegion("JO").build().getDisplayCountry(Locale.forLanguageTag("ar"))
-        // The row may reach below the screen's edge; being laid out is enough here.
-        compose.onNodeWithText(arabic.getString(R.string.dest_country, jordan)).assertExists()
+        scrollTo(arabic.getString(R.string.dest_country, jordan))
+    }
+
+    /** Scrolls the app detail list to the line [text]; checks it is there [count] times. */
+    private fun scrollTo(text: String, count: Int = 1): SemanticsNodeInteraction {
+        compose.onNodeWithTag(APP_DETAIL_TAG).performScrollToNode(hasText(text))
+        compose.onAllNodesWithText(text).assertCountEquals(count)
+        return compose.onAllNodesWithText(text)[0]
     }
 
     /** Arabic resources and a right-to-left layout, as on a phone set to Arabic. */

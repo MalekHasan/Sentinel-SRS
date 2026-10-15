@@ -37,6 +37,23 @@ pub struct DestinationFacts {
     /// Approximate country, ISO 3166 two letters.
     pub country: Option<String>,
     pub country_source: Option<String>,
+    /// The company the destination belongs to, from the tracker lists (DT-06).
+    pub company: Option<Listed<String>>,
+    /// What kind of service it is, from the tracker lists: for example "Advertising",
+    /// "Analytics" or "CDN".
+    pub categories: Option<Listed<Vec<String>>>,
+}
+
+/// An answer from the tracker lists, and why we believe it (DT-02, DT-06). Texts are
+/// single lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed<T> {
+    pub value: T,
+    /// The listed domain the answer comes from: the destination itself or a domain
+    /// above it.
+    pub domain: String,
+    /// The lists that say so, with their dates.
+    pub sources: Vec<String>,
 }
 
 /// A flow read back from the database.
@@ -125,6 +142,20 @@ pub struct AppSummary {
     pub destination_count: u32,
     /// Most data sent first.
     pub destinations: Vec<DestinationTotal>,
+    /// The companies all of its destinations belong to, as far as the tracker lists
+    /// know, most data sent first (DT-06).
+    pub companies: Vec<CompanyTotal>,
+}
+
+/// One app's traffic to one company's destinations (DT-06).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompanyTotal {
+    pub company: String,
+    /// The categories of those destinations, as first seen.
+    pub categories: Vec<String>,
+    pub destinations: u32,
+    pub bytes_up: i64,
+    pub bytes_down: i64,
 }
 
 /// One app's traffic to one destination, over the whole history.
@@ -377,7 +408,8 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT g.destination, g.flows, g.up, g.down, g.first, g.last, g.away_up,
                     g.away_down, g.name_src, d.asn, d.net_owner, d.net_source, d.country,
-                    d.country_source
+                    d.country_source, d.company, d.company_domain, d.company_source,
+                    d.category, d.category_domain, d.category_source
              FROM (
                  SELECT destination, sum(flows) AS flows, sum(up) AS up, sum(down) AS down,
                         min(first) AS first, max(last) AS last, sum(away_up) AS away_up,
@@ -419,6 +451,12 @@ impl Store {
                         network_source: r.get(11)?,
                         country: r.get(12)?,
                         country_source: r.get(13)?,
+                        company: listed(r.get(14)?, r.get(15)?, r.get(16)?),
+                        categories: listed(
+                            r.get::<_, Option<String>>(17)?.map(|c| lines(&c)),
+                            r.get(18)?,
+                            r.get(19)?,
+                        ),
                     },
                 })
             })?
@@ -432,6 +470,7 @@ impl Store {
             bytes_up_away: all.iter().map(|d| d.bytes_up_away).sum(),
             bytes_down_away: all.iter().map(|d| d.bytes_down_away).sum(),
             destination_count: u32::try_from(all.len()).unwrap_or(u32::MAX),
+            companies: companies(&all),
             destinations: all.into_iter().take(limit as usize).collect(),
         }))
     }
@@ -524,17 +563,28 @@ fn app_id(tx: &Transaction<'_>, app: Option<&str>, now: i64) -> Result<Option<i6
 /// Keep the latest facts about a flow's destination: its hostname, or its address
 /// when no name is known.
 fn record_destination(tx: &Transaction<'_>, row: &FlowRow, facts: &DestinationFacts) -> Result<()> {
-    if facts.asn.is_none() && facts.country.is_none() {
+    if facts.asn.is_none()
+        && facts.country.is_none()
+        && facts.company.is_none()
+        && facts.categories.is_none()
+    {
         return Ok(());
     }
+    let company = facts.company.as_ref();
+    let categories = facts.categories.as_ref();
     tx.execute(
         "INSERT INTO destination (hostname, asn, net_owner, net_source, country, country_source,
-                                  updated)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                  company, company_domain, company_source, category,
+                                  category_domain, category_source, updated)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT (hostname) DO UPDATE SET
              asn = excluded.asn, net_owner = excluded.net_owner,
              net_source = excluded.net_source, country = excluded.country,
-             country_source = excluded.country_source, updated = excluded.updated
+             country_source = excluded.country_source, company = excluded.company,
+             company_domain = excluded.company_domain,
+             company_source = excluded.company_source, category = excluded.category,
+             category_domain = excluded.category_domain,
+             category_source = excluded.category_source, updated = excluded.updated
          WHERE excluded.updated >= coalesce(destination.updated, 0)",
         params![
             row.hostname.as_deref().unwrap_or(&row.remote_ip),
@@ -543,10 +593,72 @@ fn record_destination(tx: &Transaction<'_>, row: &FlowRow, facts: &DestinationFa
             facts.network_source,
             facts.country,
             facts.country_source,
+            company.map(|c| &c.value),
+            company.map(|c| &c.domain),
+            company.map(|c| c.sources.join("\n")),
+            categories.map(|c| c.value.join("\n")),
+            categories.map(|c| &c.domain),
+            categories.map(|c| c.sources.join("\n")),
             row.ended.unwrap_or(row.started),
         ],
     )?;
     Ok(())
+}
+
+/// A list stored one item per line.
+fn lines(text: &str) -> Vec<String> {
+    text.lines().map(str::to_owned).collect()
+}
+
+/// An answer from the tracker lists, from its three columns; `None` if any is missing.
+fn listed<T>(
+    value: Option<T>,
+    domain: Option<String>,
+    sources: Option<String>,
+) -> Option<Listed<T>> {
+    Some(Listed {
+        value: value?,
+        domain: domain?,
+        sources: lines(&sources?),
+    })
+}
+
+/// The companies of an app's destinations, most data sent first.
+fn companies(destinations: &[DestinationTotal]) -> Vec<CompanyTotal> {
+    let mut companies: Vec<CompanyTotal> = Vec::new();
+    let mut index: HashMap<&str, usize> = HashMap::new();
+    for destination in destinations {
+        let Some(company) = &destination.facts.company else {
+            continue;
+        };
+        let i = *index.entry(&company.value).or_insert_with(|| {
+            companies.push(CompanyTotal {
+                company: company.value.clone(),
+                categories: Vec::new(),
+                destinations: 0,
+                bytes_up: 0,
+                bytes_down: 0,
+            });
+            companies.len() - 1
+        });
+        let total = &mut companies[i];
+        total.destinations += 1;
+        total.bytes_up += destination.bytes_up;
+        total.bytes_down += destination.bytes_down;
+        for category in destination.facts.categories.iter().flat_map(|c| &c.value) {
+            if !total.categories.contains(category) {
+                total.categories.push(category.clone());
+            }
+        }
+    }
+    companies.sort_by(|a, b| {
+        (b.bytes_up, b.bytes_up + b.bytes_down, &a.company).cmp(&(
+            a.bytes_up,
+            a.bytes_up + a.bytes_down,
+            &b.company,
+        ))
+    });
+    companies
 }
 
 fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<i64> {

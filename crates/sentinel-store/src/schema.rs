@@ -91,7 +91,17 @@ CREATE TABLE destination (
 );
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4];
+/// Where each destination's company and categories come from (DT-06): the listed domain
+/// that matched and the lists that say so, one per line. `category` holds one category
+/// per line.
+const V5: &str = "
+ALTER TABLE destination ADD COLUMN company_domain TEXT;
+ALTER TABLE destination ADD COLUMN company_source TEXT;
+ALTER TABLE destination ADD COLUMN category_domain TEXT;
+ALTER TABLE destination ADD COLUMN category_source TEXT;
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

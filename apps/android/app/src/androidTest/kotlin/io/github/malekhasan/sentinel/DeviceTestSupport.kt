@@ -9,6 +9,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.ByteArrayOutputStream
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 
@@ -77,4 +78,27 @@ internal fun waitFor(what: String, timeoutMillis: Long = 10_000, condition: () -
         if (System.currentTimeMillis() >= deadline) fail("timed out waiting for $what")
         Thread.sleep(100)
     }
+}
+
+/** A minimal TLS ClientHello carrying one server_name extension. */
+internal fun clientHello(name: String): ByteArray {
+    fun ByteArrayOutputStream.u16(v: Int) { write(v shr 8 and 0xFF); write(v and 0xFF) }
+    val host = name.toByteArray()
+    val sni = ByteArrayOutputStream().apply {
+        u16(host.size + 3); write(0); u16(host.size); write(host)
+    }.toByteArray()
+    val ext = ByteArrayOutputStream().apply { u16(0x0000); u16(sni.size); write(sni) }.toByteArray()
+    val body = ByteArrayOutputStream().apply {
+        write(byteArrayOf(3, 3)); write(ByteArray(32)) // version, random
+        write(0) // no session id
+        u16(2); u16(0x1301) // one cipher suite
+        write(1); write(0) // null compression
+        u16(ext.size); write(ext)
+    }.toByteArray()
+    val handshake = ByteArrayOutputStream().apply {
+        write(1); write(0); u16(body.size); write(body)
+    }.toByteArray()
+    return ByteArrayOutputStream().apply {
+        write(0x16); write(3); write(1); u16(handshake.size); write(handshake)
+    }.toByteArray()
 }

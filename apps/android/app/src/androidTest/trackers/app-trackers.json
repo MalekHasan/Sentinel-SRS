@@ -1,0 +1,8 @@
+{
+  "trackers": {
+    "g.ads.sentinel.test": {
+      "owner": {"name": "Sentinel Test Ads Ltd", "displayName": "Sentinel Test Ads (apps)"},
+      "default": "block"
+    }
+  }
+}

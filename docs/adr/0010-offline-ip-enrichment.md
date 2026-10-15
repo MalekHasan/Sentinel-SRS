@@ -43,5 +43,5 @@ The public data sets that allow this are listed in [LICENCE-REVIEW.md](../LICENC
 
 ## Still open
 
-- Company and category per destination come from a tracker and entity list (DT-06, Sprint 4), not from this file.
+- Company and category per destination come from the tracker list ([ADR-0011](0011-tracker-list.md)), not from this file.
 - Measuring size, load time and memory with the real data sets on a phone.

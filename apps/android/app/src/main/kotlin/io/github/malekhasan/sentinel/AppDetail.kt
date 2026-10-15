@@ -2,6 +2,7 @@
 package io.github.malekhasan.sentinel
 
 import android.content.Context
+import android.icu.text.ListFormatter
 import android.text.format.DateUtils
 import android.text.format.Formatter
 import android.util.Log
@@ -31,6 +32,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.malekhasan.sentinel.core.HistoryApp
+import io.github.malekhasan.sentinel.core.HistoryCompany
 import io.github.malekhasan.sentinel.core.HistoryDestination
 import io.github.malekhasan.sentinel.core.NameSource
 import java.text.DateFormat
@@ -165,6 +167,16 @@ fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
                 Text(stringResource(R.string.app_detail_open_note), style = MaterialTheme.typography.bodySmall)
             }
         }
+        if (history.companies.isNotEmpty()) {
+            item {
+                Text(stringResource(R.string.app_detail_companies_title), style = MaterialTheme.typography.titleSmall)
+            }
+            // Destination keys are hostnames or addresses, which never start with "company:".
+            items(history.companies, key = { "company:${it.company}" }) { CompanyRow(it) }
+            item {
+                Text(stringResource(R.string.app_detail_companies_note), style = MaterialTheme.typography.bodySmall)
+            }
+        }
         item {
             Text(stringResource(R.string.app_detail_destinations_title), style = MaterialTheme.typography.titleSmall)
         }
@@ -178,6 +190,31 @@ fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+/** One company the app's destinations belong to, from the tracker lists (DT-06). */
+@Composable
+private fun CompanyRow(company: HistoryCompany) {
+    val context = LocalContext.current
+    val count = company.destinations.toInt()
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(company.company, style = MaterialTheme.typography.titleSmall)
+        if (company.categories.isNotEmpty()) {
+            Text(categoryList(company.categories), style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            pluralStringResource(R.plurals.company_destinations, count, count),
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            stringResource(
+                R.string.traffic,
+                Formatter.formatShortFileSize(context, company.bytesUp),
+                Formatter.formatShortFileSize(context, company.bytesDown),
+            ),
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -222,7 +259,8 @@ private fun DestinationRow(destination: HistoryDestination) {
 
 /**
  * What is known about a destination and why we believe it (SRS DT-02): how its name was
- * learned, its network and its country, each with its source and how far to trust it.
+ * learned, its company and kind of service (DT-06), its network and its country, each
+ * with its source and how far to trust it.
  */
 @Composable
 private fun DestinationFacts(destination: HistoryDestination) {
@@ -233,6 +271,14 @@ private fun DestinationFacts(destination: HistoryDestination) {
         destination.nameSource == NameSource.DNS -> Text(stringResource(R.string.dest_named_dns), style = why)
         android.net.InetAddresses.isNumericAddress(destination.destination) ->
             Text(stringResource(R.string.dest_address_only), style = why)
+    }
+    destination.company?.let { fact ->
+        Text(stringResource(R.string.dest_company, isolate(fact.company)), style = small)
+        Text(listedWhy(fact.sources, fact.listedDomain), style = why)
+    }
+    destination.categories?.let { fact ->
+        Text(stringResource(R.string.dest_categories, categoryList(fact.categories)), style = small)
+        Text(listedWhy(fact.sources, fact.listedDomain), style = why)
     }
     destination.asn?.let { asn ->
         val network = listOfNotNull("AS$asn", destination.networkOwner).joinToString(" ")
@@ -248,6 +294,50 @@ private fun DestinationFacts(destination: HistoryDestination) {
         }
     }
 }
+
+/** Where an answer from the tracker lists comes from: the lists, and the entry. */
+@Composable
+private fun listedWhy(sources: List<String>, listedDomain: String): String {
+    val lists = ListFormatter.getInstance(LocalConfiguration.current.locales[0]).format(sources.map(::isolate))
+    return stringResource(R.string.dest_listed_why, lists, isolate(listedDomain))
+}
+
+/** Categories in the screen's language where the app knows them, as the list names them
+ *  otherwise. */
+@Composable
+private fun categoryList(categories: List<String>): String {
+    val names = categories.map { raw -> CATEGORY_NAMES[raw]?.let { stringResource(it) } ?: isolate(raw) }
+    return ListFormatter.getInstance(LocalConfiguration.current.locales[0]).format(names)
+}
+
+/** Tracker Radar's categories, by the name the list uses. */
+private val CATEGORY_NAMES = mapOf(
+    "Ad Motivated Tracking" to R.string.category_ad_motivated_tracking,
+    "Ad Fraud" to R.string.category_ad_fraud,
+    "Advertising" to R.string.category_advertising,
+    "Analytics" to R.string.category_analytics,
+    "Audience Measurement" to R.string.category_audience_measurement,
+    "Action Pixels" to R.string.category_action_pixels,
+    "Badge" to R.string.category_badge,
+    "CDN" to R.string.category_cdn,
+    "Consent Management Platform" to R.string.category_consent_management,
+    "Embedded Content" to R.string.category_embedded_content,
+    "Federated Login" to R.string.category_federated_login,
+    "Fraud Prevention" to R.string.category_fraud_prevention,
+    "Malware" to R.string.category_malware,
+    "Non-Tracking" to R.string.category_non_tracking,
+    "Obscure Ownership" to R.string.category_obscure_ownership,
+    "Online Payment" to R.string.category_online_payment,
+    "Session Replay" to R.string.category_session_replay,
+    "Social - Comment" to R.string.category_social_comment,
+    "Social - Share" to R.string.category_social_share,
+    "Social Network" to R.string.category_social_network,
+    "SSO" to R.string.category_sso,
+    "Support Chat Widget" to R.string.category_support_chat,
+    "Tag Manager" to R.string.category_tag_manager,
+    "Third-Party Analytics Marketing" to R.string.category_third_party_analytics_marketing,
+    "Unknown High Risk Behavior" to R.string.category_unknown_high_risk,
+)
 
 /** The country's name in the screen's language, or its code if Android has none. */
 @Composable

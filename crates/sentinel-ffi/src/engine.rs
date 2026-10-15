@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sentinel_vpn::{DnsForward, EngineConfig, EngineStats, Protect, TunDevice};
 use tokio::sync::oneshot;
 
-use crate::enrich::IpDatabase;
+use crate::enrich::{IpDatabase, TrackerDatabase};
 use crate::flows::{FlowEvents, FlowObserver, LiveApp};
 use crate::history::HistoryStore;
 
@@ -208,6 +208,12 @@ impl Engine {
     /// newer one.
     pub fn set_ip_database(&self, database: Option<Arc<IpDatabase>>) {
         self.events.set_ip_database(database);
+    }
+
+    /// Use `database` for the company and category of each new flow's hostname (DT-06),
+    /// or none. Like the IP database, it can be replaced while the engine runs.
+    pub fn set_tracker_database(&self, database: Option<Arc<TrackerDatabase>>) {
+        self.events.set_tracker_database(database);
     }
 
     /// Whether the user is away (on Android: the screen is off or locked). While it is

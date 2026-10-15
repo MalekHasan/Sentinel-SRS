@@ -54,6 +54,42 @@
     <string name="dest_network_why">From %1$s. The company that runs this network, which is not always the one that receives the data.</string>
     <string name="dest_country">Country (approximate): %1$s</string>
     <string name="dest_country_why">From %1$s. Where the address is registered; the server itself may be elsewhere.</string>
+    <string name="dest_company">Company: %1$s</string>
+    <string name="dest_categories">Kind of service: %1$s</string>
+    <string name="dest_listed_why">From %1$s, entry %2$s.</string>
+    <string name="app_detail_companies_title">Companies, from tracker lists</string>
+    <string name="app_detail_companies_note">From lists of companies seen tracking people on websites and in apps. Only destinations the lists name are counted; others may belong to other companies.</string>
+    <plurals name="company_destinations">
+        <item quantity="one">%d destination</item>
+        <item quantity="other">%d destinations</item>
+    </plurals>
+
+    <!-- Categories in the tracker lists (DuckDuckGo Tracker Radar). -->
+    <string name="category_ad_motivated_tracking">Ad-motivated tracking</string>
+    <string name="category_ad_fraud">Ad fraud detection</string>
+    <string name="category_advertising">Advertising</string>
+    <string name="category_analytics">Analytics</string>
+    <string name="category_audience_measurement">Audience measurement</string>
+    <string name="category_action_pixels">Action pixels</string>
+    <string name="category_badge">Badge</string>
+    <string name="category_cdn">Content delivery network (CDN)</string>
+    <string name="category_consent_management">Consent management</string>
+    <string name="category_embedded_content">Embedded content</string>
+    <string name="category_federated_login">Sign-in with another account</string>
+    <string name="category_fraud_prevention">Fraud prevention</string>
+    <string name="category_malware">Malware</string>
+    <string name="category_non_tracking">Not tracking</string>
+    <string name="category_obscure_ownership">Unclear ownership</string>
+    <string name="category_online_payment">Online payment</string>
+    <string name="category_session_replay">Session replay (records what you do in the app)</string>
+    <string name="category_social_comment">Social comments</string>
+    <string name="category_social_share">Social sharing</string>
+    <string name="category_social_network">Social network</string>
+    <string name="category_sso">Single sign-on</string>
+    <string name="category_support_chat">Support chat</string>
+    <string name="category_tag_manager">Tag manager</string>
+    <string name="category_third_party_analytics_marketing">Third-party analytics and marketing</string>
+    <string name="category_unknown_high_risk">Unknown high-risk behaviour</string>
 
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>

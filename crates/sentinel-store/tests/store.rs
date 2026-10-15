@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use sentinel_store::{
-    AppSummary, AwayTotal, DailyTotal, DestinationFacts, DestinationTotal, FlowEvent, FlowRow, Gap,
-    HostnameSource, Proto, Store, StoreError, wipe,
+    AppSummary, AwayTotal, CompanyTotal, DailyTotal, DestinationFacts, DestinationTotal, FlowEvent,
+    FlowRow, Gap, HostnameSource, Listed, Proto, Store, StoreError, wipe,
 };
 
 const KEY: [u8; 32] = [7; 32];
@@ -299,6 +299,7 @@ fn app_summary_totals_each_destination_across_flows_and_daily_totals() {
                     last_seen: NOW,
                 },
             ],
+            companies: vec![],
         }
     );
 
@@ -393,6 +394,7 @@ fn destination_facts_are_kept_per_destination_with_their_sources() {
         network_source: Some(format!("IPtoASN {date}")),
         country: Some(country.to_owned()),
         country_source: Some(format!("DB-IP Lite {date}")),
+        ..DestinationFacts::default()
     };
     let app = "org.example.a";
     let with = |id: u64, row: FlowRow, facts: Option<DestinationFacts>| FlowEvent {
@@ -459,6 +461,118 @@ fn destination_facts_are_kept_per_destination_with_their_sources() {
     let plain = get("plain.example");
     assert_eq!(plain.facts, DestinationFacts::default());
     assert_eq!(plain.name_source, Some(HostnameSource::Dns));
+}
+
+/// DT-06: each destination keeps its company and categories with where they come from,
+/// and the app summary adds up the companies.
+#[test]
+fn companies_and_categories_are_kept_with_their_sources() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    const RADAR: &str = "Tracker Radar 2026-10-09";
+    const APPS: &str = "App tracker list 2023-07-06";
+    let listed = |value: &str, domain: &str, sources: &[&str]| Listed {
+        value: value.to_owned(),
+        domain: domain.to_owned(),
+        sources: sources.iter().map(|s| (*s).to_owned()).collect(),
+    };
+    let kinds = |value: &[&str], domain: &str| Listed {
+        value: value.iter().map(|s| (*s).to_owned()).collect(),
+        domain: domain.to_owned(),
+        sources: vec![RADAR.to_owned()],
+    };
+    let ads_pixel = DestinationFacts {
+        company: Some(listed("Example Ads", "ads.example", &[RADAR, APPS])),
+        categories: Some(kinds(&["Advertising", "Analytics"], "ads.example")),
+        ..DestinationFacts::default()
+    };
+    let ads_g = DestinationFacts {
+        company: Some(listed("Example Ads", "g.ads.example", &[APPS])),
+        categories: Some(kinds(
+            &["Advertising", "Audience Measurement"],
+            "ads.example",
+        )),
+        ..DestinationFacts::default()
+    };
+    let cdn = DestinationFacts {
+        categories: Some(kinds(&["CDN"], "cdn.example")),
+        ..DestinationFacts::default()
+    };
+    let metrics = DestinationFacts {
+        company: Some(listed("Metrics", "metrics.example", &[APPS])),
+        ..DestinationFacts::default()
+    };
+    let app = "org.example.a";
+    let sent = |id: u64, app: &str, host: &str, up: i64, facts: Option<DestinationFacts>| {
+        let mut row = flow(app, host, NOW - 60_000 + id as i64);
+        row.bytes_up = up;
+        row.bytes_down = 1;
+        FlowEvent {
+            engine_id: id,
+            flow: row,
+            destination: facts,
+        }
+    };
+    store
+        .record_flows(
+            1,
+            &[
+                sent(1, app, "pixel.ads.example", 100, Some(ads_pixel.clone())),
+                sent(2, app, "x.g.ads.example", 50, Some(ads_g.clone())),
+                sent(3, app, "cdn.example", 500, Some(cdn.clone())),
+                sent(4, app, "metrics.example", 200, Some(metrics.clone())),
+                sent(5, app, "plain.example", 900, None),
+                // Another app's companies are its own.
+                sent(
+                    6,
+                    "org.example.b",
+                    "other.example",
+                    5,
+                    Some(metrics.clone()),
+                ),
+            ],
+        )
+        .unwrap();
+
+    let summary = store.app_summary(app, 2).unwrap().unwrap();
+    let all = store.app_summary(app, 10).unwrap().unwrap();
+    for (host, facts) in [
+        ("pixel.ads.example", &ads_pixel),
+        ("x.g.ads.example", &ads_g),
+        ("cdn.example", &cdn),
+        ("metrics.example", &metrics),
+    ] {
+        let found = all
+            .destinations
+            .iter()
+            .find(|d| d.destination == host)
+            .unwrap();
+        assert_eq!(&found.facts, facts, "{host}");
+    }
+    assert_eq!(
+        summary.companies,
+        vec![
+            CompanyTotal {
+                company: "Metrics".to_owned(),
+                categories: vec![],
+                destinations: 1,
+                bytes_up: 200,
+                bytes_down: 1,
+            },
+            CompanyTotal {
+                company: "Example Ads".to_owned(),
+                categories: vec![
+                    "Advertising".to_owned(),
+                    "Analytics".to_owned(),
+                    "Audience Measurement".to_owned(),
+                ],
+                destinations: 2,
+                bytes_up: 150,
+                bytes_down: 2,
+            },
+        ],
+        "every destination counts, not only the two listed"
+    );
 }
 
 #[test]
