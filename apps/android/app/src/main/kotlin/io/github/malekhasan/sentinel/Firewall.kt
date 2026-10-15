@@ -2,6 +2,7 @@
 package io.github.malekhasan.sentinel
 
 import android.content.Context
+import android.net.InetAddresses
 import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,9 +20,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import io.github.malekhasan.sentinel.core.AppAccess
 import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.FirewallRule
+import io.github.malekhasan.sentinel.core.HistoryRule
 import io.github.malekhasan.sentinel.core.RuleAction
+import io.github.malekhasan.sentinel.core.RuleDestination
+import java.util.Locale
 
 private const val TAG = "SentinelFirewall"
 
@@ -53,12 +58,58 @@ fun setFirewallMode(context: Context, mode: FirewallMode): Boolean =
  * the main thread.
  */
 fun allowApp(context: Context, app: String): Boolean =
+    keepRule(context, FirewallRule(app, null, RuleAction.ALLOW))
+
+/**
+ * Stops [app] using the internet, its open connections included: a firewall rule
+ * blocking the whole app (RA-01). Returns whether it was kept. Call off the main thread.
+ */
+fun blockApp(context: Context, app: String): Boolean =
+    keepRule(context, FirewallRule(app, null, RuleAction.BLOCK))
+
+/** Keeps [rule], replacing one about the same app and destination. Call off the main thread. */
+fun keepRule(context: Context, rule: FirewallRule): Boolean =
     try {
-        History.get(context).setFirewallRule(FirewallRule(app, null, RuleAction.ALLOW))
+        History.get(context).setFirewallRule(rule)
         true
     } catch (e: Exception) {
-        Log.w(TAG, "the app cannot be allowed", e)
+        Log.w(TAG, "the rule cannot be kept", e)
         false
+    }
+
+/** Removes the rule with [key]. Call off the main thread. */
+fun removeRule(context: Context, key: String): Boolean =
+    try {
+        History.get(context).removeFirewallRule(key)
+    } catch (e: Exception) {
+        Log.w(TAG, "the rule cannot be removed", e)
+        false
+    }
+
+/** Whether [app] may use the network as a whole, or null if the history cannot be read. */
+fun appAccess(context: Context, app: String, installedMs: Long?): AppAccess? =
+    try {
+        History.get(context).appAccess(app, installedMs)
+    } catch (e: Exception) {
+        Log.w(TAG, "the app's access cannot be read", e)
+        null
+    }
+
+/** The firewall rules in force, newest first, or none if the history cannot be read. */
+fun firewallRules(context: Context): List<HistoryRule> =
+    try {
+        History.get(context).firewallRules()
+    } catch (e: Exception) {
+        Log.w(TAG, "the rules cannot be read", e)
+        emptyList()
+    }
+
+/** The rule destination for one of the app detail screen's destinations: a name or an address. */
+fun destinationOf(destination: String): RuleDestination =
+    if (InetAddresses.isNumericAddress(destination)) {
+        RuleDestination.Network(destination)
+    } else {
+        RuleDestination.Domain(destination.lowercase(Locale.ROOT).trimEnd('.'))
     }
 
 /** The firewall's modes, each with what it does, as a choice of one (CM-08). */

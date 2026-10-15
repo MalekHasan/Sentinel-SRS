@@ -110,6 +110,12 @@ pub struct CategoryFact {
 
 impl TrackerDatabase {
     /// What the tracker list says about `hostname`.
+    /// The company the lists give for `hostname`, if any: what company rules match
+    /// (RA-01).
+    pub(crate) fn company(&self, hostname: &str) -> Option<String> {
+        Some(self.db.lookup(hostname)?.company?.value.to_owned())
+    }
+
     pub(crate) fn lookup(&self, hostname: &str) -> (Option<CompanyFact>, Option<CategoryFact>) {
         let Some(info) = self.db.lookup(hostname) else {
             return (None, None);

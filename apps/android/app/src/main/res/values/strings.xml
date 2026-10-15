@@ -26,6 +26,7 @@
     <string name="firewall_mode_block_unknown">Block new apps</string>
     <string name="firewall_mode_block_unknown_text">Apps installed from now on cannot use the internet until you allow them.</string>
     <string name="firewall_app_allowed">%1$s can use the internet now.</string>
+    <string name="firewall_app_blocked">%1$s cannot use the internet now.</string>
     <string name="live_title">Live connections</string>
     <string name="live_explainer">Apps with connections open right now, busiest first. Updated every second.</string>
     <string name="live_empty">No app has a connection open right now.</string>
@@ -48,6 +49,18 @@
     </plurals>
     <string name="app_detail_first_seen">First seen by Sentinel: %1$s</string>
     <string name="app_detail_open_note">Connections still open add their data when they end.</string>
+    <string name="app_detail_access_title">Internet</string>
+    <string name="app_detail_blocked">You blocked this app. It cannot use the internet, and its open connections were closed.</string>
+    <string name="app_detail_blocked_as_new">This app is new, so it cannot use the internet until you allow it.</string>
+    <string name="app_detail_allowed">You let this app use the internet.</string>
+    <string name="app_detail_block">Block its internet</string>
+    <string name="app_detail_unblock">Let it use the internet again</string>
+    <string name="app_detail_allow">Let it use the internet</string>
+    <string name="dest_block">Block for this app</string>
+    <string name="dest_blocked">Blocked for this app.</string>
+    <string name="company_block">Block in every app</string>
+    <string name="company_blocked">Blocked in every app.</string>
+    <string name="firewall_unblock">Unblock</string>
     <string name="app_detail_nothing">Nothing about this app is in the history yet.</string>
     <string name="app_detail_destinations_title">Destinations, most data sent first</string>
     <string name="app_detail_destinations_shown">Destinations shown: %1$d of %2$d.</string>
@@ -120,6 +133,7 @@
     <string name="alert_action_open_app">See what %1$s did</string>
     <string name="alert_action_open_network_settings">Open network settings</string>
     <string name="alert_action_allow_app">Let %1$s use the internet</string>
+    <string name="alert_action_block_app">Block the internet for %1$s</string>
     <string name="alert_dismiss">Dismiss</string>
     <string name="alert_dismissed">You dismissed this alert.</string>
     <string name="alert_feedback_title">Was this alert useful?</string>

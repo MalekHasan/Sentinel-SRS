@@ -15,7 +15,7 @@ mod network;
 
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
 pub use firewall::{
-    Destination, FirewallMode, FirewallRule, Network, RuleAction, RuleError, RuleSet,
+    Destination, FirewallMode, FirewallRule, Network, Place, RuleAction, RuleError, RuleSet,
 };
 pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,
@@ -108,15 +108,19 @@ impl Rule {
                 vec![Action::OpenNetworkSettings]
             }
         };
-        // A new app that Block-unknown stopped can be let through (CM-08).
-        if evidence.contains(&Evidence::NewAppBlocked) {
-            actions.extend(evidence.iter().filter_map(|e| match e {
-                Evidence::App { package } => Some(Action::AllowApp {
-                    package: package.clone(),
-                }),
-                _ => None,
-            }));
-        }
+        // A new app that Block-unknown stopped can be let through (CM-08); an app new to
+        // the network, or to some places, can be stopped (RA-01).
+        let blocked = evidence.contains(&Evidence::NewAppBlocked);
+        let blockable = matches!(self, Rule::FirstNetworkUse | Rule::NewDestination);
+        actions.extend(evidence.iter().filter_map(|e| match e {
+            Evidence::App { package } if blocked => Some(Action::AllowApp {
+                package: package.clone(),
+            }),
+            Evidence::App { package } if blockable => Some(Action::BlockApp {
+                package: package.clone(),
+            }),
+            _ => None,
+        }));
         // Any app the alert is about can be looked at.
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } => Some(Action::OpenApp {
@@ -180,6 +184,11 @@ pub enum Action {
     OpenNetworkSettings,
     /// Let an app use the network: a firewall rule allowing it (CM-08, CM-10).
     AllowApp {
+        package: String,
+    },
+    /// Stop an app using the network, open connections included: a firewall rule
+    /// blocking it (RA-01).
+    BlockApp {
         package: String,
     },
 }

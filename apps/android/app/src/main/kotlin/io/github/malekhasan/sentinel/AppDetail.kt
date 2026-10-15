@@ -14,15 +14,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -31,15 +35,21 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.malekhasan.sentinel.core.AppAccess
+import io.github.malekhasan.sentinel.core.FirewallRule
 import io.github.malekhasan.sentinel.core.HistoryApp
 import io.github.malekhasan.sentinel.core.HistoryCompany
 import io.github.malekhasan.sentinel.core.HistoryDestination
+import io.github.malekhasan.sentinel.core.HistoryRule
 import io.github.malekhasan.sentinel.core.NameSource
+import io.github.malekhasan.sentinel.core.RuleAction
+import io.github.malekhasan.sentinel.core.RuleDestination
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val TAG = "SentinelAppDetail"
@@ -60,6 +70,10 @@ data class AppDetails(
     val history: HistoryApp?,
     /** Its connections open right now. */
     val openFlows: Int,
+    /** Whether it may use the internet as a whole; null if the history cannot say. */
+    val access: AppAccess? = null,
+    /** The firewall rules in force, to show which of its destinations are blocked. */
+    val rules: List<HistoryRule> = emptyList(),
 )
 
 /** One app's destinations, data sent and when it was first seen (SRS §12.2). */
@@ -69,13 +83,18 @@ fun AppDetailScreen(app: String, visible: Boolean, onBack: () -> Unit) {
     val names = remember(context) { AppNames(context) }
     val status by Monitor.status.collectAsState()
     var details by remember(app) { mutableStateOf<AppDetails?>(null) }
+    val scope = rememberCoroutineScope()
+    // Bumped after a firewall change so the screen reloads at once.
+    var generation by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(app, visible, status) {
+    LaunchedEffect(app, visible, status, generation) {
         suspend fun load() = withContext(Dispatchers.IO) {
             AppDetails(
                 label = names.labelFor(app),
                 history = appSummary(context, app),
                 openFlows = Monitor.liveApps().filter { it.app == app }.sumOf { it.openFlows.toInt() },
+                access = appAccess(context, app, names.installedAt(app)),
+                rules = firewallRules(context),
             )
         }
         details = load()
@@ -85,7 +104,23 @@ fun AppDetailScreen(app: String, visible: Boolean, onBack: () -> Unit) {
             details = load()
         }
     }
-    AppDetail(app, details, onBack)
+    AppDetail(
+        app,
+        details,
+        onBack,
+        onKeepRule = { rule ->
+            scope.launch {
+                withContext(Dispatchers.IO) { keepRule(context, rule) }
+                generation++
+            }
+        },
+        onRemoveRule = { key ->
+            scope.launch {
+                withContext(Dispatchers.IO) { removeRule(context, key) }
+                generation++
+            }
+        },
+    )
 }
 
 private fun appSummary(context: Context, app: String): HistoryApp? =
@@ -96,8 +131,18 @@ private fun appSummary(context: Context, app: String): HistoryApp? =
         null
     }
 
+/**
+ * The app detail screen's content. [onKeepRule] and [onRemoveRule] change the firewall
+ * (RA-01): blocking the app, one of its destinations, or a company.
+ */
 @Composable
-fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
+fun AppDetail(
+    app: String,
+    details: AppDetails?,
+    onBack: () -> Unit,
+    onKeepRule: (FirewallRule) -> Unit = {},
+    onRemoveRule: (String) -> Unit = {},
+) {
     val context = LocalContext.current
     LazyColumn(
         modifier = Modifier
@@ -119,6 +164,9 @@ fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
             }
         }
         if (details == null) return@LazyColumn
+        details.access?.let { access ->
+            item { Access(app, access, details.rules, onKeepRule, onRemoveRule) }
+        }
         if (details.openFlows > 0) {
             item {
                 Text(
@@ -172,7 +220,15 @@ fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
                 Text(stringResource(R.string.app_detail_companies_title), style = MaterialTheme.typography.titleSmall)
             }
             // Destination keys are hostnames or addresses, which never start with "company:".
-            items(history.companies, key = { "company:${it.company}" }) { CompanyRow(it) }
+            items(history.companies, key = { "company:${it.company}" }) { company ->
+                val destination = RuleDestination.Company(company.company)
+                CompanyRow(
+                    company,
+                    blocked = blockRule(details.rules, null, destination),
+                    onBlock = { onKeepRule(FirewallRule(null, destination, RuleAction.BLOCK)) },
+                    onUnblock = onRemoveRule,
+                )
+            }
             item {
                 Text(stringResource(R.string.app_detail_companies_note), style = MaterialTheme.typography.bodySmall)
             }
@@ -180,7 +236,15 @@ fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
         item {
             Text(stringResource(R.string.app_detail_destinations_title), style = MaterialTheme.typography.titleSmall)
         }
-        items(history.destinations, key = { it.destination }) { DestinationRow(it) }
+        items(history.destinations, key = { it.destination }) { row ->
+            val destination = destinationOf(row.destination)
+            DestinationRow(
+                row,
+                blocked = blockRule(details.rules, app, destination),
+                onBlock = { onKeepRule(FirewallRule(app, destination, RuleAction.BLOCK)) },
+                onUnblock = onRemoveRule,
+            )
+        }
         val total = history.destinationCount.toInt()
         if (total > history.destinations.size) {
             item {
@@ -193,9 +257,79 @@ fun AppDetail(app: String, details: AppDetails?, onBack: () -> Unit) {
     }
 }
 
+/** The rule blocking [destination] for [app] (every app when null), if there is one. */
+private fun blockRule(rules: List<HistoryRule>, app: String?, destination: RuleDestination): HistoryRule? =
+    rules.firstOrNull {
+        it.rule.app == app && it.rule.destination == destination && it.rule.action == RuleAction.BLOCK
+    }
+
+/**
+ * Whether the app may use the internet, and why not (RA-01, CM-08), with the one change
+ * that fits: block it, take the block back, or allow a new app.
+ */
+@Composable
+private fun Access(
+    app: String,
+    access: AppAccess,
+    rules: List<HistoryRule>,
+    onKeepRule: (FirewallRule) -> Unit,
+    onRemoveRule: (String) -> Unit,
+) {
+    val text = MaterialTheme.typography.bodyMedium
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.app_detail_access_title), style = MaterialTheme.typography.titleSmall)
+        when {
+            access.rule == RuleAction.BLOCK -> {
+                Text(stringResource(R.string.app_detail_blocked), style = text)
+                rules.firstOrNull { it.rule.app == app && it.rule.destination == null }?.let { rule ->
+                    OutlinedButton(onClick = { onRemoveRule(rule.key) }) {
+                        Text(stringResource(R.string.app_detail_unblock))
+                    }
+                }
+            }
+            access.blockedAsNew -> {
+                Text(stringResource(R.string.app_detail_blocked_as_new), style = text)
+                Button(onClick = { onKeepRule(FirewallRule(app, null, RuleAction.ALLOW)) }) {
+                    Text(stringResource(R.string.app_detail_allow))
+                }
+            }
+            else -> {
+                if (access.rule == RuleAction.ALLOW) {
+                    Text(stringResource(R.string.app_detail_allowed), style = text)
+                }
+                OutlinedButton(onClick = { onKeepRule(FirewallRule(app, null, RuleAction.BLOCK)) }) {
+                    Text(stringResource(R.string.app_detail_block))
+                }
+            }
+        }
+    }
+}
+
+/** A destination or company's block, and how to take it back; or how to block it. */
+@Composable
+private fun BlockControl(
+    blocked: HistoryRule?,
+    blockedText: Int,
+    blockLabel: Int,
+    onBlock: () -> Unit,
+    onUnblock: (String) -> Unit,
+) {
+    if (blocked != null) {
+        Text(stringResource(blockedText), style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = { onUnblock(blocked.key) }) { Text(stringResource(R.string.firewall_unblock)) }
+    } else {
+        TextButton(onClick = onBlock) { Text(stringResource(blockLabel)) }
+    }
+}
+
 /** One company the app's destinations belong to, from the tracker lists (DT-06). */
 @Composable
-private fun CompanyRow(company: HistoryCompany) {
+private fun CompanyRow(
+    company: HistoryCompany,
+    blocked: HistoryRule?,
+    onBlock: () -> Unit,
+    onUnblock: (String) -> Unit,
+) {
     val context = LocalContext.current
     val count = company.destinations.toInt()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -215,11 +349,17 @@ private fun CompanyRow(company: HistoryCompany) {
             ),
             style = MaterialTheme.typography.bodySmall,
         )
+        BlockControl(blocked, R.string.company_blocked, R.string.company_block, onBlock, onUnblock)
     }
 }
 
 @Composable
-private fun DestinationRow(destination: HistoryDestination) {
+private fun DestinationRow(
+    destination: HistoryDestination,
+    blocked: HistoryRule?,
+    onBlock: () -> Unit,
+    onUnblock: (String) -> Unit,
+) {
     val context = LocalContext.current
     val flows = destination.flows.toInt()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -254,6 +394,7 @@ private fun DestinationRow(destination: HistoryDestination) {
             stringResource(R.string.app_detail_last_seen, lastSeen.toString()),
             style = MaterialTheme.typography.bodySmall,
         )
+        BlockControl(blocked, R.string.dest_blocked, R.string.dest_block, onBlock, onUnblock)
     }
 }
 

@@ -193,7 +193,10 @@ class AlertsTest {
                 AlertEvidence.App(app = "org.example.new"),
                 AlertEvidence.Destinations(destinations = destinations, more = more),
             ),
-            actions = listOf(AlertAction.OpenApp(app = "org.example.new")),
+            actions = listOf(
+                AlertAction.BlockApp(app = "org.example.new"),
+                AlertAction.OpenApp(app = "org.example.new"),
+            ),
             open = true,
         )
         var shown by mutableStateOf(firstSeen(AlertRule.FIRST_NETWORK_USE, listOf("api.example"), 0u))
@@ -209,6 +212,8 @@ class AlertsTest {
         shows(context.getString(R.string.alert_evidence_app, isolate("New App")))
         shows(context.getString(R.string.alert_evidence_destinations, isolate("api.example")))
         shows(context.getString(R.string.alert_action_open_app, isolate("New App")))
+        // RA-01: it can be stopped from the alert.
+        shows(context.getString(R.string.alert_action_block_app, isolate("New App")))
 
         val places = listOf("a.example", "b.example", "c.example")
         shown = firstSeen(AlertRule.NEW_DESTINATION, places, 1u)

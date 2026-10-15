@@ -4,12 +4,12 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use sentinel_detect::{FirewallMode as Mode, RuleSet};
+use sentinel_detect::{FirewallMode as Mode, Place, RuleSet};
 use sentinel_store::{KEY_LEN, Store, StoreError};
 
 use crate::alerts::{AlertDelivery, AlertFeedback, AlertListener, AllowedRule, HistoryAlert};
 use crate::enrich::{CategoryFact, CompanyFact};
-use crate::firewall::{FirewallMode, FirewallRule, HistoryRule};
+use crate::firewall::{AppAccess, FirewallMode, FirewallRule, HistoryRule};
 use crate::flows::{FlowProto, NameSource};
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -234,6 +234,16 @@ impl HistoryStore {
     /// The firewall mode in force.
     pub fn firewall_mode(&self) -> FirewallMode {
         self.mode_in_force().into()
+    }
+
+    /// Whether `app`, installed at `installed_ms` if known, may use the network as a
+    /// whole: the rule about it, and whether Block-unknown keeps it off as new.
+    pub fn app_access(&self, app: String, installed_ms: Option<i64>) -> AppAccess {
+        let rules = self.rule_set();
+        AppAccess {
+            rule: rules.decide(Some(&app), Place::default()).map(Into::into),
+            blocked_as_new: rules.blocks_new_app(self.mode_in_force(), &app, installed_ms),
+        }
     }
 
     /// The firewall rules in force, newest first.
@@ -868,6 +878,63 @@ mod tests {
                 after: Some("dns.example".into())
             }]
         );
+    }
+
+    /// RA-01, CM-08: what the app detail screen shows about an app as a whole: the rule
+    /// about it, and whether Block-unknown keeps it off as new. Rules about some of its
+    /// destinations are not about the app as a whole.
+    #[test]
+    fn an_apps_access_says_why_it_is_blocked() {
+        use crate::firewall::{AppAccess, FirewallMode, FirewallRule, RuleAction, RuleDestination};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        let app = || "org.example.chat".to_owned();
+        let open = AppAccess {
+            rule: None,
+            blocked_as_new: false,
+        };
+        let later = Some(now_ms() + 60_000);
+        assert_eq!(history.app_access(app(), later), open);
+        history
+            .set_firewall_mode(FirewallMode::BlockUnknown)
+            .unwrap();
+        assert_eq!(
+            history.app_access(app(), later),
+            AppAccess {
+                rule: None,
+                blocked_as_new: true
+            }
+        );
+        assert_eq!(history.app_access(app(), Some(0)), open, "installed before");
+        let rule = |destination, action| FirewallRule {
+            app: Some(app()),
+            destination,
+            action,
+        };
+        history
+            .set_firewall_rule(rule(
+                Some(RuleDestination::Domain {
+                    name: "chat.example".into(),
+                }),
+                RuleAction::Allow,
+            ))
+            .unwrap();
+        assert!(
+            history.app_access(app(), later).blocked_as_new,
+            "a place is not the app"
+        );
+        for action in [RuleAction::Allow, RuleAction::Block] {
+            history.set_firewall_rule(rule(None, action)).unwrap();
+            assert_eq!(
+                history.app_access(app(), later),
+                AppAccess {
+                    rule: Some(action),
+                    blocked_as_new: false
+                }
+            );
+        }
     }
 
     /// CM-10: rules are checked when kept, listed newest first, replaced by key and

@@ -114,7 +114,8 @@ fun AlertDetailScreen(id: Long, onBack: () -> Unit, onAction: (AlertAction) -> U
 private fun appsIn(alert: HistoryAlert): List<String> =
     alert.evidence.filterIsInstance<AlertEvidence.App>().map { it.app } +
         alert.actions.filterIsInstance<AlertAction.OpenApp>().map { it.app } +
-        alert.actions.filterIsInstance<AlertAction.AllowApp>().map { it.app }
+        alert.actions.filterIsInstance<AlertAction.AllowApp>().map { it.app } +
+        alert.actions.filterIsInstance<AlertAction.BlockApp>().map { it.app }
 
 /**
  * An alert in the order AL-02 asks for: how severe it is, a plain title and a
@@ -357,4 +358,5 @@ private fun actionLabel(action: AlertAction, label: (String) -> String): String 
         is AlertAction.OpenApp -> stringResource(R.string.alert_action_open_app, isolate(label(action.app)))
         is AlertAction.OpenNetworkSettings -> stringResource(R.string.alert_action_open_network_settings)
         is AlertAction.AllowApp -> stringResource(R.string.alert_action_allow_app, isolate(label(action.app)))
+        is AlertAction.BlockApp -> stringResource(R.string.alert_action_block_app, isolate(label(action.app)))
     }

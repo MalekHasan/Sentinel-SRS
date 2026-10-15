@@ -12,6 +12,7 @@ use std::net::IpAddr;
 use sentinel_vpn::{FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 use tokio::sync::Notify;
 
+use sentinel_detect::Place;
 use sentinel_store::FirstSeen;
 
 use crate::enrich::{CategoryFact, CompanyFact, IpDatabase, TrackerDatabase};
@@ -316,18 +317,26 @@ impl FlowEvents {
     }
 
     /// What the firewall says: its rules, then its mode (CM-10, CM-08; ADR-0015,
-    /// ADR-0016). Without a history there are no rules and no mode, and everything is
-    /// allowed.
+    /// ADR-0016). A name's company comes from the tracker list, if one is set. Without a
+    /// history there are no rules and no mode, and everything is allowed.
     fn verdict(&self, owner: &FlowOwner, address: Option<IpAddr>, name: Option<&str>) -> Verdict {
         let Some(history) = &self.history else {
             return Verdict::Allow;
+        };
+        let company = match (name, &self.databases().trackers) {
+            (Some(name), Some(trackers)) => trackers.company(name),
+            _ => None,
+        };
+        let place = Place {
+            address,
+            name,
+            company: company.as_deref(),
         };
         let decision = history.rule_set().verdict(
             history.mode_in_force(),
             owner.app.as_deref(),
             owner.installed_ms,
-            address,
-            name,
+            place,
         );
         match decision {
             sentinel_detect::RuleAction::Block => Verdict::Block,
@@ -868,9 +877,14 @@ mod tests {
         );
         assert_eq!(
             alert.actions,
-            [AlertAction::OpenApp {
-                app: "org.example.new".into()
-            }]
+            [
+                AlertAction::BlockApp {
+                    app: "org.example.new".into()
+                },
+                AlertAction::OpenApp {
+                    app: "org.example.new".into()
+                }
+            ]
         );
         // The history knows the apps now: their next connections are not new.
         started(5, 1, Some("api.new.example"));
@@ -1063,6 +1077,77 @@ mod tests {
         // No history, no rules: nothing is blocked.
         let bare = FlowEvents::new(observer, None, 2);
         assert_eq!(bare.flow_started(&at(6, "198.51.100.9:2")), Verdict::Allow);
+    }
+
+    /// RA-01: a company rule blocks the names the tracker list gives that company, at a
+    /// TLS server name and at a DNS lookup, once a tracker list is set; an app's
+    /// exception needs that app.
+    #[test]
+    fn a_company_rule_blocks_its_names_from_the_tracker_list() {
+        use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
+
+        let mut builder = sentinel_enrich::TrackerDbBuilder::new();
+        let radar = builder.add_source("Tracker Radar test").unwrap();
+        builder
+            .add_domain(radar, "ads.example", Some("Example Ads"), &["Advertising"])
+            .unwrap();
+        let (dir, history) = history();
+        let path = dir.path().join("trackers.db");
+        std::fs::write(&path, builder.build().unwrap()).unwrap();
+        let trackers = TrackerDatabase::open(path.to_string_lossy().into_owned()).unwrap();
+        let observer = listen(
+            &history,
+            vec![
+                (
+                    1,
+                    installed("org.example.chat", Some(history.began_ms() - 1)),
+                ),
+                (
+                    2,
+                    installed("org.example.maps", Some(history.began_ms() - 1)),
+                ),
+            ],
+        );
+        let company = |app: Option<&str>, action| {
+            history
+                .set_firewall_rule(FirewallRule {
+                    app: app.map(str::to_owned),
+                    destination: Some(RuleDestination::Company {
+                        name: "Example Ads".into(),
+                    }),
+                    action,
+                })
+                .unwrap()
+        };
+        company(None, RuleAction::Block);
+        company(Some("org.example.maps"), RuleAction::Allow);
+        let events = FlowEvents::new(observer, Some(Arc::clone(&history)), 1);
+        let chat = flow(1, "203.0.113.5:1", None);
+        let maps = flow(2, "203.0.113.5:2", None);
+        events.flow_started(&chat);
+        events.flow_started(&maps);
+        assert_eq!(
+            events.hostname_seen(&chat, "pixel.ads.example"),
+            Verdict::Allow,
+            "no tracker list, no company"
+        );
+        events.set_tracker_database(Some(trackers));
+        assert_eq!(
+            events.hostname_seen(&chat, "pixel.ads.example"),
+            Verdict::Block
+        );
+        assert_eq!(events.dns_query(&chat, "ads.example"), Verdict::Block);
+        assert_eq!(events.hostname_seen(&chat, "chat.example"), Verdict::Allow);
+        assert_eq!(
+            events.hostname_seen(&maps, "pixel.ads.example"),
+            Verdict::Allow
+        );
+        assert_eq!(
+            history.firewall_rules().unwrap()[0].rule.destination,
+            Some(RuleDestination::Company {
+                name: "Example Ads".into()
+            })
+        );
     }
 
     /// RA-01: when the rules change, an open connection is decided again with what was

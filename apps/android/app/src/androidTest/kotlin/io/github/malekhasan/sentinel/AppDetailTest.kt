@@ -3,28 +3,38 @@ package io.github.malekhasan.sentinel
 
 import android.icu.text.ListFormatter
 import android.text.format.Formatter
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.malekhasan.sentinel.core.AppAccess
 import io.github.malekhasan.sentinel.core.CategoryFact
 import io.github.malekhasan.sentinel.core.CompanyFact
+import io.github.malekhasan.sentinel.core.FirewallRule
 import io.github.malekhasan.sentinel.core.HistoryApp
 import io.github.malekhasan.sentinel.core.HistoryCompany
 import io.github.malekhasan.sentinel.core.HistoryDestination
+import io.github.malekhasan.sentinel.core.HistoryRule
 import io.github.malekhasan.sentinel.core.LiveApp
 import io.github.malekhasan.sentinel.core.NameSource
+import io.github.malekhasan.sentinel.core.RuleAction
+import io.github.malekhasan.sentinel.core.RuleDestination
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.Locale
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -280,6 +290,127 @@ class AppDetailTest {
         )) {
             list.performScrollToNode(hasText(line))
             compose.onNodeWithText(line).assertIsDisplayed()
+        }
+    }
+
+    /**
+     * RA-01: the screen blocks the app, one of its destinations for it, or a company in
+     * every app, says what is blocked, and takes a block back. A new app that Block
+     * new apps keeps off can be allowed.
+     */
+    @Test
+    fun blocksTheAppItsDestinationsAndCompanies() {
+        val app = "org.example.chat"
+        val history = HistoryApp(
+            app = app,
+            firstSeenMs = System.currentTimeMillis(),
+            flows = 1,
+            bytesUp = 100,
+            bytesDown = 0,
+            bytesUpAway = 0,
+            bytesDownAway = 0,
+            destinationCount = 1u,
+            destinations = listOf(
+                HistoryDestination(
+                    destination = "chat.example.com",
+                    flows = 1,
+                    bytesUp = 100,
+                    bytesDown = 0,
+                    bytesUpAway = 0,
+                    bytesDownAway = 0,
+                    firstSeenMs = 0,
+                    lastSeenMs = System.currentTimeMillis(),
+                ),
+            ),
+            companies = listOf(
+                HistoryCompany(
+                    company = "Example Ads Inc",
+                    categories = emptyList(),
+                    destinations = 1u,
+                    bytesUp = 100,
+                    bytesDown = 0,
+                ),
+            ),
+        )
+        val kept = mutableListOf<FirewallRule>()
+        val removed = mutableListOf<String>()
+        var details by mutableStateOf(AppDetails("Chat", history, 0, access = AppAccess(null, false)))
+        compose.setContent {
+            SentinelTheme {
+                AppDetail(app, details, onBack = {}, onKeepRule = { kept += it }, onRemoveRule = { removed += it })
+            }
+        }
+        val list = compose.onNodeWithTag(APP_DETAIL_TAG)
+        fun tap(label: Int) {
+            val text = context.getString(label)
+            list.performScrollToNode(hasText(text))
+            compose.onNodeWithText(text).performClick()
+        }
+        tap(R.string.app_detail_block)
+        tap(R.string.dest_block)
+        tap(R.string.company_block)
+        val company = RuleDestination.Company("Example Ads Inc")
+        assertEquals(
+            listOf(
+                FirewallRule(app, null, RuleAction.BLOCK),
+                FirewallRule(app, RuleDestination.Domain("chat.example.com"), RuleAction.BLOCK),
+                FirewallRule(null, company, RuleAction.BLOCK),
+            ),
+            kept,
+        )
+
+        // Blocked: each says so and can be taken back by its own rule.
+        details = details.copy(
+            access = AppAccess(RuleAction.BLOCK, false),
+            rules = listOf(
+                HistoryRule("$app *", FirewallRule(app, null, RuleAction.BLOCK), 0),
+                HistoryRule("* company:Example Ads Inc", FirewallRule(null, company, RuleAction.BLOCK), 0),
+            ),
+        )
+        compose.waitForIdle()
+        list.performScrollToNode(hasText(context.getString(R.string.app_detail_blocked)))
+        tap(R.string.app_detail_unblock)
+        list.performScrollToNode(hasText(context.getString(R.string.company_blocked)))
+        tap(R.string.firewall_unblock)
+        assertEquals(listOf("$app *", "* company:Example Ads Inc"), removed)
+
+        // A new app kept off by Block new apps can be allowed.
+        details = details.copy(access = AppAccess(null, true), rules = emptyList())
+        compose.waitForIdle()
+        list.performScrollToNode(hasText(context.getString(R.string.app_detail_blocked_as_new)))
+        tap(R.string.app_detail_allow)
+        assertEquals(FirewallRule(app, null, RuleAction.ALLOW), kept.last())
+    }
+
+    /** RA-01 end to end: blocking this app from its screen stops its connections, and
+     *  taking the block back lets them through. */
+    @Test
+    fun blockingFromTheAppScreenStopsItsConnections() {
+        History.wipe(context)
+        startMonitoring()
+        val history = History.get(context)
+        try {
+            val (host, port) = testServer()
+            assertTrue("reachable before", answer(host, port) != null)
+            compose.setContent {
+                SentinelTheme { AppDetailScreen(context.packageName, visible = true, onBack = {}) }
+            }
+            fun tapWhenShown(label: Int) {
+                val text = context.getString(label)
+                compose.waitUntil(5_000) {
+                    compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+                }
+                compose.onNodeWithTag(APP_DETAIL_TAG).performScrollToNode(hasText(text))
+                compose.onNodeWithText(text).performClick()
+            }
+            tapWhenShown(R.string.app_detail_block)
+            waitFor("the block") { history.appAccess(context.packageName, null).rule == RuleAction.BLOCK }
+            assertNull("blocked from its screen", answer(host, port))
+            tapWhenShown(R.string.app_detail_unblock)
+            waitFor("the block taken back") { history.appAccess(context.packageName, null).rule == null }
+            assertTrue("reachable again", answer(host, port) != null)
+        } finally {
+            history.firewallRules().forEach { history.removeFirewallRule(it.key) }
         }
     }
 

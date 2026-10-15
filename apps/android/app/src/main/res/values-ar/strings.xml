@@ -25,6 +25,7 @@
     <string name="firewall_mode_block_unknown">احجب التطبيقات الجديدة</string>
     <string name="firewall_mode_block_unknown_text">التطبيقات اللي بتتنزّل من هلأ وطالع ما بتقدر تستعمل الإنترنت لحتى تسمحلها.</string>
     <string name="firewall_app_allowed">صار %1$s يقدر يستعمل الإنترنت.</string>
+    <string name="firewall_app_blocked">صار %1$s ما بيقدر يستعمل الإنترنت.</string>
     <string name="live_title">الاتصالات المفتوحة هلأ</string>
     <string name="live_explainer">التطبيقات اللي عندها اتصالات مفتوحة هلأ، الأكتر استخداماً أول إشي. بتتحدّث كل ثانية.</string>
     <string name="live_empty">ما في ولا تطبيق عنده اتصال مفتوح هلأ.</string>
@@ -59,6 +60,18 @@
     </plurals>
     <string name="app_detail_first_seen">أول مرة شافه Sentinel: %1$s</string>
     <string name="app_detail_open_note">الاتصالات اللي لسا مفتوحة بتنضاف بياناتها لما تتسكّر.</string>
+    <string name="app_detail_access_title">الإنترنت</string>
+    <string name="app_detail_blocked">إنت حجبت هالتطبيق. ما بيقدر يستعمل الإنترنت، واتسكّرت اتصالاته المفتوحة.</string>
+    <string name="app_detail_blocked_as_new">هالتطبيق جديد، فما بيقدر يستعمل الإنترنت لحتى تسمحله.</string>
+    <string name="app_detail_allowed">إنت سمحت لهالتطبيق يستعمل الإنترنت.</string>
+    <string name="app_detail_block">احجب عنه الإنترنت</string>
+    <string name="app_detail_unblock">رجّعله الإنترنت</string>
+    <string name="app_detail_allow">اسمحله يستعمل الإنترنت</string>
+    <string name="dest_block">احجبه عن هالتطبيق</string>
+    <string name="dest_blocked">محجوب عن هالتطبيق.</string>
+    <string name="company_block">احجبها بكل التطبيقات</string>
+    <string name="company_blocked">محجوبة بكل التطبيقات.</string>
+    <string name="firewall_unblock">فك الحجب</string>
     <string name="app_detail_nothing">لسا ما في إشي عن هالتطبيق بالسجل.</string>
     <string name="app_detail_destinations_title">الأماكن اللي بيتصل فيها، الأكتر بعتاً للبيانات أول إشي</string>
     <string name="app_detail_destinations_shown">الأماكن المعروضة: %1$d من %2$d.</string>
@@ -139,6 +152,7 @@
     <string name="alert_action_open_app">شوف شو عمل %1$s</string>
     <string name="alert_action_open_network_settings">افتح إعدادات الشبكة</string>
     <string name="alert_action_allow_app">خلّي %1$s يستعمل الإنترنت</string>
+    <string name="alert_action_block_app">احجب الإنترنت عن %1$s</string>
     <string name="alert_dismiss">إخفاء</string>
     <string name="alert_dismissed">أخفيت هالتنبيه.</string>
     <string name="alert_feedback_title">هالتنبيه كان مفيد؟</string>

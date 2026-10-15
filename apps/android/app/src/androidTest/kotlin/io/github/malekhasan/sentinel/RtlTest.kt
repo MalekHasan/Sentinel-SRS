@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.AlertAction
+import io.github.malekhasan.sentinel.core.AppAccess
 import io.github.malekhasan.sentinel.core.AlertEvidence
 import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
@@ -46,6 +47,7 @@ import io.github.malekhasan.sentinel.core.HistoryDestination
 import io.github.malekhasan.sentinel.core.HistoryFlow
 import io.github.malekhasan.sentinel.core.LiveApp
 import io.github.malekhasan.sentinel.core.NameSource
+import io.github.malekhasan.sentinel.core.RuleAction
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -222,10 +224,19 @@ class RtlTest {
             ),
         )
         compose.setContent {
-            InArabic { AppDetail(PACKAGE, AppDetails(LABEL, history, openFlows = 2), onBack = {}) }
+            InArabic {
+                AppDetail(
+                    PACKAGE,
+                    AppDetails(LABEL, history, openFlows = 2, access = AppAccess(RuleAction.BLOCK, false)),
+                    onBack = {},
+                )
+            }
         }
         compose.onNodeWithText(arabic.getString(R.string.back)).assertAtTheRight()
         compose.onNodeWithText(LABEL).assertAtTheRight()
+        // Whether it may use the internet (RA-01).
+        scrollTo(arabic.getString(R.string.app_detail_access_title)).assertAtTheRight()
+        assertRightToLeft(scrollTo(arabic.getString(R.string.app_detail_blocked)))
         compose.onNodeWithText(
             arabic.resources.getQuantityString(R.plurals.history_connections, 2, 2),
         ).assertIsDisplayed()

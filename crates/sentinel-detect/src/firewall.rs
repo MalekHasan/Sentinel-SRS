@@ -35,6 +35,19 @@ pub enum Destination {
     Domain { name: String },
     /// One address, or a range of them.
     Network { network: Network },
+    /// Every name the tracker lists give to this company (DT-06), as they spell it.
+    Company { company: String },
+}
+
+/// What is known for sure about where a connection or lookup goes when the firewall is
+/// asked (ADR-0015).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Place<'a> {
+    pub address: Option<IpAddr>,
+    /// A name the app asked for: a TLS server name or a DNS lookup's.
+    pub name: Option<&'a str>,
+    /// The company the tracker lists give for `name`.
+    pub company: Option<&'a str>,
 }
 
 /// An address range: an address and how many of its leading bits must match. A single
@@ -57,6 +70,8 @@ pub enum RuleError {
     BadDomain(String),
     #[error("{0:?} is not an address or an address range")]
     BadNetwork(String),
+    #[error("{0:?} is not a company's name")]
+    BadCompany(String),
 }
 
 /// One firewall rule.
@@ -153,13 +168,30 @@ impl Destination {
         })
     }
 
-    fn matches(&self, address: Option<IpAddr>, name: Option<&str>) -> bool {
+    /// A company, by the name the tracker lists give it: one line of text, without
+    /// space around it.
+    pub fn company(name: &str) -> Result<Destination, RuleError> {
+        let bad = || RuleError::BadCompany(name.to_owned());
+        if name.is_empty()
+            || name.len() > 200
+            || name.trim() != name
+            || name.chars().any(char::is_control)
+        {
+            return Err(bad());
+        }
+        Ok(Destination::Company {
+            company: name.to_owned(),
+        })
+    }
+
+    fn matches(&self, place: Place<'_>) -> bool {
         match self {
-            Destination::Domain { name: domain } => name.is_some_and(|name| {
+            Destination::Domain { name: domain } => place.name.is_some_and(|name| {
                 let name = name.trim_end_matches('.').to_ascii_lowercase();
                 name == *domain || name.ends_with(&format!(".{domain}"))
             }),
-            Destination::Network { network } => address.is_some_and(|a| network.contains(a)),
+            Destination::Network { network } => place.address.is_some_and(|a| network.contains(a)),
+            Destination::Company { company } => place.company == Some(company.as_str()),
         }
     }
 }
@@ -169,6 +201,7 @@ impl fmt::Display for Destination {
         match self {
             Destination::Domain { name } => write!(f, "domain:{name}"),
             Destination::Network { network } => write!(f, "network:{network}"),
+            Destination::Company { company } => write!(f, "company:{company}"),
         }
     }
 }
@@ -219,13 +252,13 @@ impl FirewallRule {
         }
     }
 
-    fn matches(&self, app: Option<&str>, address: Option<IpAddr>, name: Option<&str>) -> bool {
+    fn matches(&self, app: Option<&str>, place: Place<'_>) -> bool {
         let app_matches = match &self.app {
             Some(rule_app) => app == Some(rule_app.as_str()),
             None => true,
         };
         let destination_matches = match &self.destination {
-            Some(destination) => destination.matches(address, name),
+            Some(destination) => destination.matches(place),
             None => true,
         };
         app_matches && destination_matches
@@ -241,6 +274,7 @@ impl FirewallRule {
         let rule: FirewallRule = serde_json::from_str(json).ok()?;
         let destination = match rule.destination {
             Some(Destination::Domain { name }) => Some(Destination::domain(&name).ok()?),
+            Some(Destination::Company { company }) => Some(Destination::company(&company).ok()?),
             other => other,
         };
         FirewallRule::new(rule.app.as_deref(), destination, rule.action).ok()
@@ -256,18 +290,13 @@ impl RuleSet {
         &self.rules
     }
 
-    /// What the rules say about a connection or lookup by `app` to `address` under
-    /// `name`, each `None` when not known. The most specific matching rule decides; among
-    /// rules equally specific, blocking wins. `None` when no rule matches.
-    pub fn decide(
-        &self,
-        app: Option<&str>,
-        address: Option<IpAddr>,
-        name: Option<&str>,
-    ) -> Option<RuleAction> {
+    /// What the rules say about a connection or lookup by `app` (`None` when not known)
+    /// to `place`. The most specific matching rule decides; among rules equally specific,
+    /// blocking wins. `None` when no rule matches.
+    pub fn decide(&self, app: Option<&str>, place: Place<'_>) -> Option<RuleAction> {
         self.rules
             .iter()
-            .filter(|rule| rule.matches(app, address, name))
+            .filter(|rule| rule.matches(app, place))
             .max_by_key(|rule| (rule.specificity(), rule.action == RuleAction::Block))
             .map(|rule| rule.action)
     }
@@ -279,10 +308,9 @@ impl RuleSet {
         mode: FirewallMode,
         app: Option<&str>,
         installed: Option<i64>,
-        address: Option<IpAddr>,
-        name: Option<&str>,
+        place: Place<'_>,
     ) -> RuleAction {
-        self.decide(app, address, name)
+        self.decide(app, place)
             .unwrap_or_else(|| mode.decide(installed))
     }
 }
@@ -292,7 +320,19 @@ impl RuleSet {
     /// app: Block-unknown blocks it and no rule is about the app as a whole. Rules about
     /// some of its destinations may still let it reach those.
     pub fn blocks_new_app(&self, mode: FirewallMode, app: &str, installed: Option<i64>) -> bool {
-        mode.decide(installed) == RuleAction::Block && self.decide(Some(app), None, None).is_none()
+        mode.decide(installed) == RuleAction::Block
+            && self.decide(Some(app), Place::default()).is_none()
+    }
+}
+
+impl<'a> Place<'a> {
+    /// An address and a name, either unknown; no company.
+    pub fn new(address: Option<IpAddr>, name: Option<&'a str>) -> Place<'a> {
+        Place {
+            address,
+            name,
+            company: None,
+        }
     }
 }
 
@@ -399,16 +439,19 @@ mod tests {
     fn an_app_rule_covers_all_of_that_apps_traffic_only() {
         let rules = RuleSet::new(vec![rule(Some(CHAT), None, RuleAction::Block)]);
         assert_eq!(
-            rules.decide(Some(CHAT), Some(ip("192.0.2.1")), None),
+            rules.decide(Some(CHAT), Place::new(Some(ip("192.0.2.1")), None)),
             Some(RuleAction::Block)
         );
         assert_eq!(
-            rules.decide(Some(CHAT), None, Some("anything.example")),
+            rules.decide(Some(CHAT), Place::new(None, Some("anything.example"))),
             Some(RuleAction::Block)
         );
-        assert_eq!(rules.decide(Some(MAPS), Some(ip("192.0.2.1")), None), None);
         assert_eq!(
-            rules.decide(None, Some(ip("192.0.2.1")), None),
+            rules.decide(Some(MAPS), Place::new(Some(ip("192.0.2.1")), None)),
+            None
+        );
+        assert_eq!(
+            rules.decide(None, Place::new(Some(ip("192.0.2.1")), None)),
             None,
             "owner unknown"
         );
@@ -424,16 +467,20 @@ mod tests {
             "ADS.EXAMPLE.",
         ] {
             assert_eq!(
-                rules.decide(Some(CHAT), None, Some(name)),
+                rules.decide(Some(CHAT), Place::new(None, Some(name))),
                 Some(RuleAction::Block),
                 "{name}"
             );
         }
         for name in ["notads.example", "ads.example.org", "example"] {
-            assert_eq!(rules.decide(Some(CHAT), None, Some(name)), None, "{name}");
+            assert_eq!(
+                rules.decide(Some(CHAT), Place::new(None, Some(name))),
+                None,
+                "{name}"
+            );
         }
         assert_eq!(
-            rules.decide(Some(CHAT), Some(ip("192.0.2.1")), None),
+            rules.decide(Some(CHAT), Place::new(Some(ip("192.0.2.1")), None)),
             None,
             "no name, no domain match"
         );
@@ -446,21 +493,30 @@ mod tests {
             rule(None, network("2001:db8::7"), RuleAction::Block),
         ]);
         assert_eq!(
-            rules.decide(None, Some(ip("192.0.2.7")), None),
+            rules.decide(None, Place::new(Some(ip("192.0.2.7")), None)),
             Some(RuleAction::Block)
         );
         assert_eq!(
-            rules.decide(None, Some(ip("::ffff:192.0.2.7")), None),
+            rules.decide(None, Place::new(Some(ip("::ffff:192.0.2.7")), None)),
             Some(RuleAction::Block),
             "an IPv4 address written as IPv6"
         );
         assert_eq!(
-            rules.decide(None, Some(ip("2001:db8::7")), None),
+            rules.decide(None, Place::new(Some(ip("2001:db8::7")), None)),
             Some(RuleAction::Block)
         );
-        assert_eq!(rules.decide(None, Some(ip("192.0.2.8")), None), None);
-        assert_eq!(rules.decide(None, Some(ip("2001:db8::8")), None), None);
-        assert_eq!(rules.decide(None, None, Some("192.0.2.7")), None);
+        assert_eq!(
+            rules.decide(None, Place::new(Some(ip("192.0.2.8")), None)),
+            None
+        );
+        assert_eq!(
+            rules.decide(None, Place::new(Some(ip("2001:db8::8")), None)),
+            None
+        );
+        assert_eq!(
+            rules.decide(None, Place::new(None, Some("192.0.2.7"))),
+            None
+        );
     }
 
     #[test]
@@ -471,24 +527,27 @@ mod tests {
         ]);
         for inside in ["198.51.100.0", "198.51.100.255", "2001:db8:1:ffff::1"] {
             assert_eq!(
-                rules.decide(None, Some(ip(inside)), None),
+                rules.decide(None, Place::new(Some(ip(inside)), None)),
                 Some(RuleAction::Block),
                 "{inside}"
             );
         }
         for outside in ["198.51.101.0", "198.51.99.255", "2001:db8:2::1", "::"] {
             assert_eq!(
-                rules.decide(None, Some(ip(outside)), None),
+                rules.decide(None, Place::new(Some(ip(outside)), None)),
                 None,
                 "{outside}"
             );
         }
         let everything = RuleSet::new(vec![rule(None, network("0.0.0.0/0"), RuleAction::Block)]);
         assert_eq!(
-            everything.decide(None, Some(ip("203.0.113.1")), None),
+            everything.decide(None, Place::new(Some(ip("203.0.113.1")), None)),
             Some(RuleAction::Block)
         );
-        assert_eq!(everything.decide(None, Some(ip("2001:db8::1")), None), None);
+        assert_eq!(
+            everything.decide(None, Place::new(Some(ip("2001:db8::1")), None)),
+            None
+        );
     }
 
     #[test]
@@ -499,11 +558,17 @@ mod tests {
             RuleAction::Block,
         )]);
         assert_eq!(
-            rules.decide(Some(CHAT), None, Some("x.ads.example")),
+            rules.decide(Some(CHAT), Place::new(None, Some("x.ads.example"))),
             Some(RuleAction::Block)
         );
-        assert_eq!(rules.decide(Some(MAPS), None, Some("x.ads.example")), None);
-        assert_eq!(rules.decide(Some(CHAT), None, Some("chat.example")), None);
+        assert_eq!(
+            rules.decide(Some(MAPS), Place::new(None, Some("x.ads.example"))),
+            None
+        );
+        assert_eq!(
+            rules.decide(Some(CHAT), Place::new(None, Some("chat.example"))),
+            None
+        );
     }
 
     #[test]
@@ -517,27 +582,36 @@ mod tests {
         ]);
         // App and destination beats destination beats app.
         assert_eq!(
-            rules.decide(Some(CHAT), None, Some("push.chat.example")),
+            rules.decide(Some(CHAT), Place::new(None, Some("push.chat.example"))),
             Some(RuleAction::Allow)
         );
         assert_eq!(
-            rules.decide(Some(CHAT), None, Some("www.chat.example")),
+            rules.decide(Some(CHAT), Place::new(None, Some("www.chat.example"))),
             Some(RuleAction::Allow)
         );
         assert_eq!(
-            rules.decide(Some(CHAT), None, Some("other.example")),
+            rules.decide(Some(CHAT), Place::new(None, Some("other.example"))),
             Some(RuleAction::Block)
         );
         // Two destination rules match: blocking wins.
         assert_eq!(
-            rules.decide(Some(MAPS), Some(ip("192.0.2.1")), Some("ads.example")),
+            rules.decide(
+                Some(MAPS),
+                Place::new(Some(ip("192.0.2.1")), Some("ads.example"))
+            ),
             Some(RuleAction::Block)
         );
         assert_eq!(
-            rules.decide(Some(MAPS), Some(ip("192.0.2.1")), Some("maps.example")),
+            rules.decide(
+                Some(MAPS),
+                Place::new(Some(ip("192.0.2.1")), Some("maps.example"))
+            ),
             Some(RuleAction::Allow)
         );
-        assert_eq!(RuleSet::default().decide(Some(CHAT), None, None), None);
+        assert_eq!(
+            RuleSet::default().decide(Some(CHAT), Place::default()),
+            None
+        );
     }
 
     #[test]
@@ -642,22 +716,80 @@ mod tests {
         }
     }
 
+    /// RA-01: a company rule covers the names the tracker lists give that company, and
+    /// is matched only once a name, and so its company, is known.
+    #[test]
+    fn a_company_rule_covers_its_names_once_known() {
+        let ads = Destination::company("Example Ads Inc").unwrap();
+        let rules = RuleSet::new(vec![rule(None, Some(ads.clone()), RuleAction::Block)]);
+        let at = |company| Place {
+            address: Some(ip("192.0.2.1")),
+            name: Some("pixel.example"),
+            company,
+        };
+        assert_eq!(
+            rules.decide(Some(CHAT), at(Some("Example Ads Inc"))),
+            Some(RuleAction::Block)
+        );
+        for other in [None, Some("Example Ads"), Some("example ads inc")] {
+            assert_eq!(rules.decide(Some(CHAT), at(other)), None, "{other:?}");
+        }
+        // An app's exception to a company rule needs that app.
+        let rules = RuleSet::new(vec![
+            rule(None, Some(ads.clone()), RuleAction::Block),
+            rule(Some(MAPS), Some(ads), RuleAction::Allow),
+        ]);
+        let listed = at(Some("Example Ads Inc"));
+        assert_eq!(rules.decide(Some(MAPS), listed), Some(RuleAction::Allow));
+        assert_eq!(rules.decide(Some(CHAT), listed), Some(RuleAction::Block));
+        // Names are checked: one line, without space around it.
+        for bad in ["", " Example", "Example ", "Two\nlines", &"x".repeat(201)] {
+            assert_eq!(
+                Destination::company(bad),
+                Err(RuleError::BadCompany(bad.to_owned())),
+                "{bad:?}"
+            );
+        }
+        let keyed = rule(
+            None,
+            Some(Destination::company("Example Ads Inc").unwrap()),
+            RuleAction::Block,
+        );
+        assert_eq!(keyed.key(), "* company:Example Ads Inc");
+        assert_eq!(
+            keyed.to_json(),
+            r#"{"app":null,"destination":{"type":"company","company":"Example Ads Inc"},"action":"block"}"#
+        );
+        assert_eq!(FirewallRule::from_json(&keyed.to_json()), Some(keyed));
+        assert_eq!(
+            FirewallRule::from_json(
+                r#"{"app":null,"destination":{"type":"company","company":" padded"},"action":"block"}"#
+            ),
+            None
+        );
+    }
+
     #[test]
     fn monitor_mode_lets_through_what_no_rule_blocks() {
         let rules = RuleSet::new(vec![rule(Some(CHAT), None, RuleAction::Block)]);
         let mode = FirewallMode::Monitor;
         assert_eq!(
-            rules.verdict(mode, Some(CHAT), Some(5), None, None),
+            rules.verdict(mode, Some(CHAT), Some(5), Place::default()),
             RuleAction::Block
         );
         for installed in [None, Some(0), Some(i64::MAX)] {
             assert_eq!(
-                rules.verdict(mode, Some(MAPS), installed, Some(ip("192.0.2.1")), None),
+                rules.verdict(
+                    mode,
+                    Some(MAPS),
+                    installed,
+                    Place::new(Some(ip("192.0.2.1")), None)
+                ),
                 RuleAction::Allow
             );
         }
         assert_eq!(
-            rules.verdict(mode, None, None, None, None),
+            rules.verdict(mode, None, None, Place::default()),
             RuleAction::Allow
         );
     }
@@ -670,12 +802,12 @@ mod tests {
         let address = Some(ip("192.0.2.1"));
         // Installed before: let through. At or after: blocked, at every moment it asks.
         assert_eq!(
-            none.verdict(mode, Some(MAPS), Some(since - 1), address, None),
+            none.verdict(mode, Some(MAPS), Some(since - 1), Place::new(address, None)),
             RuleAction::Allow
         );
         for installed in [since, since + 1] {
             assert_eq!(
-                none.verdict(mode, Some(MAPS), Some(installed), address, None),
+                none.verdict(mode, Some(MAPS), Some(installed), Place::new(address, None)),
                 RuleAction::Block
             );
             assert_eq!(
@@ -683,8 +815,7 @@ mod tests {
                     mode,
                     Some(MAPS),
                     Some(installed),
-                    address,
-                    Some("maps.example")
+                    Place::new(address, Some("maps.example"))
                 ),
                 RuleAction::Block
             );
@@ -693,8 +824,7 @@ mod tests {
                     mode,
                     Some(MAPS),
                     Some(installed),
-                    None,
-                    Some("maps.example")
+                    Place::new(None, Some("maps.example"))
                 ),
                 RuleAction::Block
             );
@@ -702,11 +832,16 @@ mod tests {
         // Without an app or its install time (Android's shared system identities), the
         // mode cannot tell, so it does not block.
         assert_eq!(
-            none.verdict(mode, None, None, address, None),
+            none.verdict(mode, None, None, Place::new(address, None)),
             RuleAction::Allow
         );
         assert_eq!(
-            none.verdict(mode, Some("android.uid.system:1000"), None, address, None),
+            none.verdict(
+                mode,
+                Some("android.uid.system:1000"),
+                None,
+                Place::new(address, None)
+            ),
             RuleAction::Allow
         );
     }
@@ -724,26 +859,41 @@ mod tests {
         let address = Some(ip("192.0.2.1"));
         // Allowing a new app lets it through, except where a rule blocks.
         assert_eq!(
-            rules.verdict(mode, Some(CHAT), new, address, None),
+            rules.verdict(mode, Some(CHAT), new, Place::new(address, None)),
             RuleAction::Allow
         );
         assert_eq!(
-            rules.verdict(mode, Some(CHAT), new, address, Some("x.ads.example")),
+            rules.verdict(
+                mode,
+                Some(CHAT),
+                new,
+                Place::new(address, Some("x.ads.example"))
+            ),
             RuleAction::Block
         );
         // A rule for one domain lets a new app reach that domain once its name is known,
         // but its connections are refused when they start, before the name is known.
         assert_eq!(
-            rules.verdict(mode, Some(MAPS), new, None, Some("tiles.example")),
+            rules.verdict(
+                mode,
+                Some(MAPS),
+                new,
+                Place::new(None, Some("tiles.example"))
+            ),
             RuleAction::Allow
         );
         assert_eq!(
-            rules.verdict(mode, Some(MAPS), new, address, None),
+            rules.verdict(mode, Some(MAPS), new, Place::new(address, None)),
             RuleAction::Block
         );
         // Block rules apply to apps the mode lets through.
         assert_eq!(
-            rules.verdict(mode, Some(MAPS), old, address, Some("ads.example")),
+            rules.verdict(
+                mode,
+                Some(MAPS),
+                old,
+                Place::new(address, Some("ads.example"))
+            ),
             RuleAction::Block
         );
     }

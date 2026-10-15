@@ -125,6 +125,7 @@ class MainActivity : ComponentActivity() {
                                         is AlertAction.OpenNetworkSettings ->
                                             startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
                                         is AlertAction.AllowApp -> scope.launch { allow(action.app) }
+                                        is AlertAction.BlockApp -> scope.launch { block(action.app) }
                                     }
                                 },
                             )
@@ -153,12 +154,17 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Lets [app] use the internet (CM-08) and says so. */
-    private suspend fun allow(app: String) {
+    private suspend fun allow(app: String) = firewallAction(app, R.string.firewall_app_allowed, ::allowApp)
+
+    /** Stops [app] using the internet (RA-01) and says so. */
+    private suspend fun block(app: String) = firewallAction(app, R.string.firewall_app_blocked, ::blockApp)
+
+    private suspend fun firewallAction(app: String, done: Int, act: (Context, String) -> Boolean) {
         val label = withContext(Dispatchers.IO) {
-            if (allowApp(this@MainActivity, app)) AppNames(this@MainActivity).labelFor(app) else null
+            if (act(this@MainActivity, app)) AppNames(this@MainActivity).labelFor(app) else null
         }
         if (label != null) {
-            Toast.makeText(this, getString(R.string.firewall_app_allowed, isolate(label)), Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(done, isolate(label)), Toast.LENGTH_LONG).show()
         }
     }
 

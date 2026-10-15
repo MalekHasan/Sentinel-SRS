@@ -164,11 +164,17 @@ mod tests {
                 more: 0
             }
         );
+        // RA-01: it can be stopped from the alert, or looked at.
         assert_eq!(
             alert.actions(),
-            [Action::OpenApp {
-                package: "org.example.new".to_owned()
-            }]
+            [
+                Action::BlockApp {
+                    package: "org.example.new".to_owned()
+                },
+                Action::OpenApp {
+                    package: "org.example.new".to_owned()
+                }
+            ]
         );
     }
 
@@ -254,6 +260,13 @@ mod tests {
                 destinations: hosts,
                 more: 0
             }
+        );
+        assert_eq!(
+            alert.actions()[0],
+            Action::BlockApp {
+                package: "org.example.chat".to_owned()
+            },
+            "RA-01: stopped from the alert"
         );
         assert_eq!(
             new_destinations(

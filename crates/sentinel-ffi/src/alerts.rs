@@ -83,6 +83,11 @@ pub enum AlertAction {
     AllowApp {
         app: String,
     },
+    /// Stop the app using the network, open connections included: keep a firewall rule
+    /// blocking it (`HistoryStore.set_firewall_rule`).
+    BlockApp {
+        app: String,
+    },
 }
 
 /// One alert from the history.
@@ -208,6 +213,7 @@ impl From<StoredAlert> for HistoryAlert {
                     Action::OpenApp { package } => AlertAction::OpenApp { app: package },
                     Action::OpenNetworkSettings => AlertAction::OpenNetworkSettings,
                     Action::AllowApp { package } => AlertAction::AllowApp { app: package },
+                    Action::BlockApp { package } => AlertAction::BlockApp { app: package },
                 })
                 .collect(),
             evidence: alert
