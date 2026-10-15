@@ -35,17 +35,26 @@ internal fun startMonitoring() {
     context.startForegroundService(serviceIntent(SentinelVpnService.ACTION_START))
     waitFor("monitoring to start") { Monitor.status.value == Monitor.Status.ON }
     // Sentinel's own app is inside the tunnel too, so the tests' sockets use it.
-    val connectivity = context.getSystemService(ConnectivityManager::class.java)
-    waitFor("the tunnel to become this app's network") {
-        connectivity.getNetworkCapabilities(connectivity.activeNetwork)
-            ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-    }
+    waitFor("the tunnel to become this app's network") { onTunnel() }
 }
 
-/** Stops the VPN the way the notification's Stop action does, and waits for it. */
+/**
+ * Stops the VPN the way the notification's Stop action does, and waits until Android
+ * has taken the tunnel away. Otherwise a [startMonitoring] right after would find the
+ * old tunnel still in place, and the next connection would go around both: Android
+ * routes an app into a new tunnel a moment after the tunnel is created.
+ */
 internal fun stopMonitoring() {
     context.startService(serviceIntent(SentinelVpnService.ACTION_STOP))
     waitFor("monitoring to stop") { Monitor.status.value == Monitor.Status.OFF }
+    waitFor("the tunnel to stop being this app's network") { !onTunnel() }
+}
+
+/** Whether this app's traffic goes through a VPN now. */
+private fun onTunnel(): Boolean {
+    val connectivity = context.getSystemService(ConnectivityManager::class.java)
+    return connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+        ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
 }
 
 private fun serviceIntent(action: String): Intent =

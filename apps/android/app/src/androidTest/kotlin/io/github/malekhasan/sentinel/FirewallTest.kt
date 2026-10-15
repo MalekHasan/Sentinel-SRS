@@ -54,7 +54,9 @@ class FirewallTest {
 
     /**
      * Each time monitoring starts, the first connection is already subject to the rules.
-     * Repeated, because the first run of this test once saw a blocked request answered.
+     * Repeated across restarts: a blocked request was once answered because it went
+     * around the tunnel while Android swapped the old one for the new (see
+     * [stopMonitoring]).
      */
     @Test
     fun aBlockedAddressIsNotReachedUntilTheRuleIsRemoved() {

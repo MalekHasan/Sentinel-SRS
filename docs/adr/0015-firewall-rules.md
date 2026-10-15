@@ -55,7 +55,7 @@ Names are the hard part. The engine learns a name for an address from the DNS an
   - through the engine, a blocked lookup is answered at once and never reaches the resolver, while other lookups are forwarded as before.
 - `sentinel-ffi`: a lookup is decided by the app that sends it and the name looked up, never by the resolver's address. A domain rule for every app blocks it whoever asks, and an app's exception needs that app.
 - On the Android 14 emulator (`FirewallTest`), with this app's own connections through the tunnel:
-  - a rule blocking the test server's address stops the request, and it gets through once the rule is removed. The history stores one connection as blocked and one as allowed;
+  - a rule blocking the test server's address stops the request, and it gets through once the rule is removed, five times over with monitoring restarted in between. The history stores five connections as blocked and five as allowed;
   - a domain rule stops a connection whose TLS ClientHello names a host below it, while another name gets through;
   - a domain rule for `localhost` (which resolves anywhere) makes the tunnel's resolver answer "no such name" with no address, and once it is removed the network's resolver answers.
 
@@ -64,4 +64,5 @@ Names are the hard part. The engine learns a name for an address from the DNS an
 - **Apps that bypass the tunnel's DNS** (their own DNS over HTTPS, or addresses built in) are stopped by domain rules only on TLS connections that name the server. Address rules still apply. QUIC traffic that never looked a name up through the tunnel is not stopped by a domain rule.
 - **Per-app domain rules at DNS lookups** depend on Android saying which app a lookup belongs to. Lookups that Android attributes to the system match only rules for every app.
 - **An app blocked as a whole stays blocked.** A rule allowing it one domain does not open its TLS connections, because they are refused when they start, before their name is known. Allowing it an address range works. Domain allows are for exceptions to domain blocks.
+- **The moment monitoring starts.** Android moves apps into a new tunnel a moment after Sentinel creates it. A connection made in that moment goes around Sentinel, as traffic does while monitoring is off, so no rule applies to it. The device tests therefore wait until the tunnel is this app's network before connecting, and after stopping, until it no longer is: otherwise a restart finds the old tunnel still listed and connects around both.
 - **Not yet:** company, country, port and direction rules (CM-10), and Android's per-network profiles. Companies and countries can be added as destinations once the app can block "a company or a country" (RA-01).
