@@ -146,6 +146,7 @@ class RtlTest {
         // The firewall's modes (CM-08).
         compose.onNodeWithText(arabic.getString(R.string.firewall_title)).performScrollTo().assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.firewall_mode_block_unknown), useUnmergedTree = true)
+            .performScrollTo()
             .assertAtTheRight()
     }
 

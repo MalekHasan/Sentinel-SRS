@@ -62,8 +62,12 @@ class AwayTest {
         // Stopping ends every flow, so the history holds their final byte counts.
         stopMonitoring()
 
-        // Only the request sent while the screen was off counts as "while away".
-        val app = checkNotNull(History.get(context).appSummary(context.packageName, 10u))
+        // Only the request sent while the screen was off counts as "while away". Counted
+        // at the test server only: starting monitoring also looks a name up through the
+        // tunnel to see that it carries this app's traffic.
+        val summary = checkNotNull(History.get(context).appSummary(context.packageName, 10u))
+        val server = checkNotNull(InetAddress.getByName(testServer().first).hostAddress)
+        val app = summary.destinations.single { it.destination == server }
         assertEquals("bytes sent", 3L * request.size, app.bytesUp)
         assertEquals("bytes sent while away", request.size.toLong(), app.bytesUpAway)
         assertTrue("received while away: ${app.bytesDownAway}", app.bytesDownAway > 0)
