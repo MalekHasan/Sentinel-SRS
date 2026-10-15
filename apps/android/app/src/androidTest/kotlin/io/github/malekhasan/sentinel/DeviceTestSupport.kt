@@ -102,3 +102,13 @@ internal fun clientHello(name: String): ByteArray {
         write(0x16); write(3); write(1); u16(handshake.size); write(handshake)
     }.toByteArray()
 }
+
+/** A DNS query for the A records of [name], asking for recursion. */
+internal fun dnsQuery(id: Int, name: String): ByteArray = ByteArrayOutputStream().apply {
+    write(byteArrayOf((id shr 8).toByte(), id.toByte(), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0))
+    name.split('.').forEach { label ->
+        write(label.length)
+        write(label.toByteArray())
+    }
+    write(byteArrayOf(0, 0, 1, 0, 1)) // end of name, type A, class IN
+}.toByteArray()

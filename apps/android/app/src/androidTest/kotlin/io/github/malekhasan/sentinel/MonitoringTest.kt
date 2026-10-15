@@ -7,7 +7,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.FlowProto
 import io.github.malekhasan.sentinel.core.FlowRecord
-import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -163,13 +162,4 @@ class MonitoringTest {
         }
         return false
     }
-
-    private fun dnsQuery(id: Int, name: String): ByteArray = ByteArrayOutputStream().apply {
-        write(byteArrayOf((id shr 8).toByte(), id.toByte(), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0))
-        name.split('.').forEach { label ->
-            write(label.length)
-            write(label.toByteArray())
-        }
-        write(byteArrayOf(0, 0, 1, 0, 1)) // end of name, type A, class IN
-    }.toByteArray()
 }

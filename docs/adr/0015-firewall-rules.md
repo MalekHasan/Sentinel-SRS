@@ -54,7 +54,10 @@ Names are the hard part. The engine learns a name for an address from the DNS an
   - the "no such name" reply repeats the query's id and question and names no address;
   - through the engine, a blocked lookup is answered at once and never reaches the resolver, while other lookups are forwarded as before.
 - `sentinel-ffi`: a lookup is decided by the app that sends it and the name looked up, never by the resolver's address. A domain rule for every app blocks it whoever asks, and an app's exception needs that app.
-- The device tests are added with the Android part.
+- On the Android 14 emulator (`FirewallTest`), with this app's own connections through the tunnel:
+  - a rule blocking the test server's address stops the request, and it gets through once the rule is removed. The history stores one connection as blocked and one as allowed;
+  - a domain rule stops a connection whose TLS ClientHello names a host below it, while another name gets through;
+  - a domain rule for `localhost` (which resolves anywhere) makes the tunnel's resolver answer "no such name" with no address, and once it is removed the network's resolver answers.
 
 ## Consequences
 
