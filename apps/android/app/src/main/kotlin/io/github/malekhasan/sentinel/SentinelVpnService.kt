@@ -262,7 +262,9 @@ class SentinelVpnService : VpnService() {
             remotePort: UShort,
         ): FlowOwner {
             val uid = ownerUid(proto, localIp, localPort, remoteIp, remotePort)
-            return FlowOwner(uid, appNames.packageFor(uid))
+            val app = appNames.packageFor(uid)
+            // An app installed since the history began is new to the network (CM-04).
+            return FlowOwner(uid, app, app?.let(appNames::installedAt))
         }
 
         /** Only the active VPN app may ask Android who owns a connection (API 29+). */

@@ -15,6 +15,7 @@ class AppNames(context: Context) {
     private val packages = context.packageManager
     private val cache = ConcurrentHashMap<Int, String>()
     private val labels = ConcurrentHashMap<String, String>()
+    private val installed = ConcurrentHashMap<String, Long>()
 
     /**
      * The package that owns [uid], or Android's name for a shared or system UID (for
@@ -29,6 +30,23 @@ class AppNames(context: Context) {
                 else -> packages.getNameForUid(uid) ?: owners?.minOrNull() ?: "uid $uid"
             }
         }
+    }
+
+    /**
+     * When [packageName] was first installed, in Unix milliseconds, or null when it is
+     * not an installed app (a shared or system UID). Updates keep the first install
+     * time. Asks the package manager once per package.
+     */
+    fun installedAt(packageName: String): Long? = installed[packageName] ?: try {
+        val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packages.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packages.getPackageInfo(packageName, 0)
+        }
+        info.firstInstallTime.also { installed[packageName] = it }
+    } catch (e: PackageManager.NameNotFoundException) {
+        null
     }
 
     /**

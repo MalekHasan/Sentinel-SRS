@@ -275,6 +275,33 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_feedback_note)).performScrollTo())
     }
 
+    /** CM-04: where an app connected, names and the count of the rest, right to left. */
+    @Test
+    fun newDestinationAlert() {
+        val places = listOf("a.example", "b.example")
+        val alert = HistoryAlert(
+            id = 2,
+            rule = AlertRule.NEW_DESTINATION,
+            severity = AlertSeverity.INFO,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.Destinations(destinations = places, more = 3u),
+            ),
+            actions = listOf(AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.alert_new_destination_title)).assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_new_destination_text)))
+        val listed = ListFormatter.getInstance(arabic.resources.configuration.locales[0]).format(places.map(::isolate))
+        val line = arabic.getString(R.string.alert_evidence_destinations, listed) + " " +
+            arabic.resources.getQuantityString(R.plurals.alert_evidence_more_destinations, 3, 3)
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
     private fun alert() = HistoryAlert(
         id = 1,
         rule = AlertRule.MONITORING_INTERRUPTED,

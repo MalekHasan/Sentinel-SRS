@@ -19,6 +19,11 @@ pub enum AlertSeverity {
 pub enum AlertRule {
     /// Monitoring stopped although the user wanted it on (SP-03).
     MonitoringInterrupted,
+    /// An app installed since the history began used the network for the first time
+    /// (CM-04).
+    FirstNetworkUse,
+    /// An app connected to names it had not used before (CM-04).
+    NewDestination,
 }
 
 /// What an alert rests on.
@@ -31,6 +36,12 @@ pub enum AlertEvidence {
     },
     /// An app, by package name.
     App { app: String },
+    /// Where an app connected: names, or an address when no name was known, in the
+    /// order seen. `more` counts those not listed.
+    Destinations {
+        destinations: Vec<String>,
+        more: u32,
+    },
 }
 
 /// What the user can do from an alert (SRS §9).
@@ -105,6 +116,8 @@ impl From<Rule> for AlertRule {
     fn from(rule: Rule) -> Self {
         match rule {
             Rule::MonitoringInterrupted => AlertRule::MonitoringInterrupted,
+            Rule::FirstNetworkUse => AlertRule::FirstNetworkUse,
+            Rule::NewDestination => AlertRule::NewDestination,
         }
     }
 }
@@ -170,6 +183,9 @@ impl From<StoredAlert> for HistoryAlert {
                         reason,
                     },
                     Evidence::App { package } => AlertEvidence::App { app: package },
+                    Evidence::Destinations { destinations, more } => {
+                        AlertEvidence::Destinations { destinations, more }
+                    }
                 })
                 .collect(),
             open: stored.state == AlertState::Open,

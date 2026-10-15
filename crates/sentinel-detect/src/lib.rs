@@ -9,8 +9,13 @@
 use serde::{Deserialize, Serialize};
 
 mod delivery;
+mod first_seen;
 
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
+pub use first_seen::{
+    GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,
+    join_destinations, new_destinations,
+};
 
 /// How urgent an alert is (AL-01). Ordered from least to most urgent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,32 +55,44 @@ impl Severity {
 pub enum Rule {
     /// Monitoring stopped although the user wanted it on (SP-03).
     MonitoringInterrupted,
+    /// An app installed since the history began used the network for the first time
+    /// (CM-04).
+    FirstNetworkUse,
+    /// An app connected to names it had not used before (CM-04).
+    NewDestination,
 }
 
 impl Rule {
     pub fn id(self) -> &'static str {
         match self {
             Rule::MonitoringInterrupted => "monitoring-interrupted",
+            Rule::FirstNetworkUse => "first-network-use",
+            Rule::NewDestination => "new-destination",
         }
     }
 
     pub fn from_id(id: &str) -> Option<Rule> {
-        [Rule::MonitoringInterrupted]
-            .into_iter()
-            .find(|r| r.id() == id)
+        [
+            Rule::MonitoringInterrupted,
+            Rule::FirstNetworkUse,
+            Rule::NewDestination,
+        ]
+        .into_iter()
+        .find(|r| r.id() == id)
     }
 
     /// What the user can do about an alert from this rule, most useful first (SRS §9).
     pub fn actions(self, evidence: &[Evidence]) -> Vec<Action> {
         let mut actions = match self {
             Rule::MonitoringInterrupted => vec![Action::StartMonitoring],
+            Rule::FirstNetworkUse | Rule::NewDestination => Vec::new(),
         };
         // Any app the alert is about can be looked at.
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } => Some(Action::OpenApp {
                 package: package.clone(),
             }),
-            Evidence::Gap { .. } => None,
+            Evidence::Gap { .. } | Evidence::Destinations { .. } => None,
         }));
         actions
     }
@@ -94,6 +111,12 @@ pub enum Evidence {
     },
     /// An app, by package name.
     App { package: String },
+    /// Where an app connected: names, or an address when no name is known, in the
+    /// order seen. `more` counts those not listed (see [`MAX_LISTED`]).
+    Destinations {
+        destinations: Vec<String>,
+        more: u32,
+    },
 }
 
 /// What the user can do from an alert (SRS §9). Actions that change the device come
@@ -127,7 +150,7 @@ impl Alert {
     pub fn app(&self) -> Option<&str> {
         self.evidence.iter().find_map(|e| match e {
             Evidence::App { package } => Some(package.as_str()),
-            Evidence::Gap { .. } => None,
+            Evidence::Gap { .. } | Evidence::Destinations { .. } => None,
         })
     }
 }
@@ -261,11 +284,15 @@ mod tests {
             Evidence::App {
                 package: "org.example.chat".to_owned(),
             },
+            Evidence::Destinations {
+                destinations: vec!["a.example".to_owned(), "192.0.2.1".to_owned()],
+                more: 3,
+            },
         ];
         let json = evidence_to_json(&evidence);
         assert_eq!(
             json,
-            r#"[{"type":"gap","started":1000,"reason":"revoked"},{"type":"gap","started":null,"reason":"killed"},{"type":"app","package":"org.example.chat"}]"#
+            r#"[{"type":"gap","started":1000,"reason":"revoked"},{"type":"gap","started":null,"reason":"killed"},{"type":"app","package":"org.example.chat"},{"type":"destinations","destinations":["a.example","192.0.2.1"],"more":3}]"#
         );
         assert_eq!(evidence_from_json(&json).unwrap(), evidence);
         assert!(evidence_from_json(r#"[{"type":"unknown"}]"#).is_err());

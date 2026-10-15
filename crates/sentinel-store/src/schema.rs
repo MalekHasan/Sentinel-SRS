@@ -133,7 +133,41 @@ CREATE TABLE allowed (
 );
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8];
+/// First network use and first-seen destinations (CM-04, ADR-0013).
+///
+/// `meta` holds when this history began: when it was created, or upgraded to this
+/// version. Only apps installed since then can be new to the network.
+///
+/// `app_destination` holds each name an app has connected to, and when first. It is
+/// filled from the flows and daily totals already kept; destinations known only by
+/// their address are left out (a daily total's destination is an address when it has
+/// a colon or only digits and dots).
+const V9: &str = "
+CREATE TABLE meta (
+  key TEXT PRIMARY KEY,
+  value INTEGER NOT NULL
+);
+INSERT INTO meta (key, value)
+  VALUES ('began', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+CREATE TABLE app_destination (
+  app_id INTEGER NOT NULL REFERENCES app(id),
+  destination TEXT NOT NULL,         -- hostname
+  first_seen INTEGER NOT NULL,
+  PRIMARY KEY (app_id, destination)
+) WITHOUT ROWID;
+INSERT INTO app_destination (app_id, destination, first_seen)
+  SELECT app_id, destination, min(first_seen) FROM (
+    SELECT app_id, hostname AS destination, started AS first_seen
+    FROM flow WHERE app_id IS NOT NULL AND hostname IS NOT NULL
+    UNION ALL
+    SELECT app_id, destination, day * 86400000
+    FROM flow_daily
+    WHERE app_id != 0 AND instr(destination, ':') = 0 AND destination GLOB '*[^0-9.]*'
+  )
+  GROUP BY app_id, destination;
+";
+
+const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -164,7 +198,27 @@ mod tests {
             [],
         )
         .unwrap();
+        // Flows and daily totals from before V9 fill the destinations each app used.
+        conn.execute_batch(
+            "INSERT INTO app (id, platform, identifier, first_seen)
+               VALUES (1, 'android', 'org.example.chat', 100);
+             INSERT INTO flow (app_id, proto, direction, remote_ip, remote_port, hostname,
+                               started, verdict)
+               VALUES (1, 'tcp', 'out', '192.0.2.1', 443, 'chat.example', 500, 'allowed'),
+                      (1, 'tcp', 'out', '192.0.2.2', 443, NULL, 600, 'allowed');
+             INSERT INTO flow_daily (day, app_id, destination, proto, flows, bytes_up, bytes_down)
+               VALUES (0, 1, 'chat.example', 'tcp', 1, 0, 0),
+                      (0, 1, 'old.example', 'tcp', 1, 0, 0),
+                      (0, 1, '192.0.2.3', 'tcp', 1, 0, 0),
+                      (0, 1, '2001:db8::1', 'udp', 1, 0, 0),
+                      (0, 0, 'unknown-owner.example', 'tcp', 1, 0, 0);",
+        )
+        .unwrap();
 
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         migrate(&conn).unwrap();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -199,5 +253,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(destination, 1);
+
+        let began: i64 = conn
+            .query_row("SELECT value FROM meta WHERE key = 'began'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            (before - 1_000..before + 60_000).contains(&began),
+            "{began} vs {before}"
+        );
+        let mut stmt = conn
+            .prepare("SELECT destination, first_seen FROM app_destination ORDER BY destination")
+            .unwrap();
+        let used: Vec<(String, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            used,
+            [
+                ("chat.example".to_owned(), 0),
+                ("old.example".to_owned(), 0)
+            ]
+        );
     }
 }

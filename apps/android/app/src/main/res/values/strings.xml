@@ -99,6 +99,11 @@
     <string name="alert_evidence_title">What Sentinel saw</string>
     <string name="alert_evidence_gap">Stopped at %1$s. Reason: %2$s</string>
     <string name="alert_evidence_app">App: %1$s</string>
+    <string name="alert_evidence_destinations">Connected to: %1$s</string>
+    <plurals name="alert_evidence_more_destinations">
+        <item quantity="one">And %d more place.</item>
+        <item quantity="other">And %d more places.</item>
+    </plurals>
     <string name="alert_actions_title">What you can do</string>
     <string name="alert_action_start_monitoring">Start monitoring again</string>
     <string name="alert_action_open_app">See what %1$s did</string>
@@ -126,6 +131,10 @@
     <!-- Each rule's title and one-sentence explanation (AL-02): plain words, reading grade 8 or lower. -->
     <string name="alert_monitoring_interrupted_title">Monitoring stopped</string>
     <string name="alert_monitoring_interrupted_text">Sentinel stopped watching your apps, so what they did in that time is not recorded.</string>
+    <string name="alert_first_network_use_title">A new app used the internet</string>
+    <string name="alert_first_network_use_text">This app was installed after Sentinel started, and Sentinel just saw it connect to the internet for the first time.</string>
+    <string name="alert_new_destination_title">An app connected to new places</string>
+    <string name="alert_new_destination_text">This app connected to places it had not used before, which is often normal after an update.</string>
 
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>

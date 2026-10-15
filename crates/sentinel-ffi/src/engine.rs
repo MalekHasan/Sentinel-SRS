@@ -308,11 +308,12 @@ mod tests {
     /// One `owner_uid` question: protocol, local address and port, remote address and port.
     type OwnerQuestion = (FlowProto, String, u16, String, u16);
 
-    /// Says every flow belongs to UID 10123 (`org.example.owner`), and passes on each
-    /// batch it receives.
+    /// Says every flow belongs to UID 10123 (`org.example.owner`), installed at
+    /// `installed_ms`, and passes on each batch it receives.
     struct RecordingFlows {
         asked: Mutex<Vec<OwnerQuestion>>,
         batches: Mutex<mpsc::Sender<Vec<FlowRecord>>>,
+        installed_ms: Option<i64>,
     }
     const OWNER: i32 = 10_123;
     const OWNER_APP: &str = "org.example.owner";
@@ -332,6 +333,7 @@ mod tests {
             FlowOwner {
                 uid: OWNER,
                 app: Some(OWNER_APP.to_owned()),
+                installed_ms: self.installed_ms,
             }
         }
         fn flows(&self, records: Vec<FlowRecord>) {
@@ -340,12 +342,28 @@ mod tests {
     }
 
     fn recording_flows() -> (Arc<RecordingFlows>, mpsc::Receiver<Vec<FlowRecord>>) {
+        recording_flows_installed(None)
+    }
+
+    fn recording_flows_installed(
+        installed_ms: Option<i64>,
+    ) -> (Arc<RecordingFlows>, mpsc::Receiver<Vec<FlowRecord>>) {
         let (tx, rx) = mpsc::channel();
         let flows = RecordingFlows {
             asked: Mutex::new(Vec::new()),
             batches: Mutex::new(tx),
+            installed_ms,
         };
         (Arc::new(flows), rx)
+    }
+
+    /// Keeps every alert it hears of.
+    #[derive(Default)]
+    struct HeardAlerts(Mutex<Vec<crate::alerts::HistoryAlert>>);
+    impl crate::alerts::AlertListener for HeardAlerts {
+        fn raised(&self, alert: crate::alerts::HistoryAlert) {
+            self.0.lock().unwrap().push(alert);
+        }
     }
 
     fn udp_packet(dst: [u8; 4], dst_port: u16) -> Vec<u8> {
@@ -627,6 +645,8 @@ mod tests {
     }
 
     /// With a history, every flow is stored, encrypted, with its app and final counts.
+    /// The app was installed after the history began, so its first connection raises
+    /// one alert (CM-04).
     #[test]
     fn writes_flows_to_the_history() {
         let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -640,11 +660,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("history.db").to_string_lossy().into_owned();
         let history = HistoryStore::open(path.clone(), vec![3; 32]).unwrap();
+        let heard = Arc::new(HeardAlerts::default());
+        history.set_alert_listener(Some(heard.clone()));
 
         let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let (tx, _stopped) = mpsc::channel();
-        let (flows, batches) = recording_flows();
+        let (flows, batches) = recording_flows_installed(Some(history.began_ms()));
         let engine = Engine::start(
             OwnedFd::from(tun).into_raw_fd(),
             Vec::new(),
@@ -682,6 +704,26 @@ mod tests {
         assert_eq!(app.destinations.len(), 1);
         assert_eq!(app.destinations[0].destination, "127.0.0.1");
         assert_eq!(app.first_seen_ms, flow.started_ms);
+
+        // CM-04: one alert for the new app's first connection, to an address here.
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+        let heard = heard.0.lock().unwrap().clone();
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert_eq!(heard[0].rule, AlertRule::FirstNetworkUse);
+        assert_eq!(heard[0].severity, AlertSeverity::Info);
+        assert_eq!(
+            heard[0].evidence,
+            [
+                AlertEvidence::App {
+                    app: OWNER_APP.into()
+                },
+                AlertEvidence::Destinations {
+                    destinations: vec!["127.0.0.1".into()],
+                    more: 0
+                },
+            ]
+        );
+        assert_eq!(history.alerts(true, 10).unwrap(), heard);
     }
 
     /// Bytes relayed while the user is away are counted apart in the same flow, stored,
@@ -913,6 +955,7 @@ mod tests {
             FlowOwner {
                 uid: OWNER,
                 app: Some(OWNER_APP.to_owned()),
+                installed_ms: None,
             }
         }
         fn flows(&self, records: Vec<FlowRecord>) {

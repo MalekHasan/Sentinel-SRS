@@ -114,6 +114,15 @@
     <string name="alert_evidence_title">شو شاف Sentinel</string>
     <string name="alert_evidence_gap">وقفت المراقبة بتاريخ %1$s. السبب: %2$s</string>
     <string name="alert_evidence_app">التطبيق: %1$s</string>
+    <string name="alert_evidence_destinations">اتصل بـ: %1$s</string>
+    <plurals name="alert_evidence_more_destinations">
+        <item quantity="zero">وما في أماكن تانية.</item>
+        <item quantity="one">ومكان واحد تاني.</item>
+        <item quantity="two">ومكانين تانيين.</item>
+        <item quantity="few">و%d أماكن تانية.</item>
+        <item quantity="many">و%d مكان تاني.</item>
+        <item quantity="other">و%d مكان تاني.</item>
+    </plurals>
     <string name="alert_actions_title">شو فيك تعمل</string>
     <string name="alert_action_start_monitoring">رجّع شغّل المراقبة</string>
     <string name="alert_action_open_app">شوف شو عمل %1$s</string>
@@ -145,6 +154,10 @@
     <!-- عنوان كل قاعدة وجملة الشرح تبعها (AL-02): كلام بسيط. -->
     <string name="alert_monitoring_interrupted_title">المراقبة وقفت</string>
     <string name="alert_monitoring_interrupted_text">تطبيق Sentinel وقف يراقب تطبيقاتك، فاللي عملته بهالوقت مش مسجّل.</string>
+    <string name="alert_first_network_use_title">تطبيق جديد استعمل الإنترنت</string>
+    <string name="alert_first_network_use_text">هالتطبيق تنزّل بعد ما بلّش Sentinel، وهلأ شافه Sentinel عم يتصل بالإنترنت لأول مرة.</string>
+    <string name="alert_new_destination_title">تطبيق اتصل بأماكن جديدة</string>
+    <string name="alert_new_destination_text">هالتطبيق اتصل بأماكن ما كان يستعملها قبل، وهاد غالباً طبيعي بعد التحديث.</string>
 
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>

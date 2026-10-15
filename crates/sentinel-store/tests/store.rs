@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use sentinel_detect::AlertState;
 use sentinel_store::{
-    AppSummary, AwayTotal, CompanyTotal, DailyTotal, DestinationFacts, DestinationTotal, FlowEvent,
-    FlowRow, Gap, HostnameSource, Listed, Proto, Store, StoreError, StoredAlert, wipe,
+    AppSummary, AwayTotal, CompanyTotal, DailyTotal, DestinationFacts, DestinationTotal, FirstSeen,
+    FlowEvent, FlowRow, Gap, HostnameSource, Listed, Proto, Store, StoreError, StoredAlert, wipe,
 };
 
 const KEY: [u8; 32] = [7; 32];
@@ -881,4 +881,184 @@ fn reopening_keeps_the_schema_and_data() {
         .unwrap();
     let store = Store::open(&path, &KEY).unwrap();
     assert_eq!(store.recent_gaps(10).unwrap().len(), 1);
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// CM-04: the history knows when it began; reopening keeps that, and a wipe starts a
+/// new history.
+#[test]
+fn the_history_knows_when_it_began() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let before = now_ms();
+    let began = Store::open(&path, &KEY).unwrap().began();
+    assert!((before - 1_000..=now_ms() + 1_000).contains(&began));
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert_eq!(Store::open(&path, &KEY).unwrap().began(), began, "kept");
+    wipe(&path).unwrap();
+    assert!(
+        Store::open(&path, &KEY).unwrap().began() > began,
+        "a new history"
+    );
+}
+
+/// CM-04: each app's first connection is reported when it starts, and each name an app
+/// connects to for the first time when the connection ends, once, across reopening and
+/// the roll-up of old flows.
+#[test]
+fn first_connections_and_first_names_are_reported_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let ended = |mut row: FlowRow, at: i64| {
+        row.ended = Some(at);
+        row
+    };
+
+    // A new app's first connection, its name known from DNS.
+    let first = flow("org.example.chat", "chat.example", NOW);
+    assert_eq!(
+        store.record_flows(1, &[event(1, first.clone())]).unwrap(),
+        [FirstSeen::App {
+            app: "org.example.chat".to_owned(),
+            destination: "chat.example".to_owned()
+        }]
+    );
+    // Its name counts when the connection ends.
+    assert_eq!(
+        store
+            .record_flows(1, &[event(1, ended(first.clone(), NOW + 10))])
+            .unwrap(),
+        [FirstSeen::Destination {
+            app: "org.example.chat".to_owned(),
+            app_first_seen: NOW,
+            destination: "chat.example".to_owned()
+        }]
+    );
+    // The same name again, and a connection with no name, are not new.
+    let again = flow("org.example.chat", "chat.example", NOW + 20);
+    let mut bare = flow("org.example.chat", "unused", NOW + 30);
+    bare.hostname = None;
+    bare.hostname_src = None;
+    assert!(
+        store
+            .record_flows(
+                1,
+                &[
+                    event(2, again.clone()),
+                    event(2, ended(again, NOW + 25)),
+                    event(3, ended(bare, NOW + 35)),
+                ]
+            )
+            .unwrap()
+            .is_empty()
+    );
+
+    // Another app: its first connection has no name yet, so its address is reported;
+    // the name it ends with (from the TLS handshake) is its first destination.
+    let mut late = flow("org.example.maps", "unused", NOW + 40);
+    late.hostname = None;
+    late.hostname_src = None;
+    let mut named = late.clone();
+    named.hostname = Some("tiles.example".to_owned());
+    named.hostname_src = Some(HostnameSource::Sni);
+    assert_eq!(
+        store
+            .record_flows(1, &[event(4, late), event(4, ended(named, NOW + 50))])
+            .unwrap(),
+        [
+            FirstSeen::App {
+                app: "org.example.maps".to_owned(),
+                destination: "93.184.215.14".to_owned()
+            },
+            FirstSeen::Destination {
+                app: "org.example.maps".to_owned(),
+                app_first_seen: NOW + 40,
+                destination: "tiles.example".to_owned()
+            },
+        ]
+    );
+    // A name is new per app: the chat app's first visit to tiles.example is news.
+    let shared = flow("org.example.chat", "tiles.example", NOW + 60);
+    assert_eq!(
+        store
+            .record_flows(2, &[event(1, ended(shared, NOW + 70))])
+            .unwrap(),
+        [FirstSeen::Destination {
+            app: "org.example.chat".to_owned(),
+            app_first_seen: NOW,
+            destination: "tiles.example".to_owned()
+        }]
+    );
+    // A connection with no owner is nobody's news.
+    let mut unowned = flow("unused", "x.example", NOW + 80);
+    unowned.app = None;
+    assert!(
+        store
+            .record_flows(2, &[event(2, ended(unowned, NOW + 90))])
+            .unwrap()
+            .is_empty()
+    );
+
+    // Rolled up and reopened, the history still knows both apps and their names.
+    assert_eq!(store.apply_retention(NOW + 40 * DAY, 30).unwrap(), 6);
+    drop(store);
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let back = flow("org.example.chat", "chat.example", NOW + 41 * DAY);
+    assert!(
+        store
+            .record_flows(3, &[event(1, ended(back, NOW + 41 * DAY))])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// CM-04: newer destinations join the app's open alert of the same rule raised since a
+/// given time, instead of making another; other apps, dismissed alerts and older ones
+/// do not take them.
+#[test]
+fn newer_destinations_join_an_open_alert() {
+    use sentinel_detect::{Evidence, LEARNING_MS, new_destinations};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let names = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    let at = NOW + LEARNING_MS;
+    let alert = |app: &str, hosts: &[&str], created: i64| {
+        new_destinations(created, app, NOW, &names(hosts)).unwrap()
+    };
+
+    let first = alert("org.example.chat", &["a.example"], at);
+    assert_eq!(store.join_open_alert(&first, at - DAY).unwrap(), None);
+    let id = store.record_alert(&first).unwrap();
+
+    let later = alert("org.example.chat", &["a.example", "b.example"], at + 1_000);
+    assert_eq!(store.join_open_alert(&later, at - DAY).unwrap(), Some(id));
+    assert_eq!(
+        store.alert(id).unwrap().unwrap().alert.evidence[1],
+        Evidence::Destinations {
+            destinations: names(&["a.example", "b.example"]),
+            more: 0
+        }
+    );
+    assert_eq!(store.alerts(false, 10).unwrap().len(), 1);
+
+    let other_app = alert("org.example.maps", &["c.example"], at + 2_000);
+    assert_eq!(store.join_open_alert(&other_app, at - DAY).unwrap(), None);
+    assert_eq!(
+        store.join_open_alert(&later, at + 1).unwrap(),
+        None,
+        "raised before the window"
+    );
+    store.set_alert_state(id, AlertState::Dismissed).unwrap();
+    assert_eq!(
+        store.join_open_alert(&later, at - DAY).unwrap(),
+        None,
+        "dismissed"
+    );
 }

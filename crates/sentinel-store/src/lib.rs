@@ -57,6 +57,22 @@ pub struct Listed<T> {
     pub sources: Vec<String>,
 }
 
+/// Something a batch of flows showed for the first time (CM-04, ADR-0013).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FirstSeen {
+    /// The history's first connection by `app`, to `destination`: its name, or its
+    /// address if no name was known when it started.
+    App { app: String, destination: String },
+    /// `app`'s first connection to the name `destination`. Judged when the connection
+    /// ends, by the name it ended with: a name learned from the TLS handshake replaces
+    /// one from DNS. `app_first_seen` is when the history first saw the app.
+    Destination {
+        app: String,
+        app_first_seen: i64,
+        destination: String,
+    },
+}
+
 /// A flow read back from the database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredFlow {
@@ -244,6 +260,8 @@ pub struct Store {
     conn: Mutex<Connection>,
     /// Database rows of flows that have started and not ended, by (session, engine id).
     open_flows: Mutex<HashMap<(u64, u64), i64>>,
+    /// When this history began, Unix milliseconds.
+    began: i64,
 }
 
 impl Store {
@@ -270,19 +288,33 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         schema::migrate(&conn)?;
+        let began = conn.query_row("SELECT value FROM meta WHERE key = 'began'", [], |r| {
+            r.get(0)
+        })?;
         Ok(Store {
             conn: Mutex::new(conn),
             open_flows: Mutex::new(HashMap::new()),
+            began,
         })
+    }
+
+    /// When this history began, Unix milliseconds: when it was created (after a wipe,
+    /// the wipe), or upgraded to the version that keeps this. Only apps installed since
+    /// then can be new to the network (CM-04).
+    pub fn began(&self) -> i64 {
+        self.began
     }
 
     /// Record flows from engine session `session`. A flow arrives once when it starts
     /// and once when it ends; both are stored in one row. An end whose start was not
     /// seen is stored as a complete row.
-    pub fn record_flows(&self, session: u64, events: &[FlowEvent]) -> Result<()> {
+    ///
+    /// Returns what the flows showed for the first time, in order (CM-04).
+    pub fn record_flows(&self, session: u64, events: &[FlowEvent]) -> Result<Vec<FirstSeen>> {
         let mut conn = lock(&self.conn);
         let mut open = lock(&self.open_flows);
         let tx = conn.transaction()?;
+        let mut first_seen = Vec::new();
         for FlowEvent {
             engine_id,
             flow: row,
@@ -301,15 +333,24 @@ impl Store {
             match existing {
                 Some(id) => update_flow(&tx, id, row)?,
                 None => {
-                    let id = insert_flow(&tx, row)?;
+                    let (id, new_app) = insert_flow(&tx, row)?;
+                    if let (true, Some(app)) = (new_app, &row.app) {
+                        first_seen.push(FirstSeen::App {
+                            app: app.clone(),
+                            destination: row.hostname.clone().unwrap_or(row.remote_ip.clone()),
+                        });
+                    }
                     if row.ended.is_none() {
                         open.insert(key, id);
                     }
                 }
             }
+            if row.ended.is_some() {
+                first_seen.extend(first_destination(&tx, row)?);
+            }
         }
         tx.commit()?;
-        Ok(())
+        Ok(first_seen)
     }
 
     /// The most recent flows, newest first.
@@ -385,6 +426,39 @@ impl Store {
             ],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// Add a new alert's destinations to the newest open alert of the same rule about
+    /// the same app raised at or after `since`, rather than keeping a second alert
+    /// (CM-04). Returns that alert's id, or `None` if there is none.
+    pub fn join_open_alert(&self, alert: &Alert, since: i64) -> Result<Option<i64>> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let mut stmt = tx.prepare(&format!(
+            "{ALERT_COLUMNS} WHERE rule_id = ?1 AND state = 'open' AND created >= ?2
+             ORDER BY created DESC, id DESC"
+        ))?;
+        let rows = stmt
+            .query_map(params![alert.rule.id(), since], alert_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+        for row in rows {
+            let mut open = stored_alert(row)?;
+            if open.alert.app() != alert.app() {
+                continue;
+            }
+            sentinel_detect::join_destinations(&mut open.alert.evidence, &alert.evidence);
+            tx.execute(
+                "UPDATE alert SET evidence = ?2 WHERE id = ?1",
+                params![
+                    open.id,
+                    sentinel_detect::evidence_to_json(&open.alert.evidence)
+                ],
+            )?;
+            tx.commit()?;
+            return Ok(Some(open.id));
+        }
+        Ok(None)
     }
 
     /// The most recent alerts, newest first: only the open ones, or all of them.
@@ -757,20 +831,51 @@ pub fn wipe(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn app_id(tx: &Transaction<'_>, app: Option<&str>, now: i64) -> Result<Option<i64>> {
+/// The app's row id, and whether the history saw it for the first time and added it.
+fn app_id(tx: &Transaction<'_>, app: Option<&str>, now: i64) -> Result<Option<(i64, bool)>> {
     let Some(identifier) = app else {
         return Ok(None);
     };
-    tx.execute(
+    let added = tx.execute(
         "INSERT INTO app (platform, identifier, first_seen) VALUES (?1, ?2, ?3)
          ON CONFLICT (platform, identifier) DO NOTHING",
         params![PLATFORM, identifier, now],
-    )?;
-    Ok(Some(tx.query_row(
+    )? == 1;
+    let id = tx.query_row(
         "SELECT id FROM app WHERE platform = ?1 AND identifier = ?2",
         params![PLATFORM, identifier],
         |r| r.get(0),
-    )?))
+    )?;
+    Ok(Some((id, added)))
+}
+
+/// Note that a finished flow's app connected to its name. Returns the news if the app
+/// never had before. Flows known only by their address are not counted: large services
+/// change addresses often (ADR-0013).
+fn first_destination(tx: &Transaction<'_>, row: &FlowRow) -> Result<Option<FirstSeen>> {
+    let (Some(app), Some(hostname)) = (&row.app, &row.hostname) else {
+        return Ok(None);
+    };
+    let Some((id, app_first_seen)) = tx
+        .query_row(
+            "SELECT id, first_seen FROM app WHERE platform = ?1 AND identifier = ?2",
+            params![PLATFORM, app],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .optional()?
+    else {
+        return Ok(None);
+    };
+    let added = tx.execute(
+        "INSERT INTO app_destination (app_id, destination, first_seen) VALUES (?1, ?2, ?3)
+         ON CONFLICT (app_id, destination) DO NOTHING",
+        params![id, hostname, row.started],
+    )? == 1;
+    Ok(added.then(|| FirstSeen::Destination {
+        app: app.clone(),
+        app_first_seen,
+        destination: hostname.clone(),
+    }))
 }
 
 /// Keep the latest facts about a flow's destination: its hostname, or its address
@@ -874,8 +979,11 @@ fn companies(destinations: &[DestinationTotal]) -> Vec<CompanyTotal> {
     companies
 }
 
-fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<i64> {
+/// Returns the new row's id, and whether its app is new to the history.
+fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<(i64, bool)> {
     let app = app_id(tx, row.app.as_deref(), row.started)?;
+    let new_app = app.is_some_and(|(_, added)| added);
+    let app = app.map(|(id, _)| id);
     tx.execute(
         "INSERT INTO flow (app_id, proto, direction, local_ip, local_port, remote_ip,
                            remote_port, hostname, hostname_src, started, ended, bytes_up,
@@ -900,7 +1008,7 @@ fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<i64> {
             row.bytes_down_away,
         ],
     )?;
-    Ok(tx.last_insert_rowid())
+    Ok((tx.last_insert_rowid(), new_app))
 }
 
 fn update_flow(tx: &Transaction<'_>, id: i64, row: &FlowRow) -> Result<()> {

@@ -10,8 +10,10 @@ use std::time::Duration;
 use sentinel_vpn::{FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 use tokio::sync::Notify;
 
+use sentinel_store::FirstSeen;
+
 use crate::enrich::{CategoryFact, CompanyFact, IpDatabase, TrackerDatabase};
-use crate::history::HistoryStore;
+use crate::history::{HistoryStore, now_ms};
 
 /// How long events wait so that several can cross into Kotlin together. Short enough
 /// that every flow appears within a second (CM-01).
@@ -76,6 +78,11 @@ pub struct FlowOwner {
     pub uid: i32,
     /// Package name (or Android's name for a shared UID), if known.
     pub app: Option<String>,
+    /// When the app was first installed, Unix milliseconds, if known: on Android,
+    /// `PackageInfo.firstInstallTime`. An app installed since the history began is new
+    /// to the network when the history first sees it (CM-04).
+    #[uniffi(default = None)]
+    pub installed_ms: Option<i64>,
 }
 
 /// One app's open connections right now, for the live view (SRS CM-03).
@@ -124,6 +131,8 @@ pub(crate) struct FlowEvents {
     session: u64,
     /// Flows that have started and not ended, with their owner.
     open: Mutex<HashMap<u64, (FlowInfo, FlowOwner)>>,
+    /// When each app seen in this run was installed, where known (CM-04).
+    installed: Mutex<HashMap<String, i64>>,
     pending: Mutex<Vec<FlowRecord>>,
     databases: RwLock<Databases>,
     ready: Notify,
@@ -141,6 +150,7 @@ impl FlowEvents {
             history,
             session,
             open: Mutex::new(HashMap::new()),
+            installed: Mutex::new(HashMap::new()),
             pending: Mutex::new(Vec::new()),
             databases: RwLock::new(Databases::default()),
             ready: Notify::new(),
@@ -213,12 +223,58 @@ impl FlowEvents {
                 .iter()
                 .map(|record| history_event(record, sources.as_ref()))
                 .collect();
-            if let Err(e) = history.store.record_flows(self.session, &events) {
-                log::warn!("could not write {} flows to the history: {e}", events.len());
-                self.history_failures.fetch_add(1, Ordering::Relaxed);
+            match history.store.record_flows(self.session, &events) {
+                Ok(first_seen) => self.raise_first_seen(history, &first_seen),
+                Err(e) => {
+                    log::warn!("could not write {} flows to the history: {e}", events.len());
+                    self.history_failures.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
         self.foreign.flows(batch);
+    }
+
+    /// Alerts for what the flows showed for the first time (CM-04): an app new to the
+    /// network, and the names each app connected to for the first time, together.
+    fn raise_first_seen(&self, history: &HistoryStore, first_seen: &[FirstSeen]) {
+        let now = now_ms();
+        let mut alerts = Vec::new();
+        let mut destinations: Vec<(&str, i64, Vec<String>)> = Vec::new();
+        for seen in first_seen {
+            match seen {
+                FirstSeen::App { app, destination } => {
+                    let installed = lock(&self.installed).get(app).copied();
+                    alerts.extend(sentinel_detect::first_network_use(
+                        now,
+                        app,
+                        installed,
+                        history.store.began(),
+                        destination,
+                    ));
+                }
+                FirstSeen::Destination {
+                    app,
+                    app_first_seen,
+                    destination,
+                } => match destinations.iter_mut().find(|(a, ..)| a == app) {
+                    Some((.., names)) => names.push(destination.clone()),
+                    None => destinations.push((app, *app_first_seen, vec![destination.clone()])),
+                },
+            }
+        }
+        let join_since = now.saturating_sub(sentinel_detect::GROUP_WINDOW_MS);
+        let new_places = destinations.iter().filter_map(|(app, first_seen, names)| {
+            sentinel_detect::new_destinations(now, app, *first_seen, names)
+        });
+        let results = alerts
+            .iter()
+            .map(|alert| history.raise(alert))
+            .chain(new_places.map(|alert| history.raise_or_join(&alert, Some(join_since))));
+        for result in results {
+            if let Err(e) = result {
+                log::warn!("could not raise an alert: {e}");
+            }
+        }
     }
 
     /// Open flows grouped by app, busiest first: the live view (CM-03). Byte counts
@@ -243,6 +299,9 @@ impl Observer for FlowEvents {
             flow.dst.ip().to_string(),
             flow.dst.port(),
         );
+        if let (Some(app), Some(installed)) = (&owner.app, owner.installed_ms) {
+            lock(&self.installed).insert(app.clone(), installed);
+        }
         self.push(record(flow, &owner, None, false, &self.databases()));
         lock(&self.open).insert(flow.id, (flow.clone(), owner));
         Verdict::Allow
@@ -257,9 +316,14 @@ impl Observer for FlowEvents {
     }
 
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
-        let owner = lock(&self.open)
-            .remove(&flow.id)
-            .map_or(FlowOwner { uid: -1, app: None }, |(_, owner)| owner);
+        let owner = lock(&self.open).remove(&flow.id).map_or(
+            FlowOwner {
+                uid: -1,
+                app: None,
+                installed_ms: None,
+            },
+            |(_, owner)| owner,
+        );
         let mut ended = record(
             flow,
             &owner,
@@ -463,6 +527,7 @@ mod tests {
         FlowOwner {
             uid,
             app: Some(app.to_owned()),
+            installed_ms: None,
         }
     }
 
@@ -638,5 +703,176 @@ mod tests {
                 bytes_down: 0,
             }]
         );
+    }
+
+    /// Owns each flow by its remote port, as the app would say.
+    struct PortOwners {
+        owners: HashMap<u16, FlowOwner>,
+        heard: Mutex<Vec<crate::alerts::HistoryAlert>>,
+    }
+
+    impl FlowObserver for PortOwners {
+        fn owner(&self, _: FlowProto, _: String, _: u16, _: String, port: u16) -> FlowOwner {
+            self.owners[&port].clone()
+        }
+
+        fn flows(&self, _: Vec<FlowRecord>) {}
+    }
+
+    impl crate::alerts::AlertListener for PortOwners {
+        fn raised(&self, alert: crate::alerts::HistoryAlert) {
+            self.heard.lock().unwrap().push(alert);
+        }
+    }
+
+    fn history() -> (tempfile::TempDir, Arc<HistoryStore>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![7; 32]).unwrap();
+        (dir, history)
+    }
+
+    fn installed(app: &str, installed_ms: Option<i64>) -> FlowOwner {
+        FlowOwner {
+            uid: 10_100,
+            app: Some(app.to_owned()),
+            installed_ms,
+        }
+    }
+
+    fn listen(history: &Arc<HistoryStore>, owners: Vec<(u16, FlowOwner)>) -> Arc<PortOwners> {
+        let observer = Arc::new(PortOwners {
+            owners: owners.into_iter().collect(),
+            heard: Mutex::new(Vec::new()),
+        });
+        history.set_alert_listener(Some(observer.clone()));
+        observer
+    }
+
+    /// CM-04: an app installed since the history began raises one alert on its first
+    /// connection, naming where it went. Apps installed before, or at an unknown time
+    /// (Android's shared system identities), raise none.
+    #[test]
+    fn only_apps_installed_since_the_history_began_are_new() {
+        use crate::alerts::{AlertAction, AlertEvidence, AlertRule, AlertSeverity};
+
+        let (_dir, history) = history();
+        let began = history.began_ms();
+        let observer = listen(
+            &history,
+            vec![
+                (1, installed("org.example.new", Some(began + 5))),
+                (2, installed("org.example.old", Some(began - 1))),
+                (3, installed("android.uid.system:1000", None)),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let now = u64::try_from(now_ms()).unwrap();
+        let started = |id: u64, port: u16, name: Option<&str>| {
+            let mut flow = flow(id, &format!("203.0.113.5:{port}"), name);
+            flow.started_ms = now;
+            events.flow_started(&flow);
+        };
+        started(1, 1, Some("api.new.example"));
+        started(2, 1, Some("cdn.new.example"));
+        started(3, 2, Some("api.old.example"));
+        started(4, 3, None);
+        events.close_all(now + 10);
+
+        let heard = observer.heard.lock().unwrap().clone();
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        let alert = &heard[0];
+        assert_eq!(alert.rule, AlertRule::FirstNetworkUse);
+        assert_eq!(alert.severity, AlertSeverity::Info);
+        assert_eq!(
+            alert.evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.new".into()
+                },
+                AlertEvidence::Destinations {
+                    destinations: vec!["api.new.example".into()],
+                    more: 0
+                },
+            ]
+        );
+        assert_eq!(
+            alert.actions,
+            [AlertAction::OpenApp {
+                app: "org.example.new".into()
+            }]
+        );
+        // The history knows the apps now: their next connections are not new.
+        started(5, 1, Some("api.new.example"));
+        events.close_all(now + 20);
+        assert_eq!(observer.heard.lock().unwrap().len(), 1);
+    }
+
+    /// CM-04: once the history has learned an app for a week, the names it connects to
+    /// for the first time raise one alert, which later new names of the same day join.
+    /// Names already used, and new apps' names, raise nothing; after the alert is
+    /// dismissed the next new name raises another, and allowing the rule for the app
+    /// stops them.
+    #[test]
+    fn new_names_after_the_learning_period_share_an_alert() {
+        use crate::alerts::{AlertEvidence, AlertFeedback, AlertRule};
+
+        let (_dir, history) = history();
+        let observer = listen(
+            &history,
+            vec![
+                (1, installed("org.example.chat", None)),
+                (2, installed("org.example.fresh", None)),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let now = u64::try_from(now_ms()).unwrap();
+        let week = u64::try_from(sentinel_detect::LEARNING_MS).unwrap();
+        let mut next_id = 0;
+        let mut connect = |port: u16, name: Option<&str>, at: u64| {
+            next_id += 1;
+            let mut flow = flow(next_id, &format!("203.0.113.5:{port}"), name);
+            flow.started_ms = at;
+            events.flow_started(&flow);
+            events.close_all(at + 1);
+        };
+        // First seen more than a week ago, by address only.
+        connect(1, None, now - week - 60_000);
+        connect(1, Some("a.example"), now);
+        connect(1, Some("b.example"), now);
+        connect(1, Some("a.example"), now);
+        // A new app's names are all new: still learning.
+        connect(2, Some("x.example"), now);
+
+        let heard = observer.heard.lock().unwrap().clone();
+        assert_eq!(heard.len(), 1, "told once: {heard:?}");
+        assert_eq!(heard[0].rule, AlertRule::NewDestination);
+        let open = history.alerts(true, 10).unwrap();
+        assert_eq!(open.len(), 1, "{open:?}");
+        assert_eq!(
+            open[0].evidence[1],
+            AlertEvidence::Destinations {
+                destinations: vec!["a.example".into(), "b.example".into()],
+                more: 0
+            }
+        );
+
+        history.dismiss_alert(open[0].id).unwrap();
+        connect(1, Some("c.example"), now);
+        let open = history.alerts(true, 10).unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(
+            open[0].evidence[1],
+            AlertEvidence::Destinations {
+                destinations: vec!["c.example".into()],
+                more: 0
+            }
+        );
+        history
+            .set_feedback(open[0].id, Some(AlertFeedback::Allowed))
+            .unwrap();
+        connect(1, Some("d.example"), now);
+        assert!(history.alerts(true, 10).unwrap().is_empty(), "allowed");
+        assert_eq!(observer.heard.lock().unwrap().len(), 2);
     }
 }

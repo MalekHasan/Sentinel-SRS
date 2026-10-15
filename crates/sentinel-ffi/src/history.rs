@@ -265,6 +265,12 @@ impl HistoryStore {
             .collect())
     }
 
+    /// When this history began, Unix milliseconds: when it was created or last wiped.
+    /// Only apps installed since then can be new to the network (CM-04).
+    pub fn began_ms(&self) -> i64 {
+        self.store.began()
+    }
+
     /// Start a monitoring gap, unless one is already open. `started_ms` is `None` when
     /// the start is unknown. A new gap raises an alert (SP-03).
     pub fn open_gap(&self, started_ms: Option<i64>, reason: String) -> Result<(), HistoryError> {
@@ -384,8 +390,24 @@ impl HistoryStore {
     /// Keep a new alert and tell the listener, if any, unless the user allowed what it
     /// is about (AL-05). The listener is called without any lock held, so it may read
     /// the history.
-    fn raise(&self, alert: &sentinel_detect::Alert) -> Result<(), HistoryError> {
+    pub(crate) fn raise(&self, alert: &sentinel_detect::Alert) -> Result<(), HistoryError> {
+        self.raise_or_join(alert, None)
+    }
+
+    /// As [`HistoryStore::raise`], but if the app has an open alert of the same rule
+    /// raised at or after `join_since`, the new alert's destinations join it instead,
+    /// and the listener is not told again (CM-04).
+    pub(crate) fn raise_or_join(
+        &self,
+        alert: &sentinel_detect::Alert,
+        join_since: Option<i64>,
+    ) -> Result<(), HistoryError> {
         if self.store.is_allowed(alert.rule, alert.app())? {
+            return Ok(());
+        }
+        if let Some(since) = join_since
+            && self.store.join_open_alert(alert, since)?.is_some()
+        {
             return Ok(());
         }
         let id = self.store.record_alert(alert)?;
@@ -401,7 +423,7 @@ impl HistoryStore {
     }
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))

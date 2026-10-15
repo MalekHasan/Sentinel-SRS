@@ -2,6 +2,7 @@
 package io.github.malekhasan.sentinel
 
 import android.content.Context
+import android.icu.text.ListFormatter
 import android.text.format.DateUtils
 import android.util.Log
 import androidx.compose.foundation.clickable
@@ -31,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.malekhasan.sentinel.core.AlertAction
@@ -260,10 +262,14 @@ fun alertExplanation(alert: HistoryAlert): String = stringResource(explanationRe
 
 fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_title
+    AlertRule.FIRST_NETWORK_USE -> R.string.alert_first_network_use_title
+    AlertRule.NEW_DESTINATION -> R.string.alert_new_destination_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_text
+    AlertRule.FIRST_NETWORK_USE -> R.string.alert_first_network_use_text
+    AlertRule.NEW_DESTINATION -> R.string.alert_new_destination_text
 }
 
 @Composable
@@ -284,6 +290,15 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             stringResource(R.string.alert_evidence_gap, start, isolate(evidence.reason))
         }
         is AlertEvidence.App -> stringResource(R.string.alert_evidence_app, isolate(label(evidence.app)))
+        is AlertEvidence.Destinations -> {
+            val listed = ListFormatter.getInstance(LocalConfiguration.current.locales[0])
+                .format(evidence.destinations.map(::isolate))
+            val more = evidence.more.toInt()
+            listOfNotNull(
+                stringResource(R.string.alert_evidence_destinations, listed),
+                if (more > 0) pluralStringResource(R.plurals.alert_evidence_more_destinations, more, more) else null,
+            ).joinToString(" ")
+        }
     }
 
 @Composable

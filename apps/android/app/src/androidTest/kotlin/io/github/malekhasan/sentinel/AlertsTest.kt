@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
+import android.icu.text.ListFormatter
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -170,6 +171,51 @@ class AlertsTest {
         compose.onNodeWithText(context.getString(R.string.alert_feedback_not_useful))
             .performScrollTo().assertIsDisplayed()
         compose.onAllNodesWithText(context.getString(R.string.alert_feedback_allow)).assertCountEquals(0)
+    }
+
+    /**
+     * CM-04: a new app's first connection and an app's new places read as their rule
+     * says, list where the app connected, and count the places not listed.
+     */
+    @Test
+    fun firstSeenAlertsSayWhereTheAppConnected() {
+        fun firstSeen(rule: AlertRule, destinations: List<String>, more: UInt) = HistoryAlert(
+            id = 8,
+            rule = rule,
+            severity = AlertSeverity.INFO,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = "org.example.new"),
+                AlertEvidence.Destinations(destinations = destinations, more = more),
+            ),
+            actions = listOf(AlertAction.OpenApp(app = "org.example.new")),
+            open = true,
+        )
+        var shown by mutableStateOf(firstSeen(AlertRule.FIRST_NETWORK_USE, listOf("api.example"), 0u))
+        compose.setContent {
+            SentinelTheme {
+                AlertDetail(AlertDetails(shown, mapOf("org.example.new" to "New App")), {}, {}, {})
+            }
+        }
+        fun shows(text: String) = compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+        shows(context.getString(R.string.severity_info))
+        shows(context.getString(R.string.alert_first_network_use_title))
+        shows(context.getString(R.string.alert_first_network_use_text))
+        shows(context.getString(R.string.alert_evidence_app, isolate("New App")))
+        shows(context.getString(R.string.alert_evidence_destinations, isolate("api.example")))
+        shows(context.getString(R.string.alert_action_open_app, isolate("New App")))
+
+        val places = listOf("a.example", "b.example", "c.example")
+        shown = firstSeen(AlertRule.NEW_DESTINATION, places, 1u)
+        compose.waitForIdle()
+        shows(context.getString(R.string.alert_new_destination_title))
+        shows(context.getString(R.string.alert_new_destination_text))
+        val listed = ListFormatter.getInstance(context.resources.configuration.locales[0])
+            .format(places.map(::isolate))
+        shows(
+            context.getString(R.string.alert_evidence_destinations, listed) + " " +
+                context.resources.getQuantityString(R.plurals.alert_evidence_more_destinations, 1, 1),
+        )
     }
 
     /** A dismissed alert says so and offers no Dismiss button. */
