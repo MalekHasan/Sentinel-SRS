@@ -16,6 +16,7 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -107,9 +108,12 @@ class AlertsTest {
             R.string.alert_advice_move,
             R.string.alert_advice_help,
         ).forEach { compose.onNodeWithText(context.getString(it)).performScrollTo().assertIsDisplayed() }
-        val advice = compose.onNodeWithText(context.getString(R.string.alert_advice_title)).getBoundsInRoot().top
-        val actions = compose.onNodeWithText(context.getString(R.string.alert_actions_title)).getBoundsInRoot().top
-        assertTrue("the advice comes before the actions", advice < actions)
+        // Unclipped: on a small screen one of them is scrolled out of view.
+        val advice = compose.onNodeWithText(context.getString(R.string.alert_advice_title))
+            .getUnclippedBoundsInRoot().top
+        val actions = compose.onNodeWithText(context.getString(R.string.alert_actions_title))
+            .getUnclippedBoundsInRoot().top
+        assertTrue("the advice ($advice) comes before the actions ($actions)", advice < actions)
         HELPLINES.forEach { (name, link) ->
             compose.onNodeWithText(context.getString(name)).performScrollTo().performClick()
             compose.onNodeWithText(isolate(link)).performScrollTo().assertIsDisplayed()
