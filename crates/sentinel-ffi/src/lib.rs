@@ -7,6 +7,7 @@
 mod alerts;
 mod engine;
 mod enrich;
+mod feed;
 mod firewall;
 mod flows;
 mod history;
@@ -20,6 +21,10 @@ pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProt
 pub use enrich::{
     CategoryFact, CompanyFact, IpDatabase, IpDatabaseError, IpSources, TrackerDatabase,
     TrackerDatabaseError,
+};
+pub use feed::{
+    Feed, FeedFailure, FeedFile, FeedOffer, FeedSource, FeedStatus, trusted_feed_keys,
+    trusted_feed_threshold,
 };
 pub use firewall::{FirewallRule, HistoryRule, RuleAction, RuleDestination};
 pub use flows::{FlowObserver, FlowOwner, FlowProto, FlowRecord, LiveApp, NameSource};

@@ -1123,11 +1123,16 @@ name = "sentinel-ffi"
 version = "0.0.0"
 dependencies = [
  "etherparse 0.20.3",
+ "hex",
  "log",
  "sentinel-detect",
  "sentinel-enrich",
+ "sentinel-feed",
+ "sentinel-ioc",
  "sentinel-store",
  "sentinel-vpn",
+ "serde_json",
+ "sha2",
  "socket2",
  "tempfile",
  "thiserror",
