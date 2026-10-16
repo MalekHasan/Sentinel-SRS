@@ -44,6 +44,7 @@ import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.IndicatorSighting
 import io.github.malekhasan.sentinel.core.IndicatorThreat
+import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -312,19 +313,41 @@ private fun HistoryAlert.installedApp(): Boolean = evidence.any {
         (it.sighting == IndicatorSighting.INSTALLED_PACKAGE || it.sighting == IndicatorSighting.SIGNING_CERTIFICATE)
 }
 
-/** The alert's title: its rule's, a blocked new app's, an installed app's, or a match found in the history. */
+/** The special access the alert is about, if any (ID-12). */
+private fun HistoryAlert.access(): SpecialAccess? =
+    evidence.firstNotNullOfOrNull { (it as? AlertEvidence.Access)?.access }
+
+/**
+ * The alert's title: its rule's, a blocked new app's, an installed app's, a match found
+ * in the history, or the kind of special access an app gained.
+ */
 fun titleRes(alert: HistoryAlert): Int = when {
     alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked() -> R.string.alert_first_network_use_blocked_title
     alert.rule == AlertRule.KNOWN_INDICATOR && alert.installedApp() -> R.string.alert_known_indicator_app_title
     alert.rule == AlertRule.KNOWN_INDICATOR && alert.past() -> R.string.alert_known_indicator_past_title
+    alert.rule == AlertRule.SPECIAL_ACCESS -> when (alert.access()) {
+        SpecialAccess.ACCESSIBILITY -> R.string.alert_accessibility_title
+        SpecialAccess.DEVICE_ADMIN -> R.string.alert_device_admin_title
+        SpecialAccess.NOTIFICATION_LISTENER -> R.string.alert_notification_access_title
+        null -> titleRes(alert.rule)
+    }
     else -> titleRes(alert.rule)
 }
 
-/** The alert's explanation: its rule's, a blocked new app's, an installed app's, or a match found in the history. */
+/**
+ * The alert's explanation: its rule's, a blocked new app's, an installed app's, a match
+ * found in the history, or the kind of special access an app gained.
+ */
 fun explanationRes(alert: HistoryAlert): Int = when {
     alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked() -> R.string.alert_first_network_use_blocked_text
     alert.rule == AlertRule.KNOWN_INDICATOR && alert.installedApp() -> R.string.alert_known_indicator_app_text
     alert.rule == AlertRule.KNOWN_INDICATOR && alert.past() -> R.string.alert_known_indicator_past_text
+    alert.rule == AlertRule.SPECIAL_ACCESS -> when (alert.access()) {
+        SpecialAccess.ACCESSIBILITY -> R.string.alert_accessibility_text
+        SpecialAccess.DEVICE_ADMIN -> R.string.alert_device_admin_text
+        SpecialAccess.NOTIFICATION_LISTENER -> R.string.alert_notification_access_text
+        null -> explanationRes(alert.rule)
+    }
     else -> explanationRes(alert.rule)
 }
 
@@ -336,6 +359,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.PRIVATE_DNS_CHANGED -> R.string.alert_private_dns_changed_title
     AlertRule.PROXY_CHANGED -> R.string.alert_proxy_changed_title
     AlertRule.KNOWN_INDICATOR -> R.string.alert_known_indicator_title
+    AlertRule.SPECIAL_ACCESS -> R.string.alert_special_access_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -346,6 +370,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.PRIVATE_DNS_CHANGED -> R.string.alert_private_dns_changed_text
     AlertRule.PROXY_CHANGED -> R.string.alert_proxy_changed_text
     AlertRule.KNOWN_INDICATOR -> R.string.alert_known_indicator_text
+    AlertRule.SPECIAL_ACCESS -> R.string.alert_special_access_text
 }
 
 @Composable
@@ -421,6 +446,13 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             ),
         ).joinToString(" ")
         is AlertEvidence.PastConnections -> pastConnections(evidence)
+        is AlertEvidence.Access -> stringResource(
+            when (evidence.access) {
+                SpecialAccess.ACCESSIBILITY -> R.string.alert_evidence_accessibility
+                SpecialAccess.DEVICE_ADMIN -> R.string.alert_evidence_device_admin
+                SpecialAccess.NOTIFICATION_LISTENER -> R.string.alert_evidence_notification_access
+            },
+        )
     }
 
 /** How many connections the history holds, and on which days (MS-02). */
@@ -465,4 +497,5 @@ private fun actionLabel(action: AlertAction, label: (String) -> String): String 
         is AlertAction.OpenNetworkSettings -> stringResource(R.string.alert_action_open_network_settings)
         is AlertAction.AllowApp -> stringResource(R.string.alert_action_allow_app, isolate(label(action.app)))
         is AlertAction.BlockApp -> stringResource(R.string.alert_action_block_app, isolate(label(action.app)))
+        is AlertAction.OpenAccessSettings -> stringResource(R.string.alert_action_open_access_settings)
     }

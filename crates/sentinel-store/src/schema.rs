@@ -230,7 +230,21 @@ CREATE TABLE action_journal (
 );
 ";
 
-const STEPS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14];
+/// The special access each app held at the last check (ID-12, ADR-0024): accessibility,
+/// device admin or notification access, by its `sentinel_detect::Access` name. An app
+/// that gains one is reported, also when it was turned on while Sentinel was not
+/// running.
+const V15: &str = "
+CREATE TABLE app_access (
+  app TEXT NOT NULL,
+  access TEXT NOT NULL,              -- accessibility|device_admin|notification_listener
+  PRIMARY KEY (app, access)
+);
+";
+
+const STEPS: &[&str] = &[
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

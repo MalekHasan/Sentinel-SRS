@@ -139,6 +139,8 @@ class MainActivity : ComponentActivity() {
                                             startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
                                         is AlertAction.AllowApp -> scope.launch { allow(action.app, alert) }
                                         is AlertAction.BlockApp -> scope.launch { block(action.app, alert) }
+                                        is AlertAction.OpenAccessSettings ->
+                                            startActivity(AccessGrants.settings(action.access))
                                     }
                                 },
                             )
@@ -209,13 +211,15 @@ class MainActivity : ComponentActivity() {
         visible.value = true
         // A new list as soon as the app opens, when one is due (MS-10). Then the history
         // is checked against the list in force, should that not have been done (MS-02),
-        // and the installed apps, which may have changed since (ID-13).
+        // and the installed apps, which may have changed since (ID-13), with the special
+        // access they hold (ID-12).
         Thread({
             if (IndicatorFeed.get(this) != null && IndicatorFeed.checkDue(this)) {
                 IndicatorFeed.checkPublished(this)
             }
             History.hunt(this)
             InstalledApps.check(this)
+            AccessGrants.check(this)
         }, "sentinel-feed-check").start()
     }
 

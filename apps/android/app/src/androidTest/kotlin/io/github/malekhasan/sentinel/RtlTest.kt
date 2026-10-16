@@ -57,6 +57,7 @@ import io.github.malekhasan.sentinel.core.LiveApp
 import io.github.malekhasan.sentinel.core.NameSource
 import io.github.malekhasan.sentinel.core.RuleAction
 import io.github.malekhasan.sentinel.core.RuleDestination
+import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -535,6 +536,40 @@ class RtlTest {
         )
         line.assertCountEquals(1)
         assertRightToLeft(line[0].performScrollTo())
+    }
+
+    /** ID-12: an app that gained notification access, with its name written left to
+     *  right inside right-to-left lines. */
+    @Test
+    fun specialAccessAlert() {
+        val alert = HistoryAlert(
+            id = 9,
+            rule = AlertRule.SPECIAL_ACCESS,
+            severity = AlertSeverity.HIGH,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.Access(access = SpecialAccess.NOTIFICATION_LISTENER),
+            ),
+            actions = listOf(
+                AlertAction.OpenAccessSettings(access = SpecialAccess.NOTIFICATION_LISTENER),
+                AlertAction.BlockApp(app = PACKAGE),
+                AlertAction.OpenApp(app = PACKAGE),
+            ),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_notification_access_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_notification_access_text)))
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.alert_evidence_notification_access)).performScrollTo(),
+        )
+        // The action is a button: its label is read from the unmerged tree.
+        val settings = arabic.getString(R.string.alert_action_open_access_settings)
+        compose.onNodeWithText(settings).performScrollTo()
+        assertRightToLeft(compose.onNodeWithText(settings, useUnmergedTree = true))
     }
 
     /** MS-02: a match found in the history says how many connections, and on which days,

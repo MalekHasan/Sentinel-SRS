@@ -6,13 +6,13 @@
 //! The history is itself sensitive (THREAT-MODEL-A I3, I4): it never leaves the device,
 //! the file is encrypted with a random 256-bit key, and [`wipe`] deletes it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sentinel_detect::{
-    Alert, AlertState, Change, Delivery, Feedback, FirewallMode, FirewallRule, Isolation,
+    Access, Alert, AlertState, Change, Delivery, Feedback, FirewallMode, FirewallRule, Isolation,
     NetworkState, Rule, Sent, Setting, Severity,
 };
 use zeroize::Zeroizing;
@@ -825,6 +825,44 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(previous.and_then(|json| NetworkState::from_json(&json).ok()))
+    }
+
+    /// Keep `held` as the special access apps hold (ID-12) and return what of it they
+    /// did not hold at the last check, in the order given. Nothing is written when
+    /// nothing changed. Access this version cannot name counts as not held.
+    pub fn swap_access(&self, held: &[(String, Access)]) -> Result<Vec<(String, Access)>> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let mut before = HashSet::new();
+        {
+            let mut rows = tx.prepare("SELECT app, access FROM app_access")?;
+            let rows =
+                rows.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            for row in rows {
+                let (app, access) = row?;
+                if let Some(access) = Access::from_name(&access) {
+                    before.insert((app, access));
+                }
+            }
+        }
+        let now: HashSet<&(String, Access)> = held.iter().collect();
+        if now.len() != before.len() || !now.iter().all(|entry| before.contains(*entry)) {
+            tx.execute("DELETE FROM app_access", [])?;
+            for (app, access) in &now {
+                tx.execute(
+                    "INSERT INTO app_access (app, access) VALUES (?1, ?2)",
+                    params![app, access.as_str()],
+                )?;
+            }
+        }
+        tx.commit()?;
+        let mut gained: Vec<(String, Access)> = Vec::new();
+        for entry in held {
+            if !before.contains(entry) && !gained.contains(entry) {
+                gained.push(entry.clone());
+            }
+        }
+        Ok(gained)
     }
 
     /// Keep a firewall rule, replacing one about the same app and destination (CM-10),

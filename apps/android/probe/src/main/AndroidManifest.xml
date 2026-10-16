@@ -6,14 +6,50 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- A test fixture with no data and no icon. Exported so that the device tests can
-         start it with `am start` as Android's shell user. -->
+         start it with `am start` as Android's shell user. testOnly: the tests can make it
+         a device admin and take that back (`dpm remove-active-admin` needs it). -->
     <application
         android:allowBackup="false"
         android:label="Sentinel probe"
+        android:testOnly="true"
         tools:ignore="MissingApplicationIcon">
         <activity
             android:name=".ConnectActivity"
             android:exported="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- The special access stalkerware asks for (ID-12), which the device tests turn
+             on with `settings`, `cmd notification` and `dpm`. Only Android, which holds
+             each permission, can bind them. -->
+        <service
+            android:name=".Watcher"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/watcher" />
+        </service>
+        <service
+            android:name=".Listener"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <receiver
+            android:name=".Admin"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
