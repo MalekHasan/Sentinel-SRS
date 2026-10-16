@@ -80,6 +80,7 @@ class JournalTest {
         waitUntilShown(context.getString(R.string.journal_block_app, isolate(label)))
         compose.onNodeWithText(context.getString(R.string.journal_from_alert)).assertIsDisplayed()
         tapUndo(entry.id)
+        waitUntilShown(context.getString(R.string.journal_undo_done))
         waitFor("the block undone") { history.appAccess(context.packageName, null).rule == null }
         assertNotNull("reachable again", answer(host, port))
         compose.waitUntil(5_000) { compose.onAllNodes(undoIn(entry.id)).fetchSemanticsNodes().isEmpty() }

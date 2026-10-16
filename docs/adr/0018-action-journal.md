@@ -40,6 +40,8 @@ The decision the firewall takes for each connection is not an action in this sen
    - when, and "From an alert" if it came from one;
    - an Undo button while it can be undone, and when it was undone if it was.
 
+   After an Undo, the screen says what it did: undone, or left as it is because it changed since.
+
    Rules are described by the app's name, the domain or address, and "the company …".
 
 ## Verification
@@ -50,7 +52,7 @@ The decision the firewall takes for each connection is not an action in this sen
   - undo restores a new, a replaced and a removed rule, the mode with when Block-unknown began, and isolation with when it began. It refuses an action whose setting changed since, and an action already undone. Undoing the later action makes the earlier one undoable again.
 - `sentinel-ffi`: an action taken from an alert keeps the alert. Undoing a block lets the app through at the next decision and signals running engines. The mode and isolation are back in force at once, isolation with when it began, also after reopening.
 - On the Android 14 emulator (`JournalTest`):
-  - blocking this app from an alert stops its request; the journal shows the action as from that alert, and tapping Undo lets the request through again;
+  - blocking this app from an alert stops its request; the journal shows the action as from that alert, and tapping Undo says it was undone and lets the request through again;
   - after switching to Block new apps, isolating and ending isolation, the journal offers Undo on the latest action of each setting only; tapping Undo, newest first, brings isolation back with when it began, then ends it, then returns the mode to Watch only;
   - each kind of action is described in one sentence, with Undo only where it applies;
   - `RtlTest` shows the journal in Arabic, right to left.

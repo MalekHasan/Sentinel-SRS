@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
-import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -60,6 +59,8 @@ fun JournalScreen(onBack: () -> Unit) {
     val names = remember(context) { AppNames(context) }
     val scope = rememberCoroutineScope()
     var rows by remember { mutableStateOf(emptyList<JournalRow>()) }
+    // What the last Undo did.
+    var said by remember { mutableStateOf<Int?>(null) }
     // Bumped after an undo so the list reloads.
     var generation by remember { mutableIntStateOf(0) }
 
@@ -70,22 +71,22 @@ fun JournalScreen(onBack: () -> Unit) {
             }
         }
     }
-    Journal(rows, onBack, onUndo = { id ->
+    Journal(rows, said, onBack, onUndo = { id ->
         scope.launch {
             val result = withContext(Dispatchers.IO) { undoAction(context, id) }
-            val said = when (result) {
+            said = when (result) {
                 UndoResult.UNDONE -> R.string.journal_undo_done
                 UndoResult.CHANGED_SINCE -> R.string.journal_changed_since
                 else -> R.string.journal_cannot_undo
             }
-            Toast.makeText(context, context.getString(said), Toast.LENGTH_LONG).show()
             generation++
         }
     })
 }
 
+/** The journal's content; [said] is what the last Undo did, if any. */
 @Composable
-fun Journal(rows: List<JournalRow>, onBack: () -> Unit, onUndo: (Long) -> Unit) {
+fun Journal(rows: List<JournalRow>, said: Int? = null, onBack: () -> Unit, onUndo: (Long) -> Unit) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -103,6 +104,11 @@ fun Journal(rows: List<JournalRow>, onBack: () -> Unit, onUndo: (Long) -> Unit) 
         item {
             val explanation = if (rows.isEmpty()) R.string.journal_empty else R.string.journal_explainer
             Text(stringResource(explanation), style = MaterialTheme.typography.bodyMedium)
+        }
+        if (said != null) {
+            item {
+                Text(stringResource(said), style = MaterialTheme.typography.titleSmall)
+            }
         }
         items(rows, key = { it.entry.id }) { row -> JournalRowView(row, onUndo) }
     }
