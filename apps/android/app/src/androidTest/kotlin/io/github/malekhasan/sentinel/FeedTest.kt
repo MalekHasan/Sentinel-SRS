@@ -2,9 +2,13 @@
 package io.github.malekhasan.sentinel
 
 import android.net.Uri
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -15,6 +19,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.IndicatorFeed.Outcome
 import io.github.malekhasan.sentinel.core.FeedSource
 import io.github.malekhasan.sentinel.core.FeedStatus
+import io.github.malekhasan.sentinel.core.KnownTraces
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -182,6 +187,61 @@ class FeedTest {
         shown(context.getString(R.string.feed_no_keys))
         absent(R.string.feed_check)
         absent(R.string.feed_explainer)
+    }
+
+    /** MS-15: "Known traces found" or "No known traces found", with the date of the list,
+     *  and what a "not found" cannot say. Nothing is said before the history has been
+     *  checked against the list in force, or without a list. */
+    @Test
+    fun theResultSaysWhetherKnownTracesWereFoundAndWithWhichList() {
+        val now = System.currentTimeMillis()
+        val status = FeedStatus(
+            version = 3u,
+            createdMs = now - DAY,
+            expiresMs = now + 13 * DAY,
+            sources = listOf(FeedSource("sentinel-test", "Sentinel test indicators", "https://example.org", "CC0", 3u)),
+            indicators = 3u,
+            skipped = 0u,
+        )
+        var feed by mutableStateOf(IndicatorFeed.State(status = status))
+        var traces by mutableStateOf<KnownTraces?>(null)
+        compose.setContent {
+            SentinelTheme {
+                Column(Modifier.verticalScroll(rememberScrollState())) { IndicatorList(feed, {}, {}, traces) }
+            }
+        }
+        val dates = DateFormat.getDateInstance(DateFormat.MEDIUM, context.resources.configuration.locales[0])
+        val listDate = dates.format(Date(status.createdMs))
+        fun shown(text: String) = compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+        fun absent(id: Int) = compose.onNodeWithText(context.getString(id)).assertDoesNotExist()
+        val results = listOf(R.string.feed_result_found, R.string.feed_result_none, R.string.feed_result_pending)
+
+        results.forEach(::absent)
+
+        val checkedBefore = KnownTraces(alerts = 0u, checkedVersion = 2u, sinceMs = now - 10 * DAY)
+        traces = checkedBefore
+        compose.waitForIdle()
+        shown(context.getString(R.string.feed_result_pending))
+        absent(R.string.feed_result_none)
+
+        traces = checkedBefore.copy(checkedVersion = 3u)
+        compose.waitForIdle()
+        shown(context.getString(R.string.feed_result_none))
+        shown(context.getString(R.string.feed_result_none_text, dates.format(Date(now - 10 * DAY)), listDate))
+        shown(context.getString(R.string.feed_result_limits))
+        absent(R.string.feed_result_found)
+
+        // A trace found stays found, whatever the check says.
+        traces = checkedBefore.copy(alerts = 2u)
+        compose.waitForIdle()
+        shown(context.getString(R.string.feed_result_found))
+        shown(context.resources.getQuantityString(R.plurals.feed_result_found_text, 2, 2, listDate))
+        absent(R.string.feed_result_none)
+        absent(R.string.feed_result_limits)
+
+        feed = IndicatorFeed.State()
+        compose.waitForIdle()
+        results.forEach(::absent)
     }
 
     private fun update(): Outcome = IndicatorFeed.update(context, IndicatorFeed.HttpSource(server.base))

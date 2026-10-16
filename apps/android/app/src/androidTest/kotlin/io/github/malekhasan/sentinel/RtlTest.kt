@@ -51,6 +51,7 @@ import io.github.malekhasan.sentinel.core.HistoryFlow
 import io.github.malekhasan.sentinel.core.IndicatorSighting
 import io.github.malekhasan.sentinel.core.IndicatorThreat
 import io.github.malekhasan.sentinel.core.JournalEntry
+import io.github.malekhasan.sentinel.core.KnownTraces
 import io.github.malekhasan.sentinel.core.JournalState
 import io.github.malekhasan.sentinel.core.LiveApp
 import io.github.malekhasan.sentinel.core.NameSource
@@ -204,9 +205,15 @@ class RtlTest {
             indicators = 3u,
             skipped = 0u,
         )
+        val since = now - 30 * 24 * 60 * 60 * 1000L
         compose.setContent {
             InArabic {
-                IndicatorList(IndicatorFeed.State(status = status, last = IndicatorFeed.Outcome.UP_TO_DATE), {}, {})
+                IndicatorList(
+                    IndicatorFeed.State(status = status, last = IndicatorFeed.Outcome.UP_TO_DATE),
+                    {},
+                    {},
+                    KnownTraces(alerts = 0u, checkedVersion = 3u, sinceMs = since),
+                )
             }
         }
         compose.onNodeWithText(arabic.getString(R.string.feed_title)).assertAtTheRight()
@@ -219,6 +226,15 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.feed_expired, dates.format(Date(status.expiresMs)))))
         compose.onNodeWithText(arabic.getString(R.string.feed_outcome_up_to_date)).assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.feed_check)).assertAtTheRight()
+        // The result (MS-15), with its dates and limits.
+        compose.onNodeWithText(arabic.getString(R.string.feed_result_none)).assertAtTheRight()
+        val none = arabic.getString(
+            R.string.feed_result_none_text,
+            dates.format(Date(since)),
+            dates.format(Date(status.createdMs)),
+        )
+        assertRightToLeft(compose.onNodeWithText(none))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.feed_result_limits)))
     }
 
     @Test
@@ -476,6 +492,11 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(block, useUnmergedTree = true))
         // A Critical alert cannot be allowed away (AL-05).
         compose.onNodeWithText(arabic.getString(R.string.alert_feedback_allow)).assertDoesNotExist()
+        // MS-13 advice, with a helpline's Latin name inside an Arabic label.
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_advice_keep)).performScrollTo())
+        val helpline = arabic.getString(R.string.alert_advice_access_now)
+        compose.onNodeWithText(helpline).performScrollTo()
+        assertRightToLeft(compose.onNodeWithText(helpline, useUnmergedTree = true))
     }
 
     /** MS-02: a match found in the history says how many connections, and on which days,

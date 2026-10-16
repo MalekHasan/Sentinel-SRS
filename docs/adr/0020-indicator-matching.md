@@ -41,7 +41,7 @@
    - A later run raises nothing new while an alert about the same app and indicator is still open.
    - Once the user dismisses it, the next run raises another.
 7. **Nothing is blocked without the user.** The engine lets the matched traffic through. The alert offers "Block the internet for this app" (RA-01, logged in the action journal with undo; [ADR-0018](0018-action-journal.md)) and "See what this app did".
-8. **The app says "Known traces of spyware found"** and shows each line of the evidence: what was looked up or connected to, that it is on the list as a sign of the family and threat, and the source with the report's date and link. It never says "clean" or "safe". The fuller result wording, and the advice MS-13 asks for on every match (do not reset the phone yet, move sensitive talk to another device, contact a helpline), come with the next task (MS-13, MS-15).
+8. **The app says "Known traces of spyware found"** and shows each line of the evidence: what was looked up or connected to, that it is on the list as a sign of the family and threat, and the source with the report's date and link. It never says "clean" or "safe". The result wording, and the advice MS-13 asks for on every match (do not reset the phone yet, move sensitive talk to another device, contact a helpline), are [ADR-0022](0022-result-wording-and-advice.md)'s.
 
 ## Verification
 

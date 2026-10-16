@@ -1193,6 +1193,9 @@ fn alerts_are_found_by_rule() {
     };
     assert_eq!(ids(true), [first_id]);
     assert_eq!(ids(false), [second_id, first_id], "dismissed ones too");
+    assert_eq!(store.count_alerts(Rule::KnownIndicator).unwrap(), 2);
+    assert_eq!(store.count_alerts(Rule::MonitoringInterrupted).unwrap(), 1);
+    assert_eq!(store.count_alerts(Rule::ProxyChanged).unwrap(), 0);
     assert!(
         store
             .alerts_of(Rule::ProxyChanged, false)
