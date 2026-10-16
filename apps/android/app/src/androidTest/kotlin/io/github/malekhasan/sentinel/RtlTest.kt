@@ -60,6 +60,8 @@ import io.github.malekhasan.sentinel.core.LiveApp
 import io.github.malekhasan.sentinel.core.NameSource
 import io.github.malekhasan.sentinel.core.RuleAction
 import io.github.malekhasan.sentinel.core.RuleDestination
+import io.github.malekhasan.sentinel.core.SensorKind
+import io.github.malekhasan.sentinel.core.SensorUse
 import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
 import java.time.LocalDate
@@ -621,6 +623,45 @@ class RtlTest {
         val patch = arabic.getString(R.string.hardening_security_patch, isolate("2023-02-05"))
         assertRightToLeft(compose.onNodeWithText(patch).performScrollTo())
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_status_check)).performScrollTo())
+    }
+
+    /** SE-01: the main screen's record of microphone and camera use, right to left, with
+     *  the guessed app's name written left to right. */
+    @Test
+    fun sensorUses() {
+        val use = SensorUse(
+            id = 1, sensor = SensorKind.MICROPHONE, startedMs = now - 60_000, endedMs = now,
+            guess = PACKAGE, userPresent = false,
+        )
+        compose.setContent {
+            InArabic { SensorUses(listOf(use), usageAccess = false, labelFor = { LABEL }, onUsageAccess = {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.sensors_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.sensor_use_guess, isolate(LABEL))))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.sensor_use_away)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.sensors_usage_access)))
+    }
+
+    /** SE-04: a use of the microphone with the screen off, right to left. */
+    @Test
+    fun sensorAlert() {
+        val alert = HistoryAlert(
+            id = 11,
+            rule = AlertRule.SENSOR_WHILE_AWAY,
+            severity = AlertSeverity.HIGH,
+            createdMs = now,
+            evidence = listOf(AlertEvidence.Sensor(sensor = SensorKind.MICROPHONE, startedMs = now, guess = PACKAGE)),
+            actions = listOf(AlertAction.OpenPrivacySettings),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_microphone_while_away_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_microphone_while_away_text)))
+        val action = arabic.getString(R.string.alert_action_open_privacy_settings)
+        compose.onNodeWithText(action).performScrollTo()
+        assertRightToLeft(compose.onNodeWithText(action, useUnmergedTree = true))
     }
 
     /** MS-02: a match found in the history says how many connections, and on which days,

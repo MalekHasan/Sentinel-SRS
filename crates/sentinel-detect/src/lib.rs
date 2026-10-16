@@ -17,6 +17,7 @@ mod indicator;
 mod journal;
 mod network;
 mod posture;
+mod sensor;
 
 pub use access::{Access, special_access};
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
@@ -35,6 +36,7 @@ pub use indicator::{
 pub use journal::{Change, Setting};
 pub use network::{NetworkState, network_changes};
 pub use posture::{Certificate, Posture, RemoteAccess, posture_changes};
+pub use sensor::{Attribution, Sensor, sensor_while_away};
 
 /// How urgent an alert is (AL-01). Ordered from least to most urgent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -93,6 +95,8 @@ pub enum Rule {
     RemoteAccessExposed,
     /// The user added a certificate authority to the trusted ones (ID-10).
     NewRootCertificate,
+    /// The microphone or camera was in use while the screen was off or locked (SE-04).
+    SensorWhileAway,
 }
 
 impl Rule {
@@ -108,6 +112,7 @@ impl Rule {
             Rule::SpecialAccess => "special-access",
             Rule::RemoteAccessExposed => "remote-access-exposed",
             Rule::NewRootCertificate => "new-root-certificate",
+            Rule::SensorWhileAway => "sensor-while-away",
         }
     }
 
@@ -123,6 +128,7 @@ impl Rule {
             Rule::SpecialAccess,
             Rule::RemoteAccessExposed,
             Rule::NewRootCertificate,
+            Rule::SensorWhileAway,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -149,6 +155,8 @@ impl Rule {
             // Where it can be turned off (ID-03) or the certificate removed (ID-10).
             Rule::RemoteAccessExposed => vec![Action::OpenDeveloperSettings],
             Rule::NewRootCertificate => vec![Action::OpenCertificateSettings],
+            // Android's privacy dashboard knows which app it was (SE-01 basic, AM-15).
+            Rule::SensorWhileAway => vec![Action::OpenPrivacySettings],
         };
         // A new app that Block-unknown stopped can be let through (CM-08); an app new to
         // the network, or to some places, seen with a known indicator, or that gained
@@ -235,6 +243,13 @@ pub enum Evidence {
     /// A certificate authority the user added to the trusted ones (ID-10): its SHA-256
     /// in lower-case hex, and who it was issued to.
     Certificate { sha256: String, subject: String },
+    /// A sensor in use since `started` (Unix ms) (SE-01). `guess` is the app that was on
+    /// screen when the use began, if known: a guess, not the app's identity (AM-15).
+    Sensor {
+        sensor: Sensor,
+        started: i64,
+        guess: Option<String>,
+    },
 }
 
 /// What the user can do from an alert (SRS §9). Actions that change the device come
@@ -266,6 +281,9 @@ pub enum Action {
     OpenDeveloperSettings,
     /// Android's trusted certificates, where one can be removed (ID-10).
     OpenCertificateSettings,
+    /// Android's privacy settings, whose dashboard names the apps that used a sensor
+    /// (SE-01 basic).
+    OpenPrivacySettings,
 }
 
 /// One alert.
@@ -409,6 +427,10 @@ mod tests {
         assert_eq!(
             Rule::from_id("new-root-certificate"),
             Some(Rule::NewRootCertificate)
+        );
+        assert_eq!(
+            Rule::from_id("sensor-while-away"),
+            Some(Rule::SensorWhileAway)
         );
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {

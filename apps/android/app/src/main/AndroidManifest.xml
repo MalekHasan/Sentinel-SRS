@@ -21,6 +21,12 @@
     <!-- Whether Android Advanced Protection is on, for the hardening checklist (MS-12).
          Granted at install; Android 16 and later only. -->
     <uses-permission android:name="android.permission.QUERY_ADVANCED_PROTECTION_MODE" />
+    <!-- Usage access, which only the user can grant in Android's settings: the app on
+         screen, Sentinel's guess at which app uses the microphone or camera (SE-01 basic,
+         AM-15, PLAY-POLICY.md). -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- allowBackup=false: the local database holds sensitive history and must not
          leave the phone through cloud backups (SRS NF-11, §15.2). -->

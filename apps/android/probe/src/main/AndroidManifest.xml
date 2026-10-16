@@ -4,6 +4,16 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Granted by the device tests with `pm grant`, to use the microphone and a camera
+         (SE-01, SE-04). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
 
     <!-- A test fixture with no data and no icon. Exported so that the device tests can
          start it with `am start` as Android's shell user. testOnly: the tests can make it
@@ -15,6 +25,14 @@
         tools:ignore="MissingApplicationIcon">
         <activity
             android:name=".ConnectActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
+            android:name=".RecordActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
+            android:name=".CameraActivity"
             android:exported="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 

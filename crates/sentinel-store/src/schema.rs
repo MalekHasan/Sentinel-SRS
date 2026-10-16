@@ -253,8 +253,23 @@ CREATE TABLE posture_state (
 );
 ";
 
+/// The SRS `sensor_use` table (SE-01, ADR-0027): each use of the microphone or camera.
+/// `app_id` is the app when known, or guessed when `source` says so; `user_present`
+/// turns 0 once the screen was off or locked during the use (SE-04).
+const V17: &str = "
+CREATE TABLE sensor_use (
+  id INTEGER PRIMARY KEY,
+  app_id INTEGER REFERENCES app(id),
+  sensor TEXT NOT NULL,              -- mic|camera
+  started INTEGER NOT NULL,
+  ended INTEGER,
+  user_present INTEGER NOT NULL,
+  source TEXT NOT NULL               -- unknown|foreground|exact: how the app was found
+);
+";
+
 const STEPS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17,
 ];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
