@@ -4,6 +4,7 @@
 //! The API grows with Phase A: engine control, flow events and the encrypted history
 //! now, then alerts.
 
+mod access;
 mod alerts;
 mod apps;
 mod engine;
@@ -15,9 +16,10 @@ mod history;
 mod hunt;
 mod journal;
 
+pub use access::{AccessCheck, HeldAccess};
 pub use alerts::{
     AlertAction, AlertDelivery, AlertEvidence, AlertFeedback, AlertListener, AlertRule,
-    AlertSeverity, AllowedRule, HistoryAlert,
+    AlertSeverity, AllowedRule, HistoryAlert, SpecialAccess,
 };
 pub use apps::{AppCheck, InstalledApp};
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};

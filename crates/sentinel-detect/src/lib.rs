@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
+mod access;
 mod delivery;
 mod firewall;
 mod first_seen;
@@ -15,6 +16,7 @@ mod indicator;
 mod journal;
 mod network;
 
+pub use access::{Access, special_access};
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
 pub use firewall::{
     Destination, FirewallMode, FirewallRule, Isolation, Network, Place, RuleAction, RuleError,
@@ -81,6 +83,8 @@ pub enum Rule {
     ProxyChanged,
     /// An app's traffic named a known indicator of spyware or stalkerware (ID-13).
     KnownIndicator,
+    /// An app gained accessibility, device admin or notification access (ID-12).
+    SpecialAccess,
 }
 
 impl Rule {
@@ -93,6 +97,7 @@ impl Rule {
             Rule::PrivateDnsChanged => "private-dns-changed",
             Rule::ProxyChanged => "proxy-changed",
             Rule::KnownIndicator => "known-indicator",
+            Rule::SpecialAccess => "special-access",
         }
     }
 
@@ -105,6 +110,7 @@ impl Rule {
             Rule::PrivateDnsChanged,
             Rule::ProxyChanged,
             Rule::KnownIndicator,
+            Rule::SpecialAccess,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -118,14 +124,27 @@ impl Rule {
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
+            // Where the access can be turned off (ID-12).
+            Rule::SpecialAccess => evidence
+                .iter()
+                .filter_map(|e| match e {
+                    Evidence::Access { access } => {
+                        Some(Action::OpenAccessSettings { access: *access })
+                    }
+                    _ => None,
+                })
+                .collect(),
         };
         // A new app that Block-unknown stopped can be let through (CM-08); an app new to
-        // the network, or to some places, or seen with a known indicator, can be stopped
-        // (RA-01).
+        // the network, or to some places, seen with a known indicator, or that gained
+        // special access, can be stopped (RA-01).
         let blocked = evidence.contains(&Evidence::NewAppBlocked);
         let blockable = matches!(
             self,
-            Rule::FirstNetworkUse | Rule::NewDestination | Rule::KnownIndicator
+            Rule::FirstNetworkUse
+                | Rule::NewDestination
+                | Rule::KnownIndicator
+                | Rule::SpecialAccess
         );
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } if blocked => Some(Action::AllowApp {
@@ -194,6 +213,8 @@ pub enum Evidence {
         last: i64,
         connections: u64,
     },
+    /// Special access the app the alert is about holds (ID-12).
+    Access { access: Access },
 }
 
 /// What the user can do from an alert (SRS §9). Actions that change the device come
@@ -215,6 +236,11 @@ pub enum Action {
     /// blocking it (RA-01).
     BlockApp {
         package: String,
+    },
+    /// Android's settings for a kind of special access, where it can be turned off
+    /// (ID-12).
+    OpenAccessSettings {
+        access: Access,
     },
 }
 
@@ -351,6 +377,7 @@ mod tests {
             Rule::from_id("monitoring-interrupted"),
             Some(Rule::MonitoringInterrupted)
         );
+        assert_eq!(Rule::from_id("special-access"), Some(Rule::SpecialAccess));
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {
             assert_eq!(AlertState::from_name(state.as_str()), Some(state));

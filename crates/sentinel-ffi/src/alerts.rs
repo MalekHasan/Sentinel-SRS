@@ -3,7 +3,7 @@
 //! explanation in the user's language from its rule and evidence (ADR-0012).
 
 use sentinel_detect::{
-    Action, AlertState, Delivery, Evidence, Feedback, Rule, Severity, Sighting, Threat,
+    Access, Action, AlertState, Delivery, Evidence, Feedback, Rule, Severity, Sighting, Threat,
 };
 use sentinel_store::StoredAlert;
 
@@ -34,6 +34,40 @@ pub enum AlertRule {
     ProxyChanged,
     /// An app's traffic named a known indicator of spyware or stalkerware (ID-13).
     KnownIndicator,
+    /// An app gained accessibility, device admin or notification access (ID-12).
+    SpecialAccess,
+}
+
+/// Special access an app holds (ID-12).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SpecialAccess {
+    /// An accessibility service: the app can read the screen and act for the user.
+    Accessibility,
+    /// A device admin app: it can lock or wipe the phone, and cannot be uninstalled
+    /// while it is one.
+    DeviceAdmin,
+    /// Notification access: the app reads every notification.
+    NotificationListener,
+}
+
+impl From<SpecialAccess> for Access {
+    fn from(access: SpecialAccess) -> Self {
+        match access {
+            SpecialAccess::Accessibility => Access::Accessibility,
+            SpecialAccess::DeviceAdmin => Access::DeviceAdmin,
+            SpecialAccess::NotificationListener => Access::NotificationListener,
+        }
+    }
+}
+
+impl From<Access> for SpecialAccess {
+    fn from(access: Access) -> Self {
+        match access {
+            Access::Accessibility => SpecialAccess::Accessibility,
+            Access::DeviceAdmin => SpecialAccess::DeviceAdmin,
+            Access::NotificationListener => SpecialAccess::NotificationListener,
+        }
+    }
 }
 
 /// How the traffic showed an indicator.
@@ -120,6 +154,8 @@ pub enum AlertEvidence {
         last_ms: i64,
         connections: u64,
     },
+    /// Special access the app holds (ID-12).
+    Access { access: SpecialAccess },
 }
 
 /// What the user can do from an alert (SRS §9).
@@ -141,6 +177,11 @@ pub enum AlertAction {
     /// blocking it (`HistoryStore.set_firewall_rule`).
     BlockApp {
         app: String,
+    },
+    /// Open Android's settings for this kind of special access, where it can be turned
+    /// off (ID-12).
+    OpenAccessSettings {
+        access: SpecialAccess,
     },
 }
 
@@ -212,6 +253,7 @@ impl From<Rule> for AlertRule {
             Rule::PrivateDnsChanged => AlertRule::PrivateDnsChanged,
             Rule::ProxyChanged => AlertRule::ProxyChanged,
             Rule::KnownIndicator => AlertRule::KnownIndicator,
+            Rule::SpecialAccess => AlertRule::SpecialAccess,
         }
     }
 }
@@ -269,6 +311,9 @@ impl From<StoredAlert> for HistoryAlert {
                     Action::OpenNetworkSettings => AlertAction::OpenNetworkSettings,
                     Action::AllowApp { package } => AlertAction::AllowApp { app: package },
                     Action::BlockApp { package } => AlertAction::BlockApp { app: package },
+                    Action::OpenAccessSettings { access } => AlertAction::OpenAccessSettings {
+                        access: access.into(),
+                    },
                 })
                 .collect(),
             evidence: alert
@@ -319,6 +364,9 @@ impl From<StoredAlert> for HistoryAlert {
                         first_ms: first,
                         last_ms: last,
                         connections,
+                    },
+                    Evidence::Access { access } => AlertEvidence::Access {
+                        access: access.into(),
                     },
                 })
                 .collect(),

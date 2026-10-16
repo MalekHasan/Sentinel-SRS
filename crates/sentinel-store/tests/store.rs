@@ -1239,6 +1239,59 @@ fn the_network_settings_last_seen_are_kept() {
     assert_eq!(store.swap_network_state(&proxied, NOW + 3).unwrap(), None);
 }
 
+/// ID-12: the special access apps hold is kept across reopening, so that access turned
+/// on while Sentinel was not running is found; only access not held at the last check
+/// is returned, and access turned off and on again is returned again.
+#[test]
+fn special_access_is_reported_when_gained() {
+    use sentinel_detect::Access;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    let held = |entries: &[(&str, Access)]| -> Vec<(String, Access)> {
+        entries
+            .iter()
+            .map(|(app, access)| ((*app).to_owned(), *access))
+            .collect()
+    };
+    let listener = ("org.example.watch", Access::NotificationListener);
+    let admin = ("org.example.watch", Access::DeviceAdmin);
+    let reader = ("org.example.reader", Access::Accessibility);
+
+    // The first check reports all of it, once.
+    assert_eq!(
+        store
+            .swap_access(&held(&[listener, reader, listener]))
+            .unwrap(),
+        held(&[listener, reader])
+    );
+    assert_eq!(store.swap_access(&held(&[reader, listener])).unwrap(), []);
+    // Gained since, also across reopening.
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(
+        store
+            .swap_access(&held(&[listener, admin, reader]))
+            .unwrap(),
+        held(&[admin])
+    );
+    // Turned off, then on again.
+    assert_eq!(store.swap_access(&held(&[listener, admin])).unwrap(), []);
+    assert_eq!(
+        store
+            .swap_access(&held(&[reader, listener, admin]))
+            .unwrap(),
+        held(&[reader])
+    );
+    assert_eq!(store.swap_access(&[]).unwrap(), []);
+    assert_eq!(store.swap_access(&held(&[admin])).unwrap(), held(&[admin]));
+    drop(store);
+    wipe(&path).unwrap();
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.swap_access(&held(&[admin])).unwrap(), held(&[admin]));
+}
+
 /// CM-10: firewall rules are kept, encrypted, keyed by what they are about: a second
 /// rule about the same app and destination replaces the first. They survive reopening,
 /// can be removed, and a wipe removes them.

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Asks for the rarest events and no window content: the probe's accessibility service
+     only has to be turned on. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeAnnouncement"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:description="@string/watcher" />
