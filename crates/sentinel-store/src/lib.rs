@@ -13,7 +13,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sentinel_detect::{
     Access, Alert, AlertState, Change, Delivery, Feedback, FirewallMode, FirewallRule, Isolation,
-    NetworkState, Rule, Sent, Setting, Severity,
+    NetworkState, Posture, Rule, Sent, Setting, Severity,
 };
 use zeroize::Zeroizing;
 
@@ -825,6 +825,25 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(previous.and_then(|json| NetworkState::from_json(&json).ok()))
+    }
+
+    /// Keep `posture` as the device settings last seen (ID-03, ID-10) and return the
+    /// ones seen before, if any. A state this version cannot read counts as none.
+    pub fn swap_posture(&self, posture: &Posture, now: i64) -> Result<Option<Posture>> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let previous: Option<String> = tx
+            .query_row("SELECT state FROM posture_state WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        tx.execute(
+            "INSERT INTO posture_state (id, state, updated) VALUES (1, ?1, ?2)
+             ON CONFLICT (id) DO UPDATE SET state = excluded.state, updated = excluded.updated",
+            params![posture.to_json(), now],
+        )?;
+        tx.commit()?;
+        Ok(previous.and_then(|json| Posture::from_json(&json).ok()))
     }
 
     /// Keep `held` as the special access apps hold (ID-12) and return what of it they

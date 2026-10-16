@@ -15,6 +15,7 @@ mod first_seen;
 mod indicator;
 mod journal;
 mod network;
+mod posture;
 
 pub use access::{Access, special_access};
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
@@ -31,6 +32,7 @@ pub use indicator::{
 };
 pub use journal::{Change, Setting};
 pub use network::{NetworkState, network_changes};
+pub use posture::{Certificate, Posture, RemoteAccess, posture_changes};
 
 /// How urgent an alert is (AL-01). Ordered from least to most urgent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -85,6 +87,10 @@ pub enum Rule {
     KnownIndicator,
     /// An app gained accessibility, device admin or notification access (ID-12).
     SpecialAccess,
+    /// A way in from the network was turned on, such as wireless debugging (ID-03).
+    RemoteAccessExposed,
+    /// The user added a certificate authority to the trusted ones (ID-10).
+    NewRootCertificate,
 }
 
 impl Rule {
@@ -98,6 +104,8 @@ impl Rule {
             Rule::ProxyChanged => "proxy-changed",
             Rule::KnownIndicator => "known-indicator",
             Rule::SpecialAccess => "special-access",
+            Rule::RemoteAccessExposed => "remote-access-exposed",
+            Rule::NewRootCertificate => "new-root-certificate",
         }
     }
 
@@ -111,6 +119,8 @@ impl Rule {
             Rule::ProxyChanged,
             Rule::KnownIndicator,
             Rule::SpecialAccess,
+            Rule::RemoteAccessExposed,
+            Rule::NewRootCertificate,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -134,6 +144,9 @@ impl Rule {
                     _ => None,
                 })
                 .collect(),
+            // Where it can be turned off (ID-03) or the certificate removed (ID-10).
+            Rule::RemoteAccessExposed => vec![Action::OpenDeveloperSettings],
+            Rule::NewRootCertificate => vec![Action::OpenCertificateSettings],
         };
         // A new app that Block-unknown stopped can be let through (CM-08); an app new to
         // the network, or to some places, seen with a known indicator, or that gained
@@ -215,6 +228,11 @@ pub enum Evidence {
     },
     /// Special access the app the alert is about holds (ID-12).
     Access { access: Access },
+    /// A way in from the network that is on (ID-03).
+    RemoteAccess { service: RemoteAccess },
+    /// A certificate authority the user added to the trusted ones (ID-10): its SHA-256
+    /// in lower-case hex, and who it was issued to.
+    Certificate { sha256: String, subject: String },
 }
 
 /// What the user can do from an alert (SRS §9). Actions that change the device come
@@ -242,6 +260,10 @@ pub enum Action {
     OpenAccessSettings {
         access: Access,
     },
+    /// Android's developer options, where wireless debugging is turned off (ID-03).
+    OpenDeveloperSettings,
+    /// Android's trusted certificates, where one can be removed (ID-10).
+    OpenCertificateSettings,
 }
 
 /// One alert.
@@ -378,6 +400,14 @@ mod tests {
             Some(Rule::MonitoringInterrupted)
         );
         assert_eq!(Rule::from_id("special-access"), Some(Rule::SpecialAccess));
+        assert_eq!(
+            Rule::from_id("remote-access-exposed"),
+            Some(Rule::RemoteAccessExposed)
+        );
+        assert_eq!(
+            Rule::from_id("new-root-certificate"),
+            Some(Rule::NewRootCertificate)
+        );
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {
             assert_eq!(AlertState::from_name(state.as_str()), Some(state));

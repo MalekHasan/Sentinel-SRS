@@ -572,6 +572,33 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(settings, useUnmergedTree = true))
     }
 
+    /** ID-10: a certificate added to the trusted ones, with its subject and fingerprint
+     *  written left to right inside a right-to-left line. */
+    @Test
+    fun newRootCertificateAlert() {
+        val subject = "CN=Proxy CA,O=Example"
+        val sha256 = "0d21c5b162bae01a6141f680834a9a89f7a677b6ae988ef60b7389a3a6892c6f"
+        val alert = HistoryAlert(
+            id = 10,
+            rule = AlertRule.NEW_ROOT_CERTIFICATE,
+            severity = AlertSeverity.HIGH,
+            createdMs = now,
+            evidence = listOf(AlertEvidence.Certificate(sha256 = sha256, subject = subject)),
+            actions = listOf(AlertAction.OpenCertificateSettings),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, emptyMap()), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_new_root_certificate_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_new_root_certificate_text)))
+        val line = arabic.getString(R.string.alert_evidence_certificate, isolate(subject), isolate(sha256))
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+        val settings = arabic.getString(R.string.alert_action_open_certificate_settings)
+        compose.onNodeWithText(settings).performScrollTo()
+        assertRightToLeft(compose.onNodeWithText(settings, useUnmergedTree = true))
+    }
+
     /** MS-02: a match found in the history says how many connections, and on which days,
      *  right to left. */
     @Test

@@ -51,5 +51,18 @@
                 <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
             </intent-filter>
         </receiver>
+
+        <!-- Adds or removes the test certificate authority while the probe is device owner
+             (ID-10). Only Android's shell user, which holds DUMP, can ask: the device tests
+             send it with `am broadcast`. -->
+        <receiver
+            android:name=".Certificates"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="io.github.malekhasan.sentinel.probe.ADD_CERTIFICATE" />
+                <action android:name="io.github.malekhasan.sentinel.probe.REMOVE_CERTIFICATE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

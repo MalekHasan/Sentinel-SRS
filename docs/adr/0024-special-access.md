@@ -31,7 +31,7 @@ Sentinel itself uses none of them. SRS §2.4 forbids it any accessibility servic
    - Access turned off and on again is reported again, unless its alert is still open.
    - The table is written only when something changed.
 4. **When to check.**
-   - While monitoring runs, at once when either setting changes, and every minute for device admins, which Android announces to no other app (`AccessWatch`).
+   - While monitoring runs, at once when either setting changes, and every minute for device admins, which Android announces to no other app (`DeviceWatch`).
    - When monitoring starts, and when Sentinel opens.
    - Access gained while monitoring was off is found at the next of these.
 5. **What the alert offers**, in order:

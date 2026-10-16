@@ -1239,6 +1239,37 @@ fn the_network_settings_last_seen_are_kept() {
     assert_eq!(store.swap_network_state(&proxied, NOW + 3).unwrap(), None);
 }
 
+/// ID-03, ID-10: the device settings last seen are kept across reopening, so that a
+/// change made while Sentinel was not running is found; a wipe forgets them.
+#[test]
+fn the_device_settings_last_seen_are_kept() {
+    use sentinel_detect::{Certificate, Posture};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    let closed = Posture::default();
+    let open = Posture {
+        wireless_debugging: true,
+        user_certificates: vec![Certificate {
+            sha256: "bb".to_owned(),
+            subject: "CN=Proxy CA".to_owned(),
+        }],
+    };
+    assert_eq!(store.swap_posture(&closed, NOW).unwrap(), None);
+    assert_eq!(store.swap_posture(&open, NOW + 1).unwrap(), Some(closed));
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(
+        store.swap_posture(&open, NOW + 2).unwrap(),
+        Some(open.clone())
+    );
+    drop(store);
+    wipe(&path).unwrap();
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.swap_posture(&open, NOW + 3).unwrap(), None);
+}
+
 /// ID-12: the special access apps hold is kept across reopening, so that access turned
 /// on while Sentinel was not running is found; only access not held at the last check
 /// is returned, and access turned off and on again is returned again.

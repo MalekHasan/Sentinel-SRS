@@ -211,6 +211,8 @@
     <string name="alert_evidence_accessibility">إذن تسهيل الاستخدام شغّال.</string>
     <string name="alert_evidence_device_admin">هاد تطبيق مشرف على الجهاز.</string>
     <string name="alert_evidence_notification_access">إذن قراءة الإشعارات شغّال.</string>
+    <string name="alert_evidence_wireless_debugging">تصحيح الأخطاء اللاسلكي (ADB عالواي فاي) شغّال.</string>
+    <string name="alert_evidence_certificate">صادرة لـ %1$s. البصمة %2$s.</string>
     <string name="alert_evidence_indicator_listed">%1$s موجود عالقائمة كعلامة على %2$s (%3$s).</string>
     <string name="alert_evidence_indicator_source">المصدر: %1$s، بتقرير من تاريخ %2$s: %3$s</string>
     <string name="alert_threat_spyware">برنامج تجسس</string>
@@ -251,6 +253,8 @@
     <string name="alert_action_open_app">شوف شو عمل %1$s</string>
     <string name="alert_action_open_network_settings">افتح إعدادات الشبكة</string>
     <string name="alert_action_open_access_settings">افتح إعدادات أندرويد لهالإذن</string>
+    <string name="alert_action_open_developer_settings">افتح خيارات المطوّرين</string>
+    <string name="alert_action_open_certificate_settings">افتح الشهادات الموثوقة</string>
     <string name="alert_action_allow_app">خلّي %1$s يستعمل الإنترنت</string>
     <string name="alert_action_block_app">احجب الإنترنت عن %1$s</string>
     <string name="alert_dismiss">إخفاء</string>
@@ -307,6 +311,10 @@
     <string name="alert_device_admin_text">التطبيق المشرف على الجهاز بيقدر يقفل التلفون أو يمسحه، وما بتقدر تشيله قبل ما تطفّي هالإذن. إذا ما شغّلته إنت، ممكن يكون حدا تاني شغّله.</string>
     <string name="alert_notification_access_title">في تطبيق بيقدر يقرأ إشعاراتك</string>
     <string name="alert_notification_access_text">هالإذن بيخلّي التطبيق يقرأ كل إشعار، مع رسايلك والرموز اللي بتوصلك. إذا ما شغّلته إنت، ممكن يكون حدا تاني شغّله.</string>
+    <string name="alert_remote_access_exposed_title">تصحيح الأخطاء اللاسلكي شغّال</string>
+    <string name="alert_remote_access_exposed_text">أي كمبيوتر مربوط بهالتلفون عالواي فاي بيقدر ينزّل تطبيقات ويقرأ بياناته. إذا ما بتستعمله، طفّيه.</string>
+    <string name="alert_new_root_certificate_title">انضافت شهادة موثوقة جديدة</string>
+    <string name="alert_new_root_certificate_text">فيها ممكن حدا يقدر يقرأ ترافيك الويب تبعك. تلفونات الشغل أو المدرسة أحياناً بتحتاج وحدة. إذا ما ضفتها إنت، شيلها.</string>
 
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>
