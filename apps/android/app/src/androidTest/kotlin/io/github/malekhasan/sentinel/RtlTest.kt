@@ -163,7 +163,7 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(awayLine, useUnmergedTree = true))
 
         // A gap in monitoring, how long it lasted, and what a gap means (SP-03).
-        compose.onNodeWithText(arabic.getString(R.string.gaps_text)).performScrollTo().assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.gaps_text)).performScrollTo())
         val gapLine = arabic.getString(
             R.string.gap_closed_length,
             format.format(Date(now - 60_000)),
@@ -634,6 +634,35 @@ class RtlTest {
         val patch = arabic.getString(R.string.hardening_security_patch, isolate("2023-02-05"))
         assertRightToLeft(compose.onNodeWithText(patch).performScrollTo())
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_status_check)).performScrollTo())
+    }
+
+    /** SP-03: the steps that keep monitoring running, and a maker's own, right to left
+     *  although they name Sentinel and the maker's settings. */
+    @Test
+    fun keepRunning() {
+        val items = listOf(
+            KeepRunning.Item(KeepRunning.Step.BATTERY, done = false),
+            KeepRunning.Item(KeepRunning.Step.ALWAYS_ON, done = null),
+        )
+        compose.setContent {
+            InArabic {
+                KeepRunningContent(
+                    items, KeepRunning.Maker.SAMSUNG, onBack = {}, onOpen = {}, onOpenAppSettings = {},
+                )
+            }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.keep_running_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.keep_running_explainer)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.keep_running_battery_title)))
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.keep_running_always_on_text)).performScrollTo(),
+        )
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.keep_running_status_while_monitoring)).performScrollTo(),
+        )
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.keep_running_maker_samsung)).performScrollTo(),
+        )
     }
 
     /** SE-01: the main screen's record of microphone and camera use, right to left, with

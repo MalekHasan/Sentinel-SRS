@@ -154,6 +154,8 @@ class SentinelVpnService : VpnService() {
         sensorWatch = history?.let { SensorWatch(this, it, presence::isAway).also(SensorWatch::start) }
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
+        // Only the VPN service itself can ask (SP-03, ADR-0030).
+        Monitor.alwaysOn = isAlwaysOn
         main.post(checkHeartbeat)
         loadFeedData(started)
         // Apps installed or updated while monitoring runs are checked at once (ID-13).
