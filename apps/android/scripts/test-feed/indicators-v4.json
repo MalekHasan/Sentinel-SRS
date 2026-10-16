@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "source": {
+    "id": "sentinel-test",
+    "name": "Sentinel test indicators",
+    "url": "https://github.com/MalekHasan/Sentinel-SRS",
+    "licence": "GPL-3.0-or-later"
+  },
+  "indicators": [
+    {
+      "kind": "domain",
+      "value": "planted.sentinel-test.example",
+      "family": "Sentinel test",
+      "threat": "spyware",
+      "date": "2026-10-16",
+      "report": "https://github.com/MalekHasan/Sentinel-SRS/blob/main/docs/adr/0019-indicator-feed-on-android.md"
+    },
+    {
+      "kind": "package",
+      "value": "io.github.malekhasan.sentinel.probe",
+      "family": "Sentinel test",
+      "threat": "stalkerware",
+      "date": "2026-10-16",
+      "report": "https://github.com/MalekHasan/Sentinel-SRS/blob/main/docs/adr/0023-installed-apps.md"
+    }
+  ]
+}

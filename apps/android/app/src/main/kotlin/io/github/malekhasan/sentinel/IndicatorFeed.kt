@@ -145,8 +145,8 @@ object IndicatorFeed {
 
     /**
      * Fetch the list [source] offers and install it, if it is newer than the one in force
-     * and passes every check. A list installed is then checked against the history
-     * (MS-02), before this returns.
+     * and passes every check. The history (MS-02) and the installed apps (ID-13) are then
+     * checked against a list installed, before this returns.
      */
     fun update(context: Context, source: BundleSource): Outcome {
         val feed = get(context) ?: return Outcome.FAILED
@@ -157,7 +157,10 @@ object IndicatorFeed {
             if (fetched == Outcome.INSTALLED) listeners.forEach { it() }
             fetched
         }
-        if (outcome == Outcome.INSTALLED) History.hunt(context)
+        if (outcome == Outcome.INSTALLED) {
+            History.hunt(context)
+            InstalledApps.check(context)
+        }
         return outcome
     }
 

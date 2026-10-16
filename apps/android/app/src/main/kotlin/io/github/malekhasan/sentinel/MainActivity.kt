@@ -208,12 +208,14 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         visible.value = true
         // A new list as soon as the app opens, when one is due (MS-10). Then the history
-        // is checked against the list in force, should that not have been done (MS-02).
+        // is checked against the list in force, should that not have been done (MS-02),
+        // and the installed apps, which may have changed since (ID-13).
         Thread({
             if (IndicatorFeed.get(this) != null && IndicatorFeed.checkDue(this)) {
                 IndicatorFeed.checkPublished(this)
             }
             History.hunt(this)
+            InstalledApps.check(this)
         }, "sentinel-feed-check").start()
     }
 

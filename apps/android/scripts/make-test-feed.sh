@@ -4,7 +4,7 @@
 # Builds the signed indicator-feed bundles the device tests install (ADR-0019), from the
 # files in scripts/test-feed/:
 #
-#   app/src/androidTest/assets/feed/v1, v2, v3   bundles of versions 1 to 3
+#   app/src/androidTest/assets/feed/v1 to v5     bundles of versions 1 to 5
 #   scripts/test-feed/test-key.pub               the public key that signed them
 #   app/src/debug/kotlin/.../FeedKeys.kt         debug builds trust that key too
 #
@@ -31,7 +31,7 @@ tool=$repo/target/release/sentinel-feed-tool
 
 "$tool" keygen --secret "$work/test.key" --public "$work/test.pub"
 
-for version in 1 2 3; do
+for version in 1 2 3 4 5; do
     bundle=$out/v$version
     rm -rf "$bundle"
     mkdir -p "$bundle"

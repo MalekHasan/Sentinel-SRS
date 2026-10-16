@@ -6,12 +6,14 @@ import java.io.FileNotFoundException
 import org.junit.Assert.assertEquals
 
 /**
- * The signed indicator lists in the test APK's `assets/feed/v1` to `v3`, built by
+ * The signed indicator lists in the test APK's `assets/feed/v1` to `v5`, built by
  * `apps/android/scripts/make-test-feed.sh` (ADR-0019). Each holds the test indicators
- * (`indicators-sentinel-test.json`: 1, 2 and 3 of them), the test IP database (`ip.db`,
- * which places 10.0.2.0/24 in AS64500 "SENTINEL-TEST-NET" and in Jordan) and the test
- * tracker list (`trackers.db`). Debug builds trust the key that signed them, whose secret
- * no longer exists.
+ * (`indicators-sentinel-test.json`), the test IP database (`ip.db`, which places
+ * 10.0.2.0/24 in AS64500 "SENTINEL-TEST-NET" and in Jordan) and the test tracker list
+ * (`trackers.db`). Every list names the planted domain `planted.sentinel-test.example`.
+ * Lists 2 and 3 add a package and a certificate no app has; list 4 adds the probe's
+ * package and list 5 the probe's signing certificate (ADR-0023). Debug builds trust the
+ * key that signed them, whose secret no longer exists.
  */
 internal object TestFeed {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()

@@ -44,6 +44,7 @@ class SentinelVpnService : VpnService() {
     private var underlyingDns: UnderlyingDns? = null
     private var networkWatch: NetworkWatch? = null
     private var awayWatcher: AwayWatcher? = null
+    private var installWatch: InstallWatch? = null
 
     // A new indicator list came into force, or the one in force was removed.
     private val feedChanged: () -> Unit = { main.post { engine?.let(::loadFeedData) } }
@@ -129,6 +130,8 @@ class SentinelVpnService : VpnService() {
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
         loadFeedData(started)
+        // Apps installed or updated while monitoring runs are checked at once (ID-13).
+        installWatch = InstallWatch(this).also(InstallWatch::start)
         IndicatorFeed.addListener(feedChanged)
         main.postDelayed(recheckFeed, IndicatorFeed.RECHECK_EVERY_MILLIS)
         FeedUpdateJob.schedule(this)
@@ -172,6 +175,8 @@ class SentinelVpnService : VpnService() {
             }
             // Should a check of the history against this list have been cut short (MS-02).
             History.hunt(this)
+            // Apps installed while monitoring was off (ID-13).
+            InstalledApps.check(this)
         }, "sentinel-feed-data").start()
     }
 
@@ -229,6 +234,8 @@ class SentinelVpnService : VpnService() {
         networkWatch = null
         awayWatcher?.stop()
         awayWatcher = null
+        installWatch?.stop()
+        installWatch = null
         engine?.let {
             it.stop()
             it.close()

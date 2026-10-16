@@ -5,6 +5,7 @@
 //! now, then alerts.
 
 mod alerts;
+mod apps;
 mod engine;
 mod enrich;
 mod feed;
@@ -18,6 +19,7 @@ pub use alerts::{
     AlertAction, AlertDelivery, AlertEvidence, AlertFeedback, AlertListener, AlertRule,
     AlertSeverity, AllowedRule, HistoryAlert,
 };
+pub use apps::{AppCheck, InstalledApp};
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
 pub use enrich::{
     CategoryFact, CompanyFact, IpDatabase, IpDatabaseError, IpSources, TrackerDatabase,

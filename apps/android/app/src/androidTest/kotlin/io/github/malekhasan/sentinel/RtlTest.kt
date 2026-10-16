@@ -499,6 +499,44 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(helpline, useUnmergedTree = true))
     }
 
+    /** ID-13: an installed app the list names, with its package name written left to right
+     *  inside right-to-left lines. */
+    @Test
+    fun installedAppAlert() {
+        val alert = HistoryAlert(
+            id = 8,
+            rule = AlertRule.KNOWN_INDICATOR,
+            severity = AlertSeverity.CRITICAL,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.Indicator(
+                    indicator = PACKAGE,
+                    seen = PACKAGE,
+                    sighting = IndicatorSighting.INSTALLED_PACKAGE,
+                    family = "Example",
+                    threat = IndicatorThreat.STALKERWARE,
+                    source = "Example lab",
+                    date = "2025-01-31",
+                    report = "https://example.org/report",
+                ),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_app_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_app_text)))
+        val line = compose.onAllNodesWithText(
+            arabic.getString(R.string.alert_evidence_indicator_package, isolate(PACKAGE)),
+            substring = true,
+        )
+        line.assertCountEquals(1)
+        assertRightToLeft(line[0].performScrollTo())
+    }
+
     /** MS-02: a match found in the history says how many connections, and on which days,
      *  right to left. */
     @Test

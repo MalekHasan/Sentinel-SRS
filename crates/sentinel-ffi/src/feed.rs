@@ -538,8 +538,9 @@ pub(crate) mod tests {
         assert!(ip.starts_with(&path(&root)));
         assert_eq!(feed.file("unlisted.txt".into()), None);
         let matcher = feed.matcher().unwrap();
-        assert_eq!(matcher.len(), 2, "the domain and the address");
+        assert_eq!(matcher.len(), 3, "the domain, the package and the address");
         assert_eq!(matcher.name("cdn.spy.example").unwrap().source.id, "alpha");
+        assert!(matcher.package("com.spy.app").is_some());
         assert!(matcher.address("203.0.113.9".parse().unwrap()).is_some());
 
         // As when the app starts again.
@@ -687,7 +688,8 @@ pub(crate) mod tests {
             1,
         )
         .unwrap();
-        for version in 1..=3u64 {
+        // How many indicators each list holds.
+        for (version, count) in [(1u64, 1u32), (2, 2), (3, 3), (4, 2), (5, 2)] {
             let fixture = android.join(format!("app/src/androidTest/assets/feed/v{version}"));
             let staged = tmp.path().join(format!("staged-{version}"));
             fs::create_dir(&staged).unwrap();
@@ -697,15 +699,18 @@ pub(crate) mod tests {
             }
             let status = feed.install(path(&staged)).unwrap();
             assert_eq!(status.version, version);
-            assert_eq!(status.indicators, version as u32);
+            assert_eq!(status.indicators, count);
             assert_eq!(status.sources[0].id, "sentinel-test");
+            let matcher = feed.matcher().unwrap();
             // The name the device tests look up (IndicatorAlertTest).
-            assert!(
-                feed.matcher()
-                    .unwrap()
-                    .name("planted.sentinel-test.example")
-                    .is_some()
-            );
+            assert!(matcher.name("planted.sentinel-test.example").is_some());
+            // The probe the device tests install (InstalledAppTest): by its package in
+            // list 4, by its signing certificate (apps/android/probe) in list 5.
+            let probe = matcher.package("io.github.malekhasan.sentinel.probe");
+            assert_eq!(probe.is_some(), version == 4, "list {version}");
+            let certificate = matcher
+                .certificate("be9200574eb6aa1083aa108b7e50625edc2c86787593ad5b35a68c110284b64f");
+            assert_eq!(certificate.is_some(), version == 5, "list {version}");
         }
     }
 

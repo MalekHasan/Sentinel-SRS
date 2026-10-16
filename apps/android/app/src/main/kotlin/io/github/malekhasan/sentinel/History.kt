@@ -26,8 +26,12 @@ object History {
 
     private val checks = MutableStateFlow(0)
 
-    /** Counts the checks of the history against a list, so the result shown follows them. */
+    /** Counts the checks against a list, of the history or of installed apps, so the
+     *  result shown follows them. */
     val hunts: StateFlow<Int> = checks.asStateFlow()
+
+    /** A check against a list ended. */
+    internal fun checked() = checks.update { it + 1 }
 
     fun get(context: Context): HistoryStore =
         store ?: synchronized(this) {
@@ -47,7 +51,7 @@ object History {
     fun hunt(context: Context): HuntReport? {
         val feed = IndicatorFeed.get(context) ?: return null
         return try {
-            get(context).hunt(feed)?.also { checks.update { it + 1 } }
+            get(context).hunt(feed)?.also { checked() }
         } catch (e: Exception) {
             // HistoryException, or the history could not be opened at all.
             Log.w(TAG, "the history could not be checked against the indicator list", e)

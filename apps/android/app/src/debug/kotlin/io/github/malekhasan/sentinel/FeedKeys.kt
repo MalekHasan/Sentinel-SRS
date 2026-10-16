@@ -10,7 +10,7 @@ import io.github.malekhasan.sentinel.core.trustedFeedKeys
  * they were signed. Release builds trust keys/feed only.
  */
 object FeedKeys {
-    private const val TEST_KEY = "8eda9dba4d5f752c16ee3ad279d01f52ee44b09c05a783a63783fd2aca95d2ff"
+    private const val TEST_KEY = "fcef64e0dce3ea54299e3ea62fd2c9ccd6e3762bb68737df9454e1d7b265f849"
 
     val trusted: List<String> = trustedFeedKeys() + TEST_KEY
 }
