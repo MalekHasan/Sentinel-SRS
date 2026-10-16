@@ -61,6 +61,7 @@ import io.github.malekhasan.sentinel.core.NameSource
 import io.github.malekhasan.sentinel.core.RuleAction
 import io.github.malekhasan.sentinel.core.RuleDestination
 import io.github.malekhasan.sentinel.core.SensorKind
+import io.github.malekhasan.sentinel.core.SharingSiteKind
 import io.github.malekhasan.sentinel.core.SensorUse
 import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
@@ -828,6 +829,40 @@ class RtlTest {
             Formatter.formatShortFileSize(arabic, 52_428_800),
             14,
             Formatter.formatShortFileSize(arabic, 2_097_152),
+        )
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
+    /** DL-06: an upload to a sharing site, right to left, with the site's name written
+     *  left to right and what the site is for in Arabic. */
+    @Test
+    fun sharingSiteAlert() {
+        val alert = HistoryAlert(
+            id = 17,
+            rule = AlertRule.SHARING_SITE_UPLOAD,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.SharingSite(
+                    destination = "pastebin.com",
+                    site = SharingSiteKind.PASTE,
+                    bytesUp = 40_000uL,
+                ),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_sharing_site_upload_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_sharing_site_upload_text)))
+        val line = arabic.getString(
+            R.string.alert_evidence_sharing_site,
+            Formatter.formatShortFileSize(arabic, 40_000),
+            isolate("pastebin.com"),
+            arabic.getString(R.string.sharing_site_paste),
         )
         assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
     }

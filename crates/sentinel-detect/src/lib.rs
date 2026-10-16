@@ -20,6 +20,7 @@ mod journal;
 mod network;
 mod posture;
 mod sensor;
+mod sharing;
 mod upload;
 
 pub use access::{Access, special_access};
@@ -48,6 +49,7 @@ pub use journal::{Change, Setting};
 pub use network::{NetworkState, network_changes};
 pub use posture::{Certificate, Posture, RemoteAccess, posture_changes};
 pub use sensor::{Attribution, Sensor, sensor_while_away};
+pub use sharing::{SHARING_UPLOAD_BYTES, SharingSite, sharing_site, sharing_site_upload};
 pub use upload::{
     BASELINE_DAYS, MIN_SURGE_BYTES, MIN_USUAL_DAY_BYTES, SURGE_FACTOR, Uploads, upload_surge,
     upload_windows,
@@ -126,6 +128,9 @@ pub enum Rule {
     OwnEncryptedDns,
     /// An app sent far more in a day than it usually does (DL-02).
     UploadSurge,
+    /// An app uploaded to a file-sharing, paste or anonymous drop service not its own
+    /// (DL-06).
+    SharingSiteUpload,
 }
 
 impl Rule {
@@ -147,6 +152,7 @@ impl Rule {
             Rule::DnsTunnel => "dns-tunnel",
             Rule::OwnEncryptedDns => "own-encrypted-dns",
             Rule::UploadSurge => "upload-surge",
+            Rule::SharingSiteUpload => "sharing-site-upload",
         }
     }
 
@@ -168,6 +174,7 @@ impl Rule {
             Rule::DnsTunnel,
             Rule::OwnEncryptedDns,
             Rule::UploadSurge,
+            Rule::SharingSiteUpload,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -184,7 +191,8 @@ impl Rule {
             | Rule::BeaconLike
             | Rule::DnsTunnel
             | Rule::OwnEncryptedDns
-            | Rule::UploadSurge => Vec::new(),
+            | Rule::UploadSurge
+            | Rule::SharingSiteUpload => Vec::new(),
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
@@ -219,6 +227,7 @@ impl Rule {
                 | Rule::DnsTunnel
                 | Rule::OwnEncryptedDns
                 | Rule::UploadSurge
+                | Rule::SharingSiteUpload
         );
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } if blocked => Some(Action::AllowApp {
@@ -323,6 +332,13 @@ pub enum Evidence {
         last_day: u64,
         usual_day: u64,
         days: u32,
+    },
+    /// The app sent `bytes_up` in one connection to `destination`, a sharing service of
+    /// the kind `site` (DL-06).
+    SharingSite {
+        destination: String,
+        site: SharingSite,
+        bytes_up: u64,
     },
     /// A sensor in use since `started` (Unix ms) (SE-01). `guess` is the app that was on
     /// screen when the use began, if known: a guess, not the app's identity (AM-15).
@@ -533,6 +549,10 @@ mod tests {
         assert_eq!(Rule::from_id("beacon-like"), Some(Rule::BeaconLike));
         assert_eq!(Rule::from_id("dns-tunnel"), Some(Rule::DnsTunnel));
         assert_eq!(Rule::from_id("upload-surge"), Some(Rule::UploadSurge));
+        assert_eq!(
+            Rule::from_id("sharing-site-upload"),
+            Some(Rule::SharingSiteUpload)
+        );
         assert_eq!(
             Rule::from_id("own-encrypted-dns"),
             Some(Rule::OwnEncryptedDns)

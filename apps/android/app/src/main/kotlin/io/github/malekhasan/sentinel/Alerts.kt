@@ -47,6 +47,7 @@ import io.github.malekhasan.sentinel.core.IndicatorSighting
 import io.github.malekhasan.sentinel.core.IndicatorThreat
 import io.github.malekhasan.sentinel.core.RemoteAccessService
 import io.github.malekhasan.sentinel.core.SensorKind
+import io.github.malekhasan.sentinel.core.SharingSiteKind
 import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
 import java.time.LocalDate
@@ -385,6 +386,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.DNS_TUNNEL -> R.string.alert_dns_tunnel_title
     AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_title
     AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_title
+    AlertRule.SHARING_SITE_UPLOAD -> R.string.alert_sharing_site_upload_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -404,6 +406,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.DNS_TUNNEL -> R.string.alert_dns_tunnel_text
     AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_text
     AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_text
+    AlertRule.SHARING_SITE_UPLOAD -> R.string.alert_sharing_site_upload_text
 }
 
 @Composable
@@ -514,6 +517,12 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             evidence.days.toInt(),
             Formatter.formatShortFileSize(LocalContext.current, evidence.usualDay.toLong()),
         )
+        is AlertEvidence.SharingSite -> stringResource(
+            R.string.alert_evidence_sharing_site,
+            Formatter.formatShortFileSize(LocalContext.current, evidence.bytesUp.toLong()),
+            isolate(evidence.destination),
+            stringResource(sharingSiteName(evidence.site)),
+        )
         is AlertEvidence.Sensor -> {
             val started = DateFormat.getDateTimeInstance(
                 DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],
@@ -524,6 +533,13 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             ).joinToString(" ")
         }
     }
+
+/** What a sharing service is for (DL-06). */
+fun sharingSiteName(site: SharingSiteKind): Int = when (site) {
+    SharingSiteKind.PASTE -> R.string.sharing_site_paste
+    SharingSiteKind.FILE_SHARING -> R.string.sharing_site_file_sharing
+    SharingSiteKind.ANONYMOUS_DROP -> R.string.sharing_site_anonymous_drop
+}
 
 /** How many connections the history holds, and on which days (MS-02). */
 @Composable

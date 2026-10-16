@@ -55,6 +55,9 @@ pub enum AlertRule {
     OwnEncryptedDns,
     /// An app sent far more in a day than it usually does (DL-02).
     UploadSurge,
+    /// An app uploaded to a file-sharing, paste or anonymous drop service not its own
+    /// (DL-06).
+    SharingSiteUpload,
 }
 
 /// A sensor whose use is recorded (SE-01).
@@ -69,6 +72,26 @@ impl From<SensorKind> for Sensor {
         match sensor {
             SensorKind::Microphone => Sensor::Microphone,
             SensorKind::Camera => Sensor::Camera,
+        }
+    }
+}
+
+/// What a sharing service is for (DL-06).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SharingSiteKind {
+    Paste,
+    FileSharing,
+    /// Tunnels to a private server, webhook catchers, chat bot interfaces, anonymous
+    /// publishing.
+    AnonymousDrop,
+}
+
+impl From<sentinel_detect::SharingSite> for SharingSiteKind {
+    fn from(site: sentinel_detect::SharingSite) -> Self {
+        match site {
+            sentinel_detect::SharingSite::Paste => SharingSiteKind::Paste,
+            sentinel_detect::SharingSite::FileSharing => SharingSiteKind::FileSharing,
+            sentinel_detect::SharingSite::AnonymousDrop => SharingSiteKind::AnonymousDrop,
         }
     }
 }
@@ -242,6 +265,13 @@ pub enum AlertEvidence {
         usual_day: u64,
         days: u32,
     },
+    /// The app sent `bytes_up` in one connection to `destination`, a sharing service of
+    /// the kind `site` (DL-06).
+    SharingSite {
+        destination: String,
+        site: SharingSiteKind,
+        bytes_up: u64,
+    },
     /// A sensor in use since `started_ms` (SE-01). `guess` is the app that was on screen
     /// when the use began, if known: a guess, not the app's identity.
     Sensor {
@@ -362,6 +392,7 @@ impl From<Rule> for AlertRule {
             Rule::DnsTunnel => AlertRule::DnsTunnel,
             Rule::OwnEncryptedDns => AlertRule::OwnEncryptedDns,
             Rule::UploadSurge => AlertRule::UploadSurge,
+            Rule::SharingSiteUpload => AlertRule::SharingSiteUpload,
         }
     }
 }
@@ -520,6 +551,15 @@ impl From<StoredAlert> for HistoryAlert {
                         last_day,
                         usual_day,
                         days,
+                    },
+                    Evidence::SharingSite {
+                        destination,
+                        site,
+                        bytes_up,
+                    } => AlertEvidence::SharingSite {
+                        destination,
+                        site: site.into(),
+                        bytes_up,
                     },
                     Evidence::Sensor {
                         sensor,

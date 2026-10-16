@@ -187,6 +187,8 @@ pub(crate) struct FlowEvents {
     own_dns: Mutex<HashSet<String>>,
     /// When the history was last asked about upload surges, Unix ms (DL-02).
     uploads_checked: Mutex<i64>,
+    /// Each app and sharing service an upload was seen to in this run (DL-06).
+    shared: Mutex<HashSet<(String, &'static str)>>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -215,6 +217,7 @@ impl FlowEvents {
             dns_watch: Mutex::new(sentinel_detect::DnsWatch::new()),
             own_dns: Mutex::new(HashSet::new()),
             uploads_checked: Mutex::new(i64::MIN),
+            shared: Mutex::new(HashSet::new()),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
@@ -517,6 +520,32 @@ impl FlowEvents {
         }
     }
 
+    /// DL-06: an upload to a file-sharing, paste or anonymous drop service that is not
+    /// the app's own raises a Warning, once per app and service in a run.
+    fn watch_sharing(&self, flow: &FlowInfo, owner: &FlowOwner, totals: &FlowTotals) {
+        let Some(app) = self.watched(owner) else {
+            return;
+        };
+        let Some(hostname) = flow.hostname.as_deref() else {
+            return;
+        };
+        if totals.verdict == Verdict::Block {
+            return;
+        }
+        let Some(alert) =
+            sentinel_detect::sharing_site_upload(now_ms(), app, hostname, totals.bytes_up)
+        else {
+            return;
+        };
+        let Some((domain, _)) = sentinel_detect::sharing_site(hostname) else {
+            return;
+        };
+        if lock(&self.shared).insert((app.to_owned(), domain)) {
+            lock(&self.sightings).push(alert);
+            self.ready.notify_one();
+        }
+    }
+
     /// The indicators in force, if alerts can be raised at all.
     fn matcher(&self) -> Option<Arc<sentinel_ioc::Matcher>> {
         self.history.as_ref()?;
@@ -683,6 +712,7 @@ impl Observer for FlowEvents {
         ended.bytes_down_away = totals.bytes_down_away;
         self.push(ended);
         self.watch_check_ins(flow, &owner, &totals);
+        self.watch_sharing(flow, &owner, &totals);
     }
 }
 
@@ -1269,6 +1299,70 @@ mod tests {
         assert!(own.contains(&alert("org.example.browser", "8.8.8.8")));
         assert!(own.contains(&alert("org.example.reader", "cloudflare-dns.com")));
         assert!(own.contains(&alert("org.example.private", "203.0.113.8")));
+    }
+
+    /// DL-06: an app that uploads to a paste site raises one Warning naming the site.
+    /// A second upload, a visit, a site's own app and a system app raise nothing.
+    #[test]
+    fn uploads_to_sharing_sites_by_unrelated_apps_are_flagged() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity, SharingSiteKind};
+
+        let (_dir, history) = history();
+        let system = FlowOwner {
+            system: true,
+            ..installed("com.android.example", None)
+        };
+        let observer = listen(
+            &history,
+            vec![
+                (443, installed("org.example.flashlight", None)),
+                (8443, installed("nz.mega.android", None)),
+                (9443, system),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let ended = |bytes_up| FlowTotals {
+            bytes_up,
+            bytes_down: 1_000,
+            bytes_up_away: 0,
+            bytes_down_away: 0,
+            ended_ms: 5,
+            verdict: Verdict::Allow,
+        };
+        for (id, dst, host, bytes_up) in [
+            (1, "203.0.113.9:443", "pastebin.com", 2_000),
+            (2, "203.0.113.9:443", "pastebin.com", 40_000),
+            (3, "203.0.113.9:443", "pastebin.com", 80_000),
+            (4, "203.0.113.10:8443", "g.api.mega.nz", 5_000_000),
+            (5, "203.0.113.11:9443", "pastebin.com", 40_000),
+        ] {
+            let upload = flow(id, dst, Some(host));
+            assert_eq!(events.flow_started(&upload), Verdict::Allow);
+            events.flow_ended(&upload, ended(bytes_up));
+        }
+        events.flush();
+
+        let alerts: Vec<_> = history
+            .alerts(true, 20)
+            .unwrap()
+            .into_iter()
+            .filter(|alert| alert.rule == AlertRule::SharingSiteUpload)
+            .collect();
+        assert_eq!(alerts.len(), 1, "{alerts:?}");
+        assert_eq!(alerts[0].severity, AlertSeverity::Warning);
+        assert_eq!(
+            alerts[0].evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.flashlight".to_owned()
+                },
+                AlertEvidence::SharingSite {
+                    destination: "pastebin.com".to_owned(),
+                    site: SharingSiteKind::Paste,
+                    bytes_up: 40_000,
+                }
+            ]
+        );
     }
 
     /// THREAT-MODEL-A D2: an app may have `MAX_FLOWS_PER_APP` flows open; more are
