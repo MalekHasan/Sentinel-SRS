@@ -105,6 +105,9 @@ jobs:
           api-level: 34
           arch: x86_64
           target: default
+          # The runner's defaults, but with sound and an emulated back camera, so that the
+          # probe can record and open a camera (SensorTest, SE-01, SE-04).
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back emulated
           script: cd apps/android && ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest
       - name: List the device tests that ran
         # Gradle prints no per-test results; show them so a skipped test cannot pass unseen.

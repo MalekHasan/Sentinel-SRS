@@ -1239,6 +1239,79 @@ fn the_network_settings_last_seen_are_kept() {
     assert_eq!(store.swap_network_state(&proxied, NOW + 3).unwrap(), None);
 }
 
+/// SE-01, SE-04: each use of a sensor is kept with its start, end, app as found and
+/// whether the user was present; the screen going off is noted once; monitoring that
+/// stops ends every open use.
+#[test]
+fn sensor_uses_are_kept_with_who_and_whether_anyone_was_there() {
+    use sentinel_detect::{Attribution, Sensor};
+    use sentinel_store::SensorUse;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let mic = store
+        .sensor_started(
+            Sensor::Microphone,
+            NOW,
+            Some("org.example.notes"),
+            Attribution::Foreground,
+            true,
+        )
+        .unwrap();
+    let camera = store
+        .sensor_started(Sensor::Camera, NOW + 5, None, Attribution::Unknown, false)
+        .unwrap();
+    let away = store.sensor_away(mic).unwrap().unwrap();
+    assert_eq!(
+        away,
+        SensorUse {
+            id: mic,
+            sensor: Sensor::Microphone,
+            started: NOW,
+            ended: None,
+            app: Some("org.example.notes".to_owned()),
+            attribution: Attribution::Foreground,
+            user_present: false,
+        }
+    );
+    // Once only, and never for a use that began with nobody there.
+    assert_eq!(store.sensor_away(mic).unwrap(), None);
+    assert_eq!(store.sensor_away(camera).unwrap(), None);
+
+    store.sensor_ended(mic, NOW + 9).unwrap();
+    store.sensor_ended(mic, NOW + 20).unwrap();
+    assert_eq!(store.sensor_away(mic).unwrap(), None, "ended");
+    store.end_sensor_uses(NOW + 30).unwrap();
+    let uses = store.recent_sensor_uses(10).unwrap();
+    assert_eq!(
+        uses.iter()
+            .map(|u| (
+                u.sensor,
+                u.ended,
+                u.app.clone(),
+                u.attribution,
+                u.user_present
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                Sensor::Camera,
+                Some(NOW + 30),
+                None,
+                Attribution::Unknown,
+                false
+            ),
+            (
+                Sensor::Microphone,
+                Some(NOW + 9),
+                Some("org.example.notes".to_owned()),
+                Attribution::Foreground,
+                false
+            ),
+        ]
+    );
+}
+
 /// ID-03, ID-10: the device settings last seen are kept across reopening, so that a
 /// change made while Sentinel was not running is found; a wipe forgets them.
 #[test]

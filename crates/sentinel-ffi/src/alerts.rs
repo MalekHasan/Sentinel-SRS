@@ -3,7 +3,7 @@
 //! explanation in the user's language from its rule and evidence (ADR-0012).
 
 use sentinel_detect::{
-    Access, Action, AlertState, Delivery, Evidence, Feedback, RemoteAccess, Rule, Severity,
+    Access, Action, AlertState, Delivery, Evidence, Feedback, RemoteAccess, Rule, Sensor, Severity,
     Sighting, Threat,
 };
 use sentinel_store::StoredAlert;
@@ -41,6 +41,33 @@ pub enum AlertRule {
     RemoteAccessExposed,
     /// The user added a certificate authority to the trusted ones (ID-10).
     NewRootCertificate,
+    /// The microphone or camera was in use while the screen was off or locked (SE-04).
+    SensorWhileAway,
+}
+
+/// A sensor whose use is recorded (SE-01).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SensorKind {
+    Microphone,
+    Camera,
+}
+
+impl From<SensorKind> for Sensor {
+    fn from(sensor: SensorKind) -> Self {
+        match sensor {
+            SensorKind::Microphone => Sensor::Microphone,
+            SensorKind::Camera => Sensor::Camera,
+        }
+    }
+}
+
+impl From<Sensor> for SensorKind {
+    fn from(sensor: Sensor) -> Self {
+        match sensor {
+            Sensor::Microphone => SensorKind::Microphone,
+            Sensor::Camera => SensorKind::Camera,
+        }
+    }
 }
 
 /// A way in from the network that the user can turn on (ID-03).
@@ -173,6 +200,13 @@ pub enum AlertEvidence {
     /// A certificate authority the user added to the trusted ones (ID-10): its SHA-256
     /// in lower-case hex, and who it was issued to.
     Certificate { sha256: String, subject: String },
+    /// A sensor in use since `started_ms` (SE-01). `guess` is the app that was on screen
+    /// when the use began, if known: a guess, not the app's identity.
+    Sensor {
+        sensor: SensorKind,
+        started_ms: i64,
+        guess: Option<String>,
+    },
 }
 
 /// What the user can do from an alert (SRS §9).
@@ -204,6 +238,9 @@ pub enum AlertAction {
     OpenDeveloperSettings,
     /// Open Android's trusted certificates, where one can be removed (ID-10).
     OpenCertificateSettings,
+    /// Open Android's privacy settings, whose dashboard names the apps that used a
+    /// sensor (SE-01 basic).
+    OpenPrivacySettings,
 }
 
 /// One alert from the history.
@@ -277,6 +314,7 @@ impl From<Rule> for AlertRule {
             Rule::SpecialAccess => AlertRule::SpecialAccess,
             Rule::RemoteAccessExposed => AlertRule::RemoteAccessExposed,
             Rule::NewRootCertificate => AlertRule::NewRootCertificate,
+            Rule::SensorWhileAway => AlertRule::SensorWhileAway,
         }
     }
 }
@@ -339,6 +377,7 @@ impl From<StoredAlert> for HistoryAlert {
                     },
                     Action::OpenDeveloperSettings => AlertAction::OpenDeveloperSettings,
                     Action::OpenCertificateSettings => AlertAction::OpenCertificateSettings,
+                    Action::OpenPrivacySettings => AlertAction::OpenPrivacySettings,
                 })
                 .collect(),
             evidence: alert
@@ -403,6 +442,15 @@ impl From<StoredAlert> for HistoryAlert {
                     Evidence::Certificate { sha256, subject } => {
                         AlertEvidence::Certificate { sha256, subject }
                     }
+                    Evidence::Sensor {
+                        sensor,
+                        started,
+                        guess,
+                    } => AlertEvidence::Sensor {
+                        sensor: sensor.into(),
+                        started_ms: started,
+                        guess,
+                    },
                 })
                 .collect(),
             open: stored.state == AlertState::Open,

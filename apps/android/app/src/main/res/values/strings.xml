@@ -89,6 +89,23 @@
     <string name="hardening_unknown_apps_text">Spyware often comes from outside the app store. Let no app you do not trust install apps.</string>
     <string name="hardening_messaging_apps_title">Remove messaging apps you no longer use</string>
     <string name="hardening_messaging_apps_text">Every messaging app is a way in. Delete or turn off the ones you do not use.</string>
+    <string name="channel_sensors">Microphone and camera in use</string>
+    <string name="channel_sensors_description">Shown while an app uses the microphone or a camera.</string>
+    <string name="sensors_in_use_microphone">Microphone in use now</string>
+    <string name="sensors_in_use_camera">Camera in use now</string>
+    <string name="sensors_in_use_both">Microphone and camera in use now</string>
+    <string name="sensors_in_use_text">Android does not tell Sentinel which app is using it.</string>
+    <string name="sensors_title">Microphone and camera</string>
+    <string name="sensors_empty">No microphone or camera use recorded yet. Sentinel records it while monitoring is on.</string>
+    <string name="sensors_usage_access">Android does not tell Sentinel which app uses the microphone or camera. With usage access, Sentinel can guess from the app on screen.</string>
+    <string name="sensors_usage_access_action">Allow usage access</string>
+    <string name="sensor_microphone">Microphone</string>
+    <string name="sensor_camera">Camera</string>
+    <string name="sensor_use_open">%1$s in use since %2$s</string>
+    <string name="sensor_use_closed">%1$s used from %2$s to %3$s</string>
+    <string name="sensor_use_guess">On screen when it began: %1$s. This is only a guess.</string>
+    <string name="sensor_use_no_guess">Which app used it is not known.</string>
+    <string name="sensor_use_away">The screen was off or locked.</string>
     <string name="journal_title">Your actions</string>
     <string name="journal_explainer">What you changed in the firewall, newest first. Undo puts back what was there before.</string>
     <string name="journal_empty">You have not changed anything in the firewall yet.</string>
@@ -212,6 +229,8 @@
     <string name="alert_evidence_notification_access">Notification access is on.</string>
     <string name="alert_evidence_wireless_debugging">Wireless debugging (ADB over Wi-Fi) is on.</string>
     <string name="alert_evidence_certificate">Issued to %1$s. Fingerprint %2$s.</string>
+    <string name="alert_evidence_sensor">%1$s in use from %2$s.</string>
+    <string name="alert_evidence_sensor_guess">On screen when it began: %1$s. This is only a guess.</string>
     <string name="alert_evidence_indicator_listed">%1$s is on the list as a sign of %2$s (%3$s).</string>
     <string name="alert_evidence_indicator_source">Source: %1$s, in a report from %2$s: %3$s</string>
     <string name="alert_threat_spyware">spyware</string>
@@ -243,6 +262,7 @@
     <string name="alert_action_open_access_settings">Open the Android settings for this access</string>
     <string name="alert_action_open_developer_settings">Open developer options</string>
     <string name="alert_action_open_certificate_settings">Open the trusted certificates</string>
+    <string name="alert_action_open_privacy_settings">See which app in Android\'s privacy settings</string>
     <string name="alert_action_allow_app">Let %1$s use the internet</string>
     <string name="alert_action_block_app">Block the internet for %1$s</string>
     <string name="alert_dismiss">Dismiss</string>
@@ -299,6 +319,12 @@
     <string name="alert_remote_access_exposed_text">A computer paired with this phone over Wi-Fi can install apps and read its data. If you do not use it, turn it off.</string>
     <string name="alert_new_root_certificate_title">A new trusted certificate was added</string>
     <string name="alert_new_root_certificate_text">With it, someone may be able to read your web traffic. Work or school phones may need one. If you did not add it, remove it.</string>
+    <string name="alert_sensor_while_away_title">The microphone or a camera was used while the screen was off</string>
+    <string name="alert_sensor_while_away_text">An app used it while nobody was looking. On Android 12 and later, the privacy dashboard shows which app.</string>
+    <string name="alert_microphone_while_away_title">The microphone was used while the screen was off</string>
+    <string name="alert_microphone_while_away_text">An app used the microphone while nobody was looking. On Android 12 and later, the privacy dashboard shows which app.</string>
+    <string name="alert_camera_while_away_title">A camera was used while the screen was off</string>
+    <string name="alert_camera_while_away_text">An app used a camera while nobody was looking. On Android 12 and later, the privacy dashboard shows which app.</string>
 
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>

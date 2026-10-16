@@ -45,6 +45,7 @@ import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.IndicatorSighting
 import io.github.malekhasan.sentinel.core.IndicatorThreat
 import io.github.malekhasan.sentinel.core.RemoteAccessService
+import io.github.malekhasan.sentinel.core.SensorKind
 import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
 import java.time.LocalDate
@@ -314,6 +315,10 @@ private fun HistoryAlert.installedApp(): Boolean = evidence.any {
         (it.sighting == IndicatorSighting.INSTALLED_PACKAGE || it.sighting == IndicatorSighting.SIGNING_CERTIFICATE)
 }
 
+/** The sensor the alert is about, if any (SE-04). */
+private fun HistoryAlert.sensor(): SensorKind? =
+    evidence.firstNotNullOfOrNull { (it as? AlertEvidence.Sensor)?.sensor }
+
 /** The special access the alert is about, if any (ID-12). */
 private fun HistoryAlert.access(): SpecialAccess? =
     evidence.firstNotNullOfOrNull { (it as? AlertEvidence.Access)?.access }
@@ -330,6 +335,11 @@ fun titleRes(alert: HistoryAlert): Int = when {
         SpecialAccess.ACCESSIBILITY -> R.string.alert_accessibility_title
         SpecialAccess.DEVICE_ADMIN -> R.string.alert_device_admin_title
         SpecialAccess.NOTIFICATION_LISTENER -> R.string.alert_notification_access_title
+        null -> titleRes(alert.rule)
+    }
+    alert.rule == AlertRule.SENSOR_WHILE_AWAY -> when (alert.sensor()) {
+        SensorKind.MICROPHONE -> R.string.alert_microphone_while_away_title
+        SensorKind.CAMERA -> R.string.alert_camera_while_away_title
         null -> titleRes(alert.rule)
     }
     else -> titleRes(alert.rule)
@@ -349,6 +359,11 @@ fun explanationRes(alert: HistoryAlert): Int = when {
         SpecialAccess.NOTIFICATION_LISTENER -> R.string.alert_notification_access_text
         null -> explanationRes(alert.rule)
     }
+    alert.rule == AlertRule.SENSOR_WHILE_AWAY -> when (alert.sensor()) {
+        SensorKind.MICROPHONE -> R.string.alert_microphone_while_away_text
+        SensorKind.CAMERA -> R.string.alert_camera_while_away_text
+        null -> explanationRes(alert.rule)
+    }
     else -> explanationRes(alert.rule)
 }
 
@@ -363,6 +378,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.SPECIAL_ACCESS -> R.string.alert_special_access_title
     AlertRule.REMOTE_ACCESS_EXPOSED -> R.string.alert_remote_access_exposed_title
     AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_title
+    AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -376,6 +392,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.SPECIAL_ACCESS -> R.string.alert_special_access_text
     AlertRule.REMOTE_ACCESS_EXPOSED -> R.string.alert_remote_access_exposed_text
     AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_text
+    AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_text
 }
 
 @Composable
@@ -464,6 +481,15 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
         is AlertEvidence.Certificate -> stringResource(
             R.string.alert_evidence_certificate, isolate(evidence.subject), isolate(evidence.sha256),
         )
+        is AlertEvidence.Sensor -> {
+            val started = DateFormat.getDateTimeInstance(
+                DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],
+            ).format(Date(evidence.startedMs))
+            listOfNotNull(
+                stringResource(R.string.alert_evidence_sensor, stringResource(sensorName(evidence.sensor)), started),
+                evidence.guess?.let { stringResource(R.string.alert_evidence_sensor_guess, isolate(label(it))) },
+            ).joinToString(" ")
+        }
     }
 
 /** How many connections the history holds, and on which days (MS-02). */
@@ -511,4 +537,5 @@ private fun actionLabel(action: AlertAction, label: (String) -> String): String 
         is AlertAction.OpenAccessSettings -> stringResource(R.string.alert_action_open_access_settings)
         is AlertAction.OpenDeveloperSettings -> stringResource(R.string.alert_action_open_developer_settings)
         is AlertAction.OpenCertificateSettings -> stringResource(R.string.alert_action_open_certificate_settings)
+        is AlertAction.OpenPrivacySettings -> stringResource(R.string.alert_action_open_privacy_settings)
     }

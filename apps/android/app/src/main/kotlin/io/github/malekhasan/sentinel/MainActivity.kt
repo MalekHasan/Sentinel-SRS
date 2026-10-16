@@ -55,6 +55,7 @@ import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryFlow
+import io.github.malekhasan.sentinel.core.SensorUse
 import io.github.malekhasan.sentinel.core.KnownTraces
 import io.github.malekhasan.sentinel.core.coreVersion
 import java.text.DateFormat
@@ -147,6 +148,8 @@ class MainActivity : ComponentActivity() {
                                             startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
                                         is AlertAction.OpenCertificateSettings ->
                                             Posture.openCertificates(this@MainActivity)
+                                        is AlertAction.OpenPrivacySettings ->
+                                            startActivity(Intent(Settings.ACTION_PRIVACY_SETTINGS))
                                     }
                                 },
                             )
@@ -299,6 +302,8 @@ fun MonitorScreen(
     var gaps by remember { mutableStateOf(emptyList<GapLog.Gap>()) }
     var away by remember { mutableStateOf(emptyList<AwayRow>()) }
     var alerts by remember { mutableStateOf(emptyList<HistoryAlert>()) }
+    var sensorUses by remember { mutableStateOf(emptyList<SensorUse>()) }
+    var usageAccess by remember { mutableStateOf(true) }
     var mode by remember { mutableStateOf<FirewallMode?>(null) }
     var isolated by remember { mutableStateOf<Long?>(null) }
     val names = remember(context) { AppNames(context) }
@@ -317,6 +322,8 @@ fun MonitorScreen(
             gaps = withContext(Dispatchers.IO) { GapLog.recent(context, 5) }
             away = withContext(Dispatchers.IO) { awayRows(context, names) }
             alerts = withContext(Dispatchers.IO) { openAlerts(context, ALERTS_SHOWN) }
+            sensorUses = withContext(Dispatchers.IO) { recentSensorUses(context) }
+            usageAccess = UsageAccess.granted(context)
             mode = withContext(Dispatchers.IO) { firewallMode(context) }
             isolated = withContext(Dispatchers.IO) { isolatedSince(context) }
         }
@@ -358,6 +365,9 @@ fun MonitorScreen(
         gaps = gaps,
         away = away,
         alerts = alerts,
+        sensorUses = sensorUses,
+        usageAccess = usageAccess,
+        onUsageAccess = { context.startActivity(UsageAccess.settings()) },
         onStart = onStart,
         onStop = onStop,
         onShowLive = onShowLive,
@@ -422,12 +432,16 @@ fun MonitorContent(
     onEndIsolation: () -> Unit = {},
     onShowJournal: () -> Unit = {},
     onShowHardening: () -> Unit = {},
+    sensorUses: List<SensorUse> = emptyList(),
+    usageAccess: Boolean = true,
+    onUsageAccess: () -> Unit = {},
     feed: IndicatorFeed.State? = null,
     onCheckFeed: () -> Unit = {},
     onImportFeed: () -> Unit = {},
     traces: KnownTraces? = null,
 ) {
     val context = LocalContext.current
+    val names = remember(context) { AppNames(context) }
     Column(
         modifier = Modifier
             .safeDrawingPadding()
@@ -486,6 +500,8 @@ fun MonitorContent(
         OutlinedButton(onClick = onShowJournal) { Text(stringResource(R.string.journal_action)) }
         // Steps that make the phone harder to spy on (MS-12).
         OutlinedButton(onClick = onShowHardening) { Text(stringResource(R.string.hardening_action)) }
+        // Microphone and camera use (SE-01 basic).
+        SensorUses(sensorUses, usageAccess, labelFor = names::labelFor, onUsageAccess = onUsageAccess)
 
         // What known spyware and stalkerware is looked for, and from when (MS-10).
         feed?.let { IndicatorList(it, onCheckFeed, onImportFeed, traces) }

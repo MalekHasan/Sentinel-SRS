@@ -17,11 +17,12 @@ mod history;
 mod hunt;
 mod journal;
 mod posture;
+mod sensors;
 
 pub use access::{AccessCheck, HeldAccess};
 pub use alerts::{
     AlertAction, AlertDelivery, AlertEvidence, AlertFeedback, AlertListener, AlertRule,
-    AlertSeverity, AllowedRule, HistoryAlert, RemoteAccessService, SpecialAccess,
+    AlertSeverity, AllowedRule, HistoryAlert, RemoteAccessService, SensorKind, SpecialAccess,
 };
 pub use apps::{AppCheck, InstalledApp};
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
@@ -45,6 +46,7 @@ pub use history::{
 pub use hunt::{HuntReport, KnownTraces};
 pub use journal::{JournalEntry, JournalState, UndoResult};
 pub use posture::{DevicePosture, UserCertificate};
+pub use sensors::SensorUse;
 
 uniffi::setup_scaffolding!();
 

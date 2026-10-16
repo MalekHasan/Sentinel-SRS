@@ -12,8 +12,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sentinel_detect::{
-    Access, Alert, AlertState, Change, Delivery, Feedback, FirewallMode, FirewallRule, Isolation,
-    NetworkState, Posture, Rule, Sent, Setting, Severity,
+    Access, Alert, AlertState, Attribution, Change, Delivery, Feedback, FirewallMode, FirewallRule,
+    Isolation, NetworkState, Posture, Rule, Sensor, Sent, Setting, Severity,
 };
 use zeroize::Zeroizing;
 
@@ -132,6 +132,21 @@ pub struct Gap {
     /// `None` while the gap is open.
     pub ended: Option<i64>,
     pub reason: String,
+}
+
+/// One use of the microphone or camera (SE-01).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SensorUse {
+    pub id: i64,
+    pub sensor: Sensor,
+    pub started: i64,
+    /// `None` while in use.
+    pub ended: Option<i64>,
+    /// The app, as `attribution` found it; `None` when unknown.
+    pub app: Option<String>,
+    pub attribution: Attribution,
+    /// False once the screen was off or locked during the use (SE-04).
+    pub user_present: bool,
 }
 
 /// Connections the history holds from one app to one name or address (MS-02).
@@ -825,6 +840,112 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(previous.and_then(|json| NetworkState::from_json(&json).ok()))
+    }
+
+    /// A sensor came into use at `started` (SE-01), by `app` as `attribution` found it,
+    /// with the user present or not (SE-04). Returns the use's id.
+    pub fn sensor_started(
+        &self,
+        sensor: Sensor,
+        started: i64,
+        app: Option<&str>,
+        attribution: Attribution,
+        user_present: bool,
+    ) -> Result<i64> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let app_id = app_id(&tx, app, started)?.map(|(id, _)| id);
+        tx.execute(
+            "INSERT INTO sensor_use (app_id, sensor, started, user_present, source)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                app_id,
+                sensor.as_str(),
+                started,
+                user_present,
+                attribution.as_str()
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// The screen was off or locked during use `id` (SE-04). Returns the use the first
+    /// time only, while it is still in use.
+    pub fn sensor_away(&self, id: i64) -> Result<Option<SensorUse>> {
+        let changed = lock(&self.conn).execute(
+            "UPDATE sensor_use SET user_present = 0
+             WHERE id = ?1 AND user_present = 1 AND ended IS NULL",
+            [id],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        Ok(self.sensor_uses(Some(id), 1)?.pop())
+    }
+
+    /// Use `id` ended at `ended`, unless it already had.
+    pub fn sensor_ended(&self, id: i64, ended: i64) -> Result<()> {
+        lock(&self.conn).execute(
+            "UPDATE sensor_use SET ended = ?2 WHERE id = ?1 AND ended IS NULL",
+            params![id, ended],
+        )?;
+        Ok(())
+    }
+
+    /// Every use still open ended at `ended`: monitoring stopped, so their end is not
+    /// known better.
+    pub fn end_sensor_uses(&self, ended: i64) -> Result<()> {
+        lock(&self.conn).execute(
+            "UPDATE sensor_use SET ended = ?1 WHERE ended IS NULL",
+            [ended],
+        )?;
+        Ok(())
+    }
+
+    /// The most recent sensor uses, newest first.
+    pub fn recent_sensor_uses(&self, limit: u32) -> Result<Vec<SensorUse>> {
+        self.sensor_uses(None, limit)
+    }
+
+    fn sensor_uses(&self, id: Option<i64>, limit: u32) -> Result<Vec<SensorUse>> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.sensor, s.started, s.ended, a.identifier, s.source, s.user_present
+             FROM sensor_use s LEFT JOIN app a ON a.id = s.app_id
+             WHERE ?1 IS NULL OR s.id = ?1
+             ORDER BY s.started DESC, s.id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![id, limit], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, bool>(6)?,
+            ))
+        })?;
+        let mut uses = Vec::new();
+        for row in rows {
+            let (id, sensor, started, ended, app, source, user_present) = row?;
+            // A sensor this version cannot name is left out.
+            let Some(sensor) = Sensor::from_name(&sensor) else {
+                continue;
+            };
+            uses.push(SensorUse {
+                id,
+                sensor,
+                started,
+                ended,
+                app,
+                attribution: Attribution::from_name(&source).unwrap_or(Attribution::Unknown),
+                user_present,
+            });
+        }
+        Ok(uses)
     }
 
     /// Keep `posture` as the device settings last seen (ID-03, ID-10) and return the

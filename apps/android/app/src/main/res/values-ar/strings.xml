@@ -100,6 +100,23 @@
     <string name="hardening_unknown_apps_text">برامج التجسس غالباً بتيجي من برّا متجر التطبيقات. ما تسمح لأي تطبيق ما بتثق فيه ينزّل تطبيقات.</string>
     <string name="hardening_messaging_apps_title">شيل تطبيقات المراسلة اللي ما عاد تستعملها</string>
     <string name="hardening_messaging_apps_text">كل تطبيق مراسلة هو باب للدخول. احذف أو طفّي اللي ما بتستعملهم.</string>
+    <string name="channel_sensors">المايك والكاميرا شغّالين</string>
+    <string name="channel_sensors_description">بيبيّن وقت تطبيق عم يستعمل المايك أو الكاميرا.</string>
+    <string name="sensors_in_use_microphone">المايك شغّال هلق</string>
+    <string name="sensors_in_use_camera">الكاميرا شغّالة هلق</string>
+    <string name="sensors_in_use_both">المايك والكاميرا شغّالين هلق</string>
+    <string name="sensors_in_use_text">أندرويد ما بيقول لـ Sentinel أي تطبيق عم يستعمله.</string>
+    <string name="sensors_title">المايك والكاميرا</string>
+    <string name="sensors_empty">لسا ما في استعمال مسجّل للمايك أو الكاميرا. Sentinel بيسجّله وقت المراقبة شغّالة.</string>
+    <string name="sensors_usage_access">أندرويد ما بيقول لـ Sentinel أي تطبيق بيستعمل المايك أو الكاميرا. مع إذن الوصول للاستخدام، Sentinel بيقدر يخمّن من التطبيق اللي عالشاشة.</string>
+    <string name="sensors_usage_access_action">اسمح بالوصول للاستخدام</string>
+    <string name="sensor_microphone">المايك</string>
+    <string name="sensor_camera">الكاميرا</string>
+    <string name="sensor_use_open">%1$s: بالاستعمال من %2$s</string>
+    <string name="sensor_use_closed">%1$s: انستعمل من %2$s لـ %3$s</string>
+    <string name="sensor_use_guess">اللي كان عالشاشة لما بلّش: %1$s. هاد بس تخمين.</string>
+    <string name="sensor_use_no_guess">ما منعرف أي تطبيق استعمله.</string>
+    <string name="sensor_use_away">الشاشة كانت مطفية أو مقفولة.</string>
     <string name="journal_title">تغييراتك</string>
     <string name="journal_explainer">كل إشي غيّرته بالجدار الناري، الأحدث أول إشي. «تراجع» بيرجّع اللي كان قبل.</string>
     <string name="journal_empty">لسا ما غيّرت إشي بالجدار الناري.</string>
@@ -234,6 +251,8 @@
     <string name="alert_evidence_notification_access">إذن قراءة الإشعارات شغّال.</string>
     <string name="alert_evidence_wireless_debugging">تصحيح الأخطاء اللاسلكي (ADB عالواي فاي) شغّال.</string>
     <string name="alert_evidence_certificate">صادرة لـ %1$s. البصمة %2$s.</string>
+    <string name="alert_evidence_sensor">%1$s: بالاستعمال من %2$s.</string>
+    <string name="alert_evidence_sensor_guess">اللي كان عالشاشة لما بلّش: %1$s. هاد بس تخمين.</string>
     <string name="alert_evidence_indicator_listed">%1$s موجود عالقائمة كعلامة على %2$s (%3$s).</string>
     <string name="alert_evidence_indicator_source">المصدر: %1$s، بتقرير من تاريخ %2$s: %3$s</string>
     <string name="alert_threat_spyware">برنامج تجسس</string>
@@ -276,6 +295,7 @@
     <string name="alert_action_open_access_settings">افتح إعدادات أندرويد لهالإذن</string>
     <string name="alert_action_open_developer_settings">افتح خيارات المطوّرين</string>
     <string name="alert_action_open_certificate_settings">افتح الشهادات الموثوقة</string>
+    <string name="alert_action_open_privacy_settings">شوف أي تطبيق بإعدادات الخصوصية بأندرويد</string>
     <string name="alert_action_allow_app">خلّي %1$s يستعمل الإنترنت</string>
     <string name="alert_action_block_app">احجب الإنترنت عن %1$s</string>
     <string name="alert_dismiss">إخفاء</string>
@@ -336,6 +356,12 @@
     <string name="alert_remote_access_exposed_text">أي كمبيوتر مربوط بهالتلفون عالواي فاي بيقدر ينزّل تطبيقات ويقرأ بياناته. إذا ما بتستعمله، طفّيه.</string>
     <string name="alert_new_root_certificate_title">انضافت شهادة موثوقة جديدة</string>
     <string name="alert_new_root_certificate_text">فيها ممكن حدا يقدر يقرأ ترافيك الويب تبعك. تلفونات الشغل أو المدرسة أحياناً بتحتاج وحدة. إذا ما ضفتها إنت، شيلها.</string>
+    <string name="alert_sensor_while_away_title">انستعمل المايك أو الكاميرا والشاشة مطفية</string>
+    <string name="alert_sensor_while_away_text">في تطبيق استعمله وما حدا عم يتطلّع. بأندرويد 12 وطالع، لوحة الخصوصية بتبيّن أي تطبيق.</string>
+    <string name="alert_microphone_while_away_title">انستعمل المايك والشاشة مطفية</string>
+    <string name="alert_microphone_while_away_text">في تطبيق استعمل المايك وما حدا عم يتطلّع. بأندرويد 12 وطالع، لوحة الخصوصية بتبيّن أي تطبيق.</string>
+    <string name="alert_camera_while_away_title">انستعملت الكاميرا والشاشة مطفية</string>
+    <string name="alert_camera_while_away_text">في تطبيق استعمل الكاميرا وما حدا عم يتطلّع. بأندرويد 12 وطالع، لوحة الخصوصية بتبيّن أي تطبيق.</string>
 
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>

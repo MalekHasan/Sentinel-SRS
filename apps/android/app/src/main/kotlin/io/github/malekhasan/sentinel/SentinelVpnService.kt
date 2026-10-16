@@ -46,6 +46,7 @@ class SentinelVpnService : VpnService() {
     private var awayWatcher: AwayWatcher? = null
     private var installWatch: InstallWatch? = null
     private var deviceWatch: DeviceWatch? = null
+    private var sensorWatch: SensorWatch? = null
 
     // A new indicator list came into force, or the one in force was removed.
     private val feedChanged: () -> Unit = { main.post { engine?.let(::loadFeedData) } }
@@ -124,10 +125,15 @@ class SentinelVpnService : VpnService() {
             // A callback queued before teardown must not reach a closed engine.
             if (engine === started) started.setUpstreamDns(servers)
         }.also { it.start() }
-        // Traffic while the screen is off or locked is counted apart (CM-06).
-        awayWatcher = AwayWatcher(this) { away ->
+        // Traffic while the screen is off or locked is counted apart (CM-06), and sensor
+        // use then raises an alert (SE-04).
+        val presence = AwayWatcher(this) { away ->
             if (engine === started) started.setAway(away)
+            sensorWatch?.awayChanged(away)
         }.also { it.start() }
+        awayWatcher = presence
+        // Microphone and camera use (SE-01 basic, SE-03).
+        sensorWatch = history?.let { SensorWatch(this, it, presence::isAway).also(SensorWatch::start) }
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
         loadFeedData(started)
@@ -238,6 +244,8 @@ class SentinelVpnService : VpnService() {
         networkWatch = null
         awayWatcher?.stop()
         awayWatcher = null
+        sensorWatch?.stop()
+        sensorWatch = null
         installWatch?.stop()
         installWatch = null
         deviceWatch?.stop()
