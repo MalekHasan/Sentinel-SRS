@@ -61,9 +61,7 @@ class IndicatorAlertTest {
     @Test
     fun aLookupOfAPlantedNameRaisesACriticalAlertWithinFiveSeconds() {
         startMatching()
-        val sent = System.currentTimeMillis()
-        lookUp("cdn.$PLANTED")
-        val alert = alertWithin(WITHIN_MILLIS, since = sent)
+        val alert = lookUp("cdn.$PLANTED") { sent -> alertWithin(WITHIN_MILLIS, since = sent) }
 
         assertEquals(AlertSeverity.CRITICAL, alert.severity)
         assertEquals(AlertEvidence.App(app = context.packageName), alert.evidence.first())
@@ -97,6 +95,7 @@ class IndicatorAlertTest {
         val sent = System.currentTimeMillis()
         assertNotNull("not blocked", answer(host, port, clientHello("x.$PLANTED") + END))
         val alert = alertWithin(WITHIN_MILLIS, since = sent)
+        assertEquals(AlertEvidence.App(app = context.packageName), alert.evidence.first())
         val seen = alert.evidence.filterIsInstance<AlertEvidence.Indicator>().single()
         assertEquals(IndicatorSighting.SERVER_NAME, seen.sighting)
         assertEquals("x.$PLANTED", seen.seen)
@@ -129,11 +128,19 @@ class IndicatorAlertTest {
     private fun knownIndicatorAlerts(): List<HistoryAlert> =
         history.alerts(false, 100u).filter { it.rule == AlertRule.KNOWN_INDICATOR }
 
-    /** Sends one lookup of [name] to the tunnel's resolver, without waiting for an answer. */
-    private fun lookUp(name: String) {
+    /**
+     * Sends one lookup of [name] to the tunnel's resolver, then runs [whileOpen] with the
+     * time it was sent. The socket stays open meanwhile, as a resolver's does while it
+     * waits for the answer: Android names a UDP socket's owner only while it exists.
+     */
+    private fun <T> lookUp(name: String, whileOpen: (sent: Long) -> T): T {
         val resolver = InetAddress.getByName(SentinelVpnService.TUNNEL_DNS)
         val query = dnsQuery(0x1d01, name)
-        DatagramSocket().use { it.send(DatagramPacket(query, query.size, resolver, 53)) }
+        return DatagramSocket().use { socket ->
+            val sent = System.currentTimeMillis()
+            socket.send(DatagramPacket(query, query.size, resolver, 53))
+            whileOpen(sent)
+        }
     }
 
     private companion object {

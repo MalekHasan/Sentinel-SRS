@@ -77,6 +77,7 @@
 ## Consequences
 
 - **Lookups Sentinel does not see are not matched.** These include Private DNS and apps' own encrypted DNS, which go around the tunnel's resolver. Such an app is still matched by its TLS server name, unless Encrypted Client Hello hides it, and by address.
+- **Android names a connection's app only while its socket exists.** A lookup sent from a socket that is closed at once, before the engine asks, is reported without its app, as a match about the phone. Resolvers keep their socket open until the answer comes, so their lookups are named. The first run of the device test closed its socket at once and found exactly that.
 - **A DNS answer that points elsewhere (a CNAME) is not followed.** The phone's resolver asks only for the first name, so an indicator reached only through a CNAME is matched by the address it resolves to, if that address is listed.
 - **Traffic from before a list arrived is not matched by this task.** Checking the stored history again when a list comes in is the retro-hunt (MS-02), the next task.
 - **The device test cannot connect to an address on the list.** The list refuses private addresses, and the test server is one. The engine test in the core covers that case with a real packet.
