@@ -7,14 +7,18 @@
 //! version, expiry, every file's SHA-256, every indicator's provenance and the data files
 //! all pass where they will be used. The bundle in force is checked again at start and
 //! every hour, and removed if it fails.
+//!
+//! The engine matches traffic against the indicators of the bundle in force
+//! ([`Feed::matcher`]): a new bundle is matched against as soon as it is installed, and
+//! a removed one no longer matches anything.
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use sentinel_enrich::{IpDb, TrackerDb};
 use sentinel_feed::{BundleStore, FeedError, Offer, TrustRoot, VerifiedManifest};
-use sentinel_ioc::{IndicatorFile, is_indicator_file};
+use sentinel_ioc::{IndicatorFile, Matcher, is_indicator_file};
 
 use crate::history::now_ms;
 
@@ -128,6 +132,9 @@ pub struct Feed {
     store: BundleStore,
     trust: TrustRoot,
     in_force: Mutex<Option<InForce>>,
+    /// The indicators of the bundle in force, apart from `in_force` so that the engine
+    /// never waits for a check or an install to read them.
+    matcher: RwLock<Option<Arc<Matcher>>>,
 }
 
 #[uniffi::export]
@@ -150,6 +157,7 @@ impl Feed {
             store: BundleStore::new(dir, FEED_NAME),
             trust,
             in_force: Mutex::new(None),
+            matcher: RwLock::new(None),
         }))
     }
 
@@ -164,14 +172,25 @@ impl Feed {
     pub fn recheck(&self) -> Result<Option<FeedStatus>, FeedFailure> {
         let mut in_force = self.lock();
         *in_force = None;
-        let mut status = None;
+        let mut checked = None;
         let installed = self.store.installed(&self.trust, |dir, verified| {
-            status = Some(contents(dir, verified, false)?);
+            checked = Some(contents(dir, verified, false)?);
             Ok(())
-        })?;
-        let (Some(installed), Some(status)) = (installed, status) else {
+        });
+        // Until now the indicators of the last check stay in use; from now on, only
+        // those of a bundle that passed this one.
+        let installed = match installed {
+            Ok(installed) => installed,
+            Err(e) => {
+                self.set_matcher(None);
+                return Err(e.into());
+            }
+        };
+        let (Some(installed), Some((status, matcher))) = (installed, checked) else {
+            self.set_matcher(None);
             return Ok(None);
         };
+        self.set_matcher(Some(matcher));
         *in_force = Some(InForce {
             files: listed(&installed.verified),
             dir: installed.dir,
@@ -210,19 +229,20 @@ impl Feed {
     /// rather than copy.
     pub fn install(&self, staging_dir: String) -> Result<FeedStatus, FeedFailure> {
         let mut in_force = self.lock();
-        let mut status = None;
+        let mut checked = None;
         let installed = self.store.install(
             Path::new(&staging_dir),
             &self.trust,
             now_secs(),
             |dir, verified| {
-                status = Some(contents(dir, verified, true)?);
+                checked = Some(contents(dir, verified, true)?);
                 Ok(())
             },
         )?;
-        let status = status.ok_or_else(|| FeedFailure::Refused {
+        let (status, matcher) = checked.ok_or_else(|| FeedFailure::Refused {
             reason: "the bundle was not checked".into(),
         })?;
+        self.set_matcher(Some(matcher));
         *in_force = Some(InForce {
             files: listed(&installed.verified),
             dir: installed.dir,
@@ -247,6 +267,19 @@ impl Feed {
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<InForce>> {
         self.in_force.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// The domain and address indicators of the bundle in force, as last checked (ID-13);
+    /// `None` when there is none.
+    pub(crate) fn matcher(&self) -> Option<Arc<Matcher>> {
+        self.matcher
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn set_matcher(&self, matcher: Option<Matcher>) {
+        *self.matcher.write().unwrap_or_else(PoisonError::into_inner) = matcher.map(Arc::new);
+    }
 }
 
 fn now_secs() -> u64 {
@@ -265,14 +298,15 @@ fn listed(verified: &VerifiedManifest) -> Vec<String> {
 /// Check what a bundle's files hold, where they will be used: every indicator file has
 /// provenance on every indicator and is named after its source (MS-10); when
 /// `data_files`, the IP database and tracker list load. Files this edition does not read
-/// are left alone.
+/// are left alone. Gives the bundle's status and its indicators, ready to match.
 fn contents(
     dir: &Path,
     verified: &VerifiedManifest,
     data_files: bool,
-) -> Result<FeedStatus, FeedError> {
+) -> Result<(FeedStatus, Matcher), FeedError> {
     let manifest = verified.manifest();
     let mut sources = Vec::new();
+    let mut files = Vec::new();
     let mut skipped = 0usize;
     for file in &manifest.files {
         let path = file.path.as_str();
@@ -294,25 +328,27 @@ fn contents(
             skipped += parsed.skipped;
             sources.push(FeedSource {
                 indicators: count(parsed.indicators.len()),
-                id: parsed.source.id,
-                name: parsed.source.name,
-                url: parsed.source.url,
-                licence: parsed.source.licence,
+                id: parsed.source.id.clone(),
+                name: parsed.source.name.clone(),
+                url: parsed.source.url.clone(),
+                licence: parsed.source.licence.clone(),
             });
+            files.push(parsed);
         } else if data_files && path == IP_DATABASE_FILE {
             IpDb::from_bytes(&read()?).map_err(|e| bad(e.to_string()))?;
         } else if data_files && path == TRACKER_LIST_FILE {
             TrackerDb::from_bytes(&read()?).map_err(|e| bad(e.to_string()))?;
         }
     }
-    Ok(FeedStatus {
+    let status = FeedStatus {
         version: manifest.version,
         created_ms: millis(manifest.created),
         expires_ms: millis(manifest.expires),
         indicators: sources.iter().map(|source| source.indicators).sum(),
         skipped: count(skipped),
         sources,
-    })
+    };
+    Ok((status, Matcher::new(files)))
 }
 
 fn count(n: usize) -> u32 {
@@ -324,7 +360,7 @@ fn millis(secs: u64) -> i64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use sentinel_enrich::{IpDbBuilder, Sources, TrackerDbBuilder};
@@ -340,7 +376,7 @@ mod tests {
         SecretKey::from_seed([9; 32])
     }
 
-    fn open(dir: &Path) -> Arc<Feed> {
+    pub(crate) fn open(dir: &Path) -> Arc<Feed> {
         Feed::open(
             dir.to_string_lossy().into_owned(),
             vec![key().public_hex()],
@@ -349,7 +385,9 @@ mod tests {
         .unwrap()
     }
 
-    fn indicators(source: &str, values: &[(&str, &str)]) -> Vec<u8> {
+    /// Indicator file of `source` holding `(kind, value)` indicators of the
+    /// stalkerware family "Example".
+    pub(crate) fn indicators(source: &str, values: &[(&str, &str)]) -> Vec<u8> {
         let list: Vec<Value> = values
             .iter()
             .map(|(kind, value)| {
@@ -377,7 +415,7 @@ mod tests {
     }
 
     /// Stage bundle `version` holding `files` in a new directory under `root`.
-    fn stage(root: &Path, version: u64, files: &[(&str, Vec<u8>)]) -> PathBuf {
+    pub(crate) fn stage(root: &Path, version: u64, files: &[(&str, Vec<u8>)]) -> PathBuf {
         let dir = root.join(format!("staging-{version}-{}", files.len()));
         fs::create_dir_all(&dir).unwrap();
         let mut entries = Vec::new();
@@ -403,7 +441,7 @@ mod tests {
         dir
     }
 
-    fn path(dir: &Path) -> String {
+    pub(crate) fn path(dir: &Path) -> String {
         dir.to_string_lossy().into_owned()
     }
 
@@ -492,6 +530,10 @@ mod tests {
         assert_eq!(fs::read(&ip).unwrap(), ip_db());
         assert!(ip.starts_with(&path(&root)));
         assert_eq!(feed.file("unlisted.txt".into()), None);
+        let matcher = feed.matcher().unwrap();
+        assert_eq!(matcher.len(), 2, "the domain and the address");
+        assert_eq!(matcher.name("cdn.spy.example").unwrap().source.id, "alpha");
+        assert!(matcher.address("203.0.113.9".parse().unwrap()).is_some());
 
         // As when the app starts again.
         let reopened = open(&root);
@@ -500,7 +542,57 @@ mod tests {
             None,
             "nothing is used before it is checked"
         );
+        assert!(reopened.matcher().is_none());
         assert_eq!(reopened.recheck().unwrap(), Some(status));
+        assert!(reopened.matcher().unwrap().name("spy.example").is_some());
+    }
+
+    /// ID-13: the indicators matched are those of the bundle in force: a newer bundle's
+    /// as soon as it is installed, and still the old ones when an update is refused.
+    #[test]
+    fn the_indicators_in_force_are_matched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let feed = open(&tmp.path().join("feed"));
+        assert!(feed.matcher().is_none());
+        let first = stage(
+            tmp.path(),
+            1,
+            &[(
+                "indicators-alpha.json",
+                indicators("alpha", &[("domain", "spy.example")]),
+            )],
+        );
+        feed.install(path(&first)).unwrap();
+        let old = feed.matcher().unwrap();
+        assert!(old.name("spy.example").is_some());
+
+        let refused = stage(
+            tmp.path(),
+            2,
+            &[(
+                "indicators-gamma.json",
+                indicators("alpha", &[("domain", "other.example")]),
+            )],
+        );
+        assert!(feed.install(path(&refused)).is_err());
+        assert!(Arc::ptr_eq(&feed.matcher().unwrap(), &old));
+
+        let second = stage(
+            tmp.path(),
+            3,
+            &[(
+                "indicators-alpha.json",
+                indicators("alpha", &[("domain", "other.example")]),
+            )],
+        );
+        feed.install(path(&second)).unwrap();
+        let new = feed.matcher().unwrap();
+        assert!(new.name("spy.example").is_none());
+        assert!(new.name("x.other.example").is_some());
+        assert!(
+            old.name("spy.example").is_some(),
+            "a matcher already taken is not changed under its holder"
+        );
     }
 
     /// MS-10: provenance on every indicator is checked on load, and a file must be the
@@ -562,11 +654,16 @@ mod tests {
             ],
         );
         feed.install(path(&staged)).unwrap();
+        assert!(feed.matcher().is_some());
         let ip = feed.file(IP_DATABASE_FILE.into()).unwrap();
         fs::write(&ip, b"changed").unwrap();
         assert!(matches!(feed.recheck(), Err(FeedFailure::Refused { .. })));
         assert_eq!(feed.status(), None);
         assert_eq!(feed.file(IP_DATABASE_FILE.into()), None);
+        assert!(
+            feed.matcher().is_none(),
+            "its indicators match nothing more"
+        );
         assert_eq!(feed.recheck().unwrap(), None);
     }
 
@@ -595,6 +692,13 @@ mod tests {
             assert_eq!(status.version, version);
             assert_eq!(status.indicators, version as u32);
             assert_eq!(status.sources[0].id, "sentinel-test");
+            // The name the device tests look up (IndicatorAlertTest).
+            assert!(
+                feed.matcher()
+                    .unwrap()
+                    .name("planted.sentinel-test.example")
+                    .is_some()
+            );
         }
     }
 

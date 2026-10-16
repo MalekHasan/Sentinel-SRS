@@ -2,7 +2,9 @@
 //! Alerts (SRS §12.1) as seen from Kotlin. The app writes each alert's title and
 //! explanation in the user's language from its rule and evidence (ADR-0012).
 
-use sentinel_detect::{Action, AlertState, Delivery, Evidence, Feedback, Rule, Severity};
+use sentinel_detect::{
+    Action, AlertState, Delivery, Evidence, Feedback, Rule, Severity, Sighting, Threat,
+};
 use sentinel_store::StoredAlert;
 
 /// How urgent an alert is (AL-01).
@@ -30,6 +32,28 @@ pub enum AlertRule {
     PrivateDnsChanged,
     /// The proxy in effect changed (CM-07).
     ProxyChanged,
+    /// An app's traffic named a known indicator of spyware or stalkerware (ID-13).
+    KnownIndicator,
+}
+
+/// How the traffic showed an indicator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum IndicatorSighting {
+    /// The app looked the name up.
+    DnsQuery,
+    /// The app named the server when it opened a TLS connection.
+    ServerName,
+    /// The app connected to the address.
+    Address,
+}
+
+/// The kind of threat an indicator belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum IndicatorThreat {
+    /// Mercenary spyware, such as Pegasus or Predator.
+    Spyware,
+    /// Stalkerware and remote-access tools sold to watch a partner or relative.
+    Stalkerware,
 }
 
 /// What an alert rests on.
@@ -66,6 +90,21 @@ pub enum AlertEvidence {
     /// Block-unknown kept the app off the network: it was installed since the mode was
     /// turned on, and no rule allows it.
     NewAppBlocked,
+    /// A known indicator the traffic named, with its provenance (MS-10): the family and
+    /// threat, the source that lists it, and the report that names it, with its date
+    /// (`YYYY-MM-DD`).
+    Indicator {
+        /// The indicator as the list gives it: a domain or an address.
+        indicator: String,
+        /// What the traffic named: the domain or a name below it, or the address.
+        seen: String,
+        sighting: IndicatorSighting,
+        family: String,
+        threat: IndicatorThreat,
+        source: String,
+        date: String,
+        report: String,
+    },
 }
 
 /// What the user can do from an alert (SRS §9).
@@ -157,6 +196,7 @@ impl From<Rule> for AlertRule {
             Rule::DnsServersChanged => AlertRule::DnsServersChanged,
             Rule::PrivateDnsChanged => AlertRule::PrivateDnsChanged,
             Rule::ProxyChanged => AlertRule::ProxyChanged,
+            Rule::KnownIndicator => AlertRule::KnownIndicator,
         }
     }
 }
@@ -236,6 +276,23 @@ impl From<StoredAlert> for HistoryAlert {
                     }
                     Evidence::Proxy { before, after } => AlertEvidence::Proxy { before, after },
                     Evidence::NewAppBlocked => AlertEvidence::NewAppBlocked,
+                    Evidence::Indicator(matched) => AlertEvidence::Indicator {
+                        indicator: matched.indicator,
+                        seen: matched.seen,
+                        sighting: match matched.sighting {
+                            Sighting::DnsQuery => IndicatorSighting::DnsQuery,
+                            Sighting::ServerName => IndicatorSighting::ServerName,
+                            Sighting::Address => IndicatorSighting::Address,
+                        },
+                        family: matched.family,
+                        threat: match matched.threat {
+                            Threat::Spyware => IndicatorThreat::Spyware,
+                            Threat::Stalkerware => IndicatorThreat::Stalkerware,
+                        },
+                        source: matched.source,
+                        date: matched.date,
+                        report: matched.report,
+                    },
                 })
                 .collect(),
             open: stored.state == AlertState::Open,

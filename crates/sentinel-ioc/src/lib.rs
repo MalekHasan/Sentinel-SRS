@@ -14,10 +14,17 @@
 //! package or certificate, is refused as a whole. Kinds and threats this version does not
 //! know are skipped and counted, so that a feed made for newer or other editions still
 //! installs.
+//!
+//! A [`Matcher`] holds the domain and address indicators of the list in force, to match
+//! the phone's traffic against.
 
 use std::net::IpAddr;
 
 use serde::Deserialize;
+
+mod matcher;
+
+pub use matcher::{Hit, Matcher};
 
 /// The indicator file format this version reads.
 pub const SCHEMA: u32 = 1;

@@ -145,16 +145,21 @@ class SentinelVpnService : VpnService() {
     }
 
     /**
-     * The network and country (DT-01), company and category (DT-06) of each destination,
-     * from the indicator list in force, if it brought the data. The list is checked when
-     * it is first opened (SP-04).
+     * The indicators every lookup and connection is matched against (ID-13), and the
+     * network and country (DT-01), company and category (DT-06) of each destination, from
+     * the indicator list in force, if it brought the data. The list is checked when it is
+     * first opened (SP-04). The engine follows the feed to each new list, and stops
+     * matching a list that fails its check.
      */
     private fun loadFeedData(started: Engine) {
         Thread({
+            val feed = IndicatorFeed.get(this)
             val ip = IpData.open(this)
             val trackers = TrackerData.open(this)
             main.post {
                 if (engine === started) {
+                    started.setFeed(feed)
+                    Monitor.feedSet(feed)
                     ip?.let {
                         started.setIpDatabase(it)
                         Monitor.ipDataLoaded(it.sources())

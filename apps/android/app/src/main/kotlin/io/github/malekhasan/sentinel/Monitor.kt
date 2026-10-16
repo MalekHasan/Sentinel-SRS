@@ -3,6 +3,7 @@ package io.github.malekhasan.sentinel
 
 import io.github.malekhasan.sentinel.core.Engine
 import io.github.malekhasan.sentinel.core.EngineSnapshot
+import io.github.malekhasan.sentinel.core.Feed
 import io.github.malekhasan.sentinel.core.FlowRecord
 import io.github.malekhasan.sentinel.core.IpSources
 import io.github.malekhasan.sentinel.core.LiveApp
@@ -50,6 +51,7 @@ object Monitor {
         engine = null
         ipSources = null
         trackerSources = null
+        matchesIndicators = false
         mutableStatus.value = Status.OFF
     }
 
@@ -69,6 +71,15 @@ object Monitor {
 
     internal fun trackerDataLoaded(sources: List<String>) {
         trackerSources = sources
+    }
+
+    /** Whether the engine matches traffic against the indicator feed (ID-13). */
+    @Volatile
+    var matchesIndicators: Boolean = false
+        private set
+
+    internal fun feedSet(feed: Feed?) {
+        matchesIndicators = feed != null
     }
 
     private const val RECENT_FLOWS = 500

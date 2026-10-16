@@ -171,6 +171,13 @@
     <string name="alert_evidence_private_dns">Private DNS before: %1$s. Now: %2$s</string>
     <string name="alert_evidence_proxy">Proxy before: %1$s. Now: %2$s</string>
     <string name="alert_evidence_new_app_blocked">Sentinel stopped this app from using the internet.</string>
+    <string name="alert_evidence_indicator_dns">Looked up the name %1$s.</string>
+    <string name="alert_evidence_indicator_tls">Connected to %1$s.</string>
+    <string name="alert_evidence_indicator_address">Connected to the address %1$s.</string>
+    <string name="alert_evidence_indicator_listed">%1$s is on the list as a sign of %2$s (%3$s).</string>
+    <string name="alert_evidence_indicator_source">Source: %1$s, in a report from %2$s: %3$s</string>
+    <string name="alert_threat_spyware">spyware</string>
+    <string name="alert_threat_stalkerware">stalkerware</string>
     <string name="alert_setting_none">none</string>
     <plurals name="alert_evidence_more_destinations">
         <item quantity="one">And %d more place.</item>
@@ -218,6 +225,8 @@
     <string name="alert_private_dns_changed_text">Your phone now asks a different service to look up names, and that service can see which sites you visit.</string>
     <string name="alert_proxy_changed_title">Proxy changed</string>
     <string name="alert_proxy_changed_text">Your web traffic may now pass through a different proxy, which can see or change what you send.</string>
+    <string name="alert_known_indicator_title">Known traces of spyware found</string>
+    <string name="alert_known_indicator_text">An app on this phone reached a server that public reports link to spyware or stalkerware.</string>
 
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>

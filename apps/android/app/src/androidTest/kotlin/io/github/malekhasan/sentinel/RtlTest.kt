@@ -48,6 +48,8 @@ import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryCompany
 import io.github.malekhasan.sentinel.core.HistoryDestination
 import io.github.malekhasan.sentinel.core.HistoryFlow
+import io.github.malekhasan.sentinel.core.IndicatorSighting
+import io.github.malekhasan.sentinel.core.IndicatorThreat
 import io.github.malekhasan.sentinel.core.JournalEntry
 import io.github.malekhasan.sentinel.core.JournalState
 import io.github.malekhasan.sentinel.core.LiveApp
@@ -55,6 +57,9 @@ import io.github.malekhasan.sentinel.core.NameSource
 import io.github.malekhasan.sentinel.core.RuleAction
 import io.github.malekhasan.sentinel.core.RuleDestination
 import java.text.DateFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.Date
 import java.util.Locale
 import org.junit.Assert.assertEquals
@@ -414,6 +419,63 @@ class RtlTest {
         val allow = arabic.getString(R.string.alert_action_allow_app, isolate(LABEL))
         compose.onNodeWithText(allow).performScrollTo()
         assertRightToLeft(compose.onNodeWithText(allow, useUnmergedTree = true))
+    }
+
+    /** ID-13: a known indicator's alert. What was seen, the family, the source and the
+     *  report's link are written left to right inside right-to-left lines. */
+    @Test
+    fun knownIndicatorAlert() {
+        val alert = HistoryAlert(
+            id = 5,
+            rule = AlertRule.KNOWN_INDICATOR,
+            severity = AlertSeverity.CRITICAL,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.Indicator(
+                    indicator = "spy.example",
+                    seen = "cdn.spy.example",
+                    sighting = IndicatorSighting.DNS_QUERY,
+                    family = "Pegasus",
+                    threat = IndicatorThreat.SPYWARE,
+                    source = "Amnesty International Security Lab",
+                    date = "2021-07-18",
+                    report = "https://example.org/report",
+                ),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.severity_critical), useUnmergedTree = true).assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_title)).assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_text)))
+        val date = LocalDate.of(2021, 7, 18).format(
+            DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(arabic.resources.configuration.locales[0]),
+        )
+        val line = listOf(
+            arabic.getString(R.string.alert_evidence_indicator_dns, isolate("cdn.spy.example")),
+            arabic.getString(
+                R.string.alert_evidence_indicator_listed,
+                isolate("spy.example"),
+                isolate("Pegasus"),
+                arabic.getString(R.string.alert_threat_spyware),
+            ),
+            arabic.getString(
+                R.string.alert_evidence_indicator_source,
+                isolate("Amnesty International Security Lab"),
+                date,
+                isolate("https://example.org/report"),
+            ),
+        ).joinToString(" ")
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+        val block = arabic.getString(R.string.alert_action_block_app, isolate(LABEL))
+        compose.onNodeWithText(block).performScrollTo()
+        assertRightToLeft(compose.onNodeWithText(block, useUnmergedTree = true))
+        // A Critical alert cannot be allowed away (AL-05).
+        compose.onNodeWithText(arabic.getString(R.string.alert_feedback_allow)).assertDoesNotExist()
     }
 
     /** CM-07: a changed setting's values, names written left to right, in a right-to-left line. */

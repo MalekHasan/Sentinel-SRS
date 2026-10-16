@@ -2,7 +2,7 @@
 //! Flow events for the app (SRS CM-01, CM-02): which app opened each connection, where
 //! to, under which name, and how much it carried.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
@@ -12,10 +12,12 @@ use std::net::IpAddr;
 use sentinel_vpn::{FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 use tokio::sync::Notify;
 
-use sentinel_detect::Place;
+use sentinel_detect::{IndicatorMatch, Place, Sighting};
+use sentinel_ioc::Hit;
 use sentinel_store::FirstSeen;
 
 use crate::enrich::{CategoryFact, CompanyFact, IpDatabase, TrackerDatabase};
+use crate::feed::Feed;
 use crate::history::{HistoryStore, now_ms};
 
 /// How long events wait so that several can cross into Kotlin together. Short enough
@@ -149,6 +151,13 @@ pub(crate) struct FlowEvents {
     installed: Mutex<HashMap<String, i64>>,
     pending: Mutex<Vec<FlowRecord>>,
     databases: RwLock<Databases>,
+    /// The feed whose indicators the traffic is matched against (ID-13).
+    feed: RwLock<Option<Arc<Feed>>>,
+    /// Known-indicator alerts waiting for the next batch.
+    sightings: Mutex<Vec<sentinel_detect::Alert>>,
+    /// Each app and indicator already sighted in this run, `None` for an app not known:
+    /// an app that keeps using a known server raises one alert, not one per lookup.
+    sighted: Mutex<HashSet<(Option<String>, String)>>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -167,6 +176,9 @@ impl FlowEvents {
             installed: Mutex::new(HashMap::new()),
             pending: Mutex::new(Vec::new()),
             databases: RwLock::new(Databases::default()),
+            feed: RwLock::new(None),
+            sightings: Mutex::new(Vec::new()),
+            sighted: Mutex::new(HashSet::new()),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
@@ -186,6 +198,12 @@ impl FlowEvents {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .trackers = database;
+    }
+
+    /// Match lookups and connections from now on against the indicators `feed` has in
+    /// force, whichever bundle that is at the time (ID-13); or against none.
+    pub(crate) fn set_feed(&self, feed: Option<Arc<Feed>>) {
+        *self.feed.write().unwrap_or_else(PoisonError::into_inner) = feed;
     }
 
     fn databases(&self) -> Databases {
@@ -225,9 +243,25 @@ impl FlowEvents {
 
     fn flush(&self) {
         let batch = std::mem::take(&mut *lock(&self.pending));
-        if batch.is_empty() {
-            return;
+        let sightings = std::mem::take(&mut *lock(&self.sightings));
+        if !batch.is_empty() {
+            self.record_flows(&batch);
         }
+        if let Some(history) = &self.history {
+            for alert in &sightings {
+                if let Err(e) = history.raise_unless_open(alert, sentinel_detect::same_sighting) {
+                    log::warn!("could not raise an alert: {e}");
+                }
+            }
+        }
+        if !batch.is_empty() {
+            self.foreign.flows(batch);
+        }
+    }
+
+    /// Keep `batch` in the history, and raise alerts for what it showed for the first
+    /// time.
+    fn record_flows(&self, batch: &[FlowRecord]) {
         if let Some(history) = &self.history {
             let sources = self
                 .databases()
@@ -245,7 +279,6 @@ impl FlowEvents {
                 }
             }
         }
-        self.foreign.flows(batch);
     }
 
     /// Alerts for what the flows showed for the first time (CM-04): an app new to the
@@ -316,6 +349,60 @@ impl FlowEvents {
         self.ready.notify_one();
     }
 
+    /// Whether `name`, looked up or named as a TLS server, is a known indicator or
+    /// below one (ID-13).
+    fn match_name(&self, owner: &FlowOwner, name: &str, sighting: Sighting) {
+        if let Some(matcher) = self.matcher()
+            && let Some(hit) = matcher.name(name)
+        {
+            self.sighted(owner, hit, name, sighting);
+        }
+    }
+
+    /// Whether `address`, connected to, is a known indicator (ID-13).
+    fn match_address(&self, owner: &FlowOwner, address: IpAddr) {
+        if let Some(matcher) = self.matcher()
+            && let Some(hit) = matcher.address(address)
+        {
+            self.sighted(owner, hit, &address.to_string(), Sighting::Address);
+        }
+    }
+
+    /// The indicators in force, if alerts can be raised at all.
+    fn matcher(&self) -> Option<Arc<sentinel_ioc::Matcher>> {
+        self.history.as_ref()?;
+        self.feed
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()?
+            .matcher()
+    }
+
+    /// The owner's traffic showed `hit`: the first time in this run for this app and
+    /// indicator, an alert goes out with the next batch. Nothing is blocked (SRS §9).
+    fn sighted(&self, owner: &FlowOwner, hit: &Hit, seen: &str, sighting: Sighting) {
+        let indicator = &hit.indicator;
+        if !lock(&self.sighted).insert((owner.app.clone(), indicator.value.clone())) {
+            return;
+        }
+        let matched = IndicatorMatch {
+            indicator: indicator.value.clone(),
+            seen: seen.to_owned(),
+            sighting,
+            family: indicator.family.clone(),
+            threat: match indicator.threat {
+                sentinel_ioc::Threat::Spyware => sentinel_detect::Threat::Spyware,
+                sentinel_ioc::Threat::Stalkerware => sentinel_detect::Threat::Stalkerware,
+            },
+            source: hit.source.name.clone(),
+            date: indicator.date.clone(),
+            report: indicator.report.clone(),
+        };
+        let alert = sentinel_detect::known_indicator(now_ms(), owner.app.as_deref(), matched);
+        lock(&self.sightings).push(alert);
+        self.ready.notify_one();
+    }
+
     /// What the firewall says about a connection or lookup on `port`: isolation first,
     /// then its rules, then its mode (RA-03, CM-10, CM-08; ADR-0017, ADR-0015,
     /// ADR-0016). A name's company comes from the tracker list, if one is set. Without a
@@ -373,6 +460,7 @@ impl Observer for FlowEvents {
         }
         // The app and the address are known for sure; a name from an earlier DNS answer
         // is not, so it is not matched (ADR-0015).
+        self.match_address(&owner, flow.dst.ip());
         let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), None);
         let blocked = verdict == Verdict::Block;
         self.push(record(flow, &owner, None, blocked, &self.databases()));
@@ -389,6 +477,7 @@ impl Observer for FlowEvents {
             }
             None => FlowOwner::unknown(),
         };
+        self.match_name(&owner, hostname, Sighting::ServerName);
         self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), Some(hostname))
     }
 
@@ -397,6 +486,7 @@ impl Observer for FlowEvents {
             .get(&flow.id)
             .map_or_else(FlowOwner::unknown, |(_, owner)| owner.clone());
         // The address is the resolver's, not the destination's: only names count here.
+        self.match_name(&owner, qname, Sighting::DnsQuery);
         self.verdict(&owner, None, flow.dst.port(), Some(qname))
     }
 
@@ -845,6 +935,164 @@ mod tests {
         });
         history.set_alert_listener(Some(observer.clone()));
         observer
+    }
+
+    /// ID-13: a lookup, a TLS server name or a connection that names a known indicator
+    /// raises one Critical alert per app and indicator, with its provenance, and blocks
+    /// nothing. While its alert is open, the same sighting in a later run raises nothing;
+    /// once it is dismissed, it raises another. A list removed at its re-check matches
+    /// nothing more.
+    #[test]
+    fn known_indicators_raise_one_critical_alert_per_app_and_indicator() {
+        use crate::alerts::{
+            AlertAction, AlertEvidence, AlertRule, AlertSeverity, IndicatorSighting,
+            IndicatorThreat,
+        };
+        use crate::feed::tests::{indicators, open, path, stage};
+
+        let (dir, history) = history();
+        let observer = listen(
+            &history,
+            vec![
+                (53, installed("org.example.chat", None)),
+                (443, installed("org.example.spy", None)),
+                (80, FlowOwner::unknown()),
+            ],
+        );
+        let run = |session| FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), session);
+        let events = run(1);
+        let dns = flow(1, "10.111.222.3:53", None);
+        assert_eq!(events.flow_started(&dns), Verdict::Allow);
+        events.dns_query(&dns, "cdn.spy.example");
+        events.flush();
+        let feed = open(&dir.path().join("feed"));
+        events.set_feed(Some(Arc::clone(&feed)));
+        events.dns_query(&dns, "cdn.spy.example");
+        events.flush();
+        assert!(
+            observer.heard.lock().unwrap().is_empty(),
+            "no feed, then no list in force"
+        );
+
+        let staged = stage(
+            dir.path(),
+            1,
+            &[(
+                "indicators-lab.json",
+                indicators(
+                    "lab",
+                    &[("domain", "spy.example"), ("address", "198.51.100.7")],
+                ),
+            )],
+        );
+        feed.install(path(&staged)).unwrap();
+        assert_eq!(
+            events.dns_query(&dns, "cdn.spy.example"),
+            Verdict::Allow,
+            "nothing is blocked without the user"
+        );
+        events.dns_query(&dns, "spy.example");
+        events.dns_query(&dns, "other.example");
+        let tls = flow(2, "203.0.113.5:443", None);
+        events.flow_started(&tls);
+        assert_eq!(events.hostname_seen(&tls, "spy.example"), Verdict::Allow);
+        let unknown = flow(3, "198.51.100.7:80", None);
+        assert_eq!(events.flow_started(&unknown), Verdict::Allow);
+        events.flush();
+
+        let heard = observer.heard.lock().unwrap().clone();
+        assert_eq!(heard.len(), 3, "one per app and indicator: {heard:?}");
+        assert!(
+            heard
+                .iter()
+                .all(|alert| alert.rule == AlertRule::KnownIndicator
+                    && alert.severity == AlertSeverity::Critical)
+        );
+        let provenance = |indicator: &str, seen: &str, sighting| AlertEvidence::Indicator {
+            indicator: indicator.into(),
+            seen: seen.into(),
+            sighting,
+            family: "Example".into(),
+            threat: IndicatorThreat::Stalkerware,
+            source: "Source lab".into(),
+            date: "2025-01-31".into(),
+            report: "https://example.org/report".into(),
+        };
+        assert_eq!(
+            heard[0].evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.chat".into()
+                },
+                provenance(
+                    "spy.example",
+                    "cdn.spy.example",
+                    IndicatorSighting::DnsQuery
+                ),
+            ]
+        );
+        assert_eq!(
+            heard[0].actions,
+            [
+                AlertAction::BlockApp {
+                    app: "org.example.chat".into()
+                },
+                AlertAction::OpenApp {
+                    app: "org.example.chat".into()
+                }
+            ]
+        );
+        assert_eq!(
+            heard[1].evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.spy".into()
+                },
+                provenance("spy.example", "spy.example", IndicatorSighting::ServerName),
+            ]
+        );
+        assert_eq!(
+            heard[2].evidence,
+            [provenance(
+                "198.51.100.7",
+                "198.51.100.7",
+                IndicatorSighting::Address
+            )],
+            "an app not known is still reported"
+        );
+        assert!(heard[2].actions.is_empty());
+
+        // A later run: the open alert already says it.
+        let events = run(2);
+        events.set_feed(Some(Arc::clone(&feed)));
+        let dns = flow(1, "10.111.222.3:53", None);
+        events.flow_started(&dns);
+        events.dns_query(&dns, "spy.example");
+        events.flush();
+        assert_eq!(observer.heard.lock().unwrap().len(), 3);
+        history.dismiss_alert(heard[0].id).unwrap();
+        let events = run(3);
+        events.set_feed(Some(Arc::clone(&feed)));
+        events.flow_started(&dns);
+        events.dns_query(&dns, "spy.example");
+        events.flush();
+        assert_eq!(
+            observer.heard.lock().unwrap().len(),
+            4,
+            "raised again once dismissed"
+        );
+
+        // SP-04: a list changed on the phone is removed, and matches nothing more.
+        let file = feed.file("indicators-lab.json".into()).unwrap();
+        std::fs::write(file, b"changed").unwrap();
+        assert!(feed.recheck().is_err());
+        let events = run(4);
+        events.set_feed(Some(feed));
+        let tls = flow(2, "198.51.100.7:443", None);
+        events.flow_started(&tls);
+        events.hostname_seen(&tls, "spy.example");
+        events.flush();
+        assert_eq!(observer.heard.lock().unwrap().len(), 4);
     }
 
     /// CM-04: an app installed since the history began raises one alert on its first

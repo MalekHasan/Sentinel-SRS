@@ -527,6 +527,18 @@ impl Store {
         rows.into_iter().map(stored_alert).collect()
     }
 
+    /// The open alerts raised by `rule`, newest first.
+    pub fn open_alerts_of(&self, rule: Rule) -> Result<Vec<StoredAlert>> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(&format!(
+            "{ALERT_COLUMNS} WHERE rule_id = ?1 AND state = 'open' ORDER BY created DESC, id DESC"
+        ))?;
+        let rows = stmt
+            .query_map([rule.id()], alert_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter().map(stored_alert).collect()
+    }
+
     /// One alert, if there is one with this id.
     pub fn alert(&self, id: i64) -> Result<Option<StoredAlert>> {
         let row = lock(&self.conn)

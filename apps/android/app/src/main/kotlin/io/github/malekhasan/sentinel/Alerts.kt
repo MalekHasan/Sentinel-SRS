@@ -41,7 +41,13 @@ import io.github.malekhasan.sentinel.core.AlertFeedback
 import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.HistoryAlert
+import io.github.malekhasan.sentinel.core.IndicatorSighting
+import io.github.malekhasan.sentinel.core.IndicatorThreat
 import java.text.DateFormat
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.format.FormatStyle
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -288,6 +294,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.DNS_SERVERS_CHANGED -> R.string.alert_dns_servers_changed_title
     AlertRule.PRIVATE_DNS_CHANGED -> R.string.alert_private_dns_changed_title
     AlertRule.PROXY_CHANGED -> R.string.alert_proxy_changed_title
+    AlertRule.KNOWN_INDICATOR -> R.string.alert_known_indicator_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -297,6 +304,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.DNS_SERVERS_CHANGED -> R.string.alert_dns_servers_changed_text
     AlertRule.PRIVATE_DNS_CHANGED -> R.string.alert_private_dns_changed_text
     AlertRule.PROXY_CHANGED -> R.string.alert_proxy_changed_text
+    AlertRule.KNOWN_INDICATOR -> R.string.alert_known_indicator_text
 }
 
 @Composable
@@ -340,7 +348,45 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             settingValue(listOfNotNull(evidence.after)),
         )
         is AlertEvidence.NewAppBlocked -> stringResource(R.string.alert_evidence_new_app_blocked)
+        is AlertEvidence.Indicator -> listOf(
+            stringResource(
+                when (evidence.sighting) {
+                    IndicatorSighting.DNS_QUERY -> R.string.alert_evidence_indicator_dns
+                    IndicatorSighting.SERVER_NAME -> R.string.alert_evidence_indicator_tls
+                    IndicatorSighting.ADDRESS -> R.string.alert_evidence_indicator_address
+                },
+                isolate(evidence.seen),
+            ),
+            stringResource(
+                R.string.alert_evidence_indicator_listed,
+                isolate(evidence.indicator),
+                isolate(evidence.family),
+                stringResource(
+                    when (evidence.threat) {
+                        IndicatorThreat.SPYWARE -> R.string.alert_threat_spyware
+                        IndicatorThreat.STALKERWARE -> R.string.alert_threat_stalkerware
+                    },
+                ),
+            ),
+            stringResource(
+                R.string.alert_evidence_indicator_source,
+                isolate(evidence.source),
+                reportDate(evidence.date),
+                isolate(evidence.report),
+            ),
+        ).joinToString(" ")
     }
+
+/** A report's date, `YYYY-MM-DD` in the indicator list, as the user's language writes it. */
+@Composable
+private fun reportDate(date: String): String {
+    val locale = LocalConfiguration.current.locales[0]
+    return try {
+        LocalDate.parse(date).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale))
+    } catch (e: DateTimeParseException) {
+        isolate(date)
+    }
+}
 
 /** A network setting's values as written, each kept left to right, or "none". */
 @Composable

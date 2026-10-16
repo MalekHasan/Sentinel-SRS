@@ -13,6 +13,7 @@ use sentinel_vpn::{DnsForward, EngineConfig, EngineStats, Protect, TunDevice};
 use tokio::sync::oneshot;
 
 use crate::enrich::{IpDatabase, TrackerDatabase};
+use crate::feed::Feed;
 use crate::flows::{FlowEvents, FlowObserver, LiveApp};
 use crate::history::HistoryStore;
 
@@ -216,6 +217,14 @@ impl Engine {
     /// or none. Like the IP database, it can be replaced while the engine runs.
     pub fn set_tracker_database(&self, database: Option<Arc<TrackerDatabase>>) {
         self.events.set_tracker_database(database);
+    }
+
+    /// Match every DNS lookup, TLS server name and connection from now on against the
+    /// indicators `feed` has in force, or against none (ID-13). A match raises a Critical
+    /// alert in the history within a batch. The feed's newer bundles are used as soon as
+    /// they are installed, and a bundle removed at its re-check stops matching at once.
+    pub fn set_feed(&self, feed: Option<Arc<Feed>>) {
+        self.events.set_feed(feed);
     }
 
     /// Whether the user is away (on Android: the screen is off or locked). While it is
@@ -726,6 +735,67 @@ mod tests {
             ]
         );
         assert_eq!(history.alerts(true, 10).unwrap(), heard);
+    }
+
+    /// ID-13 through the real packet engine: a datagram to an address that the indicator
+    /// list in force names raises a Critical alert about its app within 5 s, and is not
+    /// blocked.
+    #[test]
+    fn a_known_address_raises_an_alert_within_five_seconds() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+        use crate::feed::tests::{indicators, open, path, stage};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("history.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(db, vec![3; 32]).unwrap();
+        let heard = Arc::new(HeardAlerts::default());
+        history.set_alert_listener(Some(heard.clone()));
+        let feed = open(&dir.path().join("feed"));
+        let staged = stage(
+            dir.path(),
+            1,
+            &[(
+                "indicators-lab.json",
+                indicators("lab", &[("address", "198.51.100.7")]),
+            )],
+        );
+        feed.install(path(&staged)).unwrap();
+
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let (flows, _batches) = recording_flows();
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            Vec::new(),
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            flows,
+            Some(Arc::clone(&history)),
+        )
+        .unwrap();
+        engine.set_feed(Some(feed));
+        let sent = std::time::Instant::now();
+        peer.send(&udp_packet([198, 51, 100, 7], 9)).unwrap();
+        while heard.0.lock().unwrap().is_empty() && sent.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let elapsed = sent.elapsed();
+        engine.stop();
+
+        let heard = heard.0.lock().unwrap();
+        assert_eq!(heard.len(), 1, "after {elapsed:?}: {heard:?}");
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+        assert_eq!(heard[0].rule, AlertRule::KnownIndicator);
+        assert_eq!(heard[0].severity, AlertSeverity::Critical);
+        assert_eq!(
+            heard[0].evidence[0],
+            AlertEvidence::App {
+                app: OWNER_APP.into()
+            }
+        );
+        let stored = history.recent_flows(10).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(!stored[0].blocked, "nothing is blocked without the user");
     }
 
     /// CM-10 through the real packet engine: with a rule blocking the app, its datagram

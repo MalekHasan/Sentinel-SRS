@@ -190,6 +190,13 @@
     <string name="alert_evidence_private_dns">نظام DNS الخاص قبل: %1$s. هلأ: %2$s</string>
     <string name="alert_evidence_proxy">البروكسي قبل: %1$s. هلأ: %2$s</string>
     <string name="alert_evidence_new_app_blocked">وقّف Sentinel هالتطبيق عن استعمال الإنترنت.</string>
+    <string name="alert_evidence_indicator_dns">دوّر على الاسم %1$s.</string>
+    <string name="alert_evidence_indicator_tls">اتصل بـ %1$s.</string>
+    <string name="alert_evidence_indicator_address">اتصل بالعنوان %1$s.</string>
+    <string name="alert_evidence_indicator_listed">%1$s موجود عالقائمة كعلامة على %2$s (%3$s).</string>
+    <string name="alert_evidence_indicator_source">المصدر: %1$s، بتقرير من تاريخ %2$s: %3$s</string>
+    <string name="alert_threat_spyware">برنامج تجسس</string>
+    <string name="alert_threat_stalkerware">برنامج مراقبة خفية</string>
     <string name="alert_setting_none">ولا شي</string>
     <plurals name="alert_evidence_more_destinations">
         <item quantity="zero">وما في أماكن تانية.</item>
@@ -245,6 +252,8 @@
     <string name="alert_private_dns_changed_text">موبايلك صار يسأل خدمة تانية عن العناوين، وهالخدمة بتقدر تشوف أي مواقع بتزور.</string>
     <string name="alert_proxy_changed_title">البروكسي تغيّر</string>
     <string name="alert_proxy_changed_text">ممكن ترافيك الويب تبعك صار يمرق من بروكسي تاني، وهاد البروكسي بيقدر يشوف أو يغيّر اللي بتبعته.</string>
+    <string name="alert_known_indicator_title">لقينا آثار معروفة لبرامج تجسس</string>
+    <string name="alert_known_indicator_text">تطبيق على هالتلفون وصل لخادم بتربطه تقارير منشورة ببرامج تجسس أو ببرامج مراقبة خفية.</string>
 
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>

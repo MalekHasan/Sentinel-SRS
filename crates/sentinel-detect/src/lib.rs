@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 mod delivery;
 mod firewall;
 mod first_seen;
+mod indicator;
 mod journal;
 mod network;
 
@@ -23,6 +24,7 @@ pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,
     join_destinations, new_destinations,
 };
+pub use indicator::{IndicatorMatch, Sighting, Threat, known_indicator, same_sighting};
 pub use journal::{Change, Setting};
 pub use network::{NetworkState, network_changes};
 
@@ -75,6 +77,8 @@ pub enum Rule {
     PrivateDnsChanged,
     /// The proxy in effect changed (CM-07).
     ProxyChanged,
+    /// An app's traffic named a known indicator of spyware or stalkerware (ID-13).
+    KnownIndicator,
 }
 
 impl Rule {
@@ -86,6 +90,7 @@ impl Rule {
             Rule::DnsServersChanged => "dns-servers-changed",
             Rule::PrivateDnsChanged => "private-dns-changed",
             Rule::ProxyChanged => "proxy-changed",
+            Rule::KnownIndicator => "known-indicator",
         }
     }
 
@@ -97,6 +102,7 @@ impl Rule {
             Rule::DnsServersChanged,
             Rule::PrivateDnsChanged,
             Rule::ProxyChanged,
+            Rule::KnownIndicator,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -106,15 +112,19 @@ impl Rule {
     pub fn actions(self, evidence: &[Evidence]) -> Vec<Action> {
         let mut actions = match self {
             Rule::MonitoringInterrupted => vec![Action::StartMonitoring],
-            Rule::FirstNetworkUse | Rule::NewDestination => Vec::new(),
+            Rule::FirstNetworkUse | Rule::NewDestination | Rule::KnownIndicator => Vec::new(),
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
         };
         // A new app that Block-unknown stopped can be let through (CM-08); an app new to
-        // the network, or to some places, can be stopped (RA-01).
+        // the network, or to some places, or seen with a known indicator, can be stopped
+        // (RA-01).
         let blocked = evidence.contains(&Evidence::NewAppBlocked);
-        let blockable = matches!(self, Rule::FirstNetworkUse | Rule::NewDestination);
+        let blockable = matches!(
+            self,
+            Rule::FirstNetworkUse | Rule::NewDestination | Rule::KnownIndicator
+        );
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } if blocked => Some(Action::AllowApp {
                 package: package.clone(),
@@ -172,6 +182,8 @@ pub enum Evidence {
     /// Block-unknown kept the app the alert is about off the network: it was installed
     /// since the mode was turned on, and no rule allows it (CM-08).
     NewAppBlocked,
+    /// A known indicator the app's traffic named, with its provenance (ID-13, MS-10).
+    Indicator(IndicatorMatch),
 }
 
 /// What the user can do from an alert (SRS §9). Actions that change the device come

@@ -646,6 +646,20 @@ impl HistoryStore {
         self.raise_or_join(alert, None)
     }
 
+    /// As [`HistoryStore::raise`], unless an open alert of the same rule already says
+    /// what this one would, as `same` decides.
+    pub(crate) fn raise_unless_open(
+        &self,
+        alert: &sentinel_detect::Alert,
+        same: impl Fn(&sentinel_detect::Alert, &sentinel_detect::Alert) -> bool,
+    ) -> Result<(), HistoryError> {
+        let open = self.store.open_alerts_of(alert.rule)?;
+        if open.iter().any(|stored| same(alert, &stored.alert)) {
+            return Ok(());
+        }
+        self.raise(alert)
+    }
+
     /// As [`HistoryStore::raise`], but if the app has an open alert of the same rule
     /// raised at or after `join_since`, the new alert's destinations join it instead,
     /// and the listener is not told again (CM-04).

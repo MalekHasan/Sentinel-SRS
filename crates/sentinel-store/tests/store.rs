@@ -1065,6 +1065,56 @@ fn newer_destinations_join_an_open_alert() {
     );
 }
 
+/// ID-13: a known-indicator alert is found among the open alerts of its rule, so the
+/// same sighting is not raised twice while one is open.
+#[test]
+fn open_alerts_are_found_by_rule() {
+    use sentinel_detect::{IndicatorMatch, Rule, Sighting, Threat, known_indicator};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let matched = IndicatorMatch {
+        indicator: "bad.example".to_owned(),
+        seen: "cdn.bad.example".to_owned(),
+        sighting: Sighting::DnsQuery,
+        family: "Hermit".to_owned(),
+        threat: Threat::Spyware,
+        source: "Example lab".to_owned(),
+        date: "2022-06-23".to_owned(),
+        report: "https://example.org/report".to_owned(),
+    };
+    let first = known_indicator(NOW, Some("org.example.chat"), matched.clone());
+    let second = known_indicator(NOW + 1, None, matched);
+    let first_id = store.record_alert(&first).unwrap();
+    let second_id = store.record_alert(&second).unwrap();
+    store
+        .record_alert(&sentinel_detect::monitoring_interrupted(
+            NOW, None, "killed",
+        ))
+        .unwrap();
+
+    let open = store.open_alerts_of(Rule::KnownIndicator).unwrap();
+    assert_eq!(
+        open.iter().map(|a| a.id).collect::<Vec<_>>(),
+        [second_id, first_id],
+        "newest first, only this rule's"
+    );
+    assert_eq!(open[1].alert, first, "kept with its provenance");
+    store
+        .set_alert_state(second_id, AlertState::Dismissed)
+        .unwrap();
+    assert_eq!(
+        store
+            .open_alerts_of(Rule::KnownIndicator)
+            .unwrap()
+            .iter()
+            .map(|a| a.id)
+            .collect::<Vec<_>>(),
+        [first_id]
+    );
+    assert!(store.open_alerts_of(Rule::ProxyChanged).unwrap().is_empty());
+}
+
 /// CM-07: the network settings last seen are kept across reopening, so that a change
 /// made while Sentinel was not running is found; a wipe forgets them.
 #[test]
