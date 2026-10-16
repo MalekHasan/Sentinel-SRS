@@ -189,6 +189,8 @@
     <string name="alert_evidence_accessibility">Accessibility access is on.</string>
     <string name="alert_evidence_device_admin">It is a device admin app.</string>
     <string name="alert_evidence_notification_access">Notification access is on.</string>
+    <string name="alert_evidence_wireless_debugging">Wireless debugging (ADB over Wi-Fi) is on.</string>
+    <string name="alert_evidence_certificate">Issued to %1$s. Fingerprint %2$s.</string>
     <string name="alert_evidence_indicator_listed">%1$s is on the list as a sign of %2$s (%3$s).</string>
     <string name="alert_evidence_indicator_source">Source: %1$s, in a report from %2$s: %3$s</string>
     <string name="alert_threat_spyware">spyware</string>
@@ -218,6 +220,8 @@
     <string name="alert_action_open_app">See what %1$s did</string>
     <string name="alert_action_open_network_settings">Open network settings</string>
     <string name="alert_action_open_access_settings">Open the Android settings for this access</string>
+    <string name="alert_action_open_developer_settings">Open developer options</string>
+    <string name="alert_action_open_certificate_settings">Open the trusted certificates</string>
     <string name="alert_action_allow_app">Let %1$s use the internet</string>
     <string name="alert_action_block_app">Block the internet for %1$s</string>
     <string name="alert_dismiss">Dismiss</string>
@@ -270,6 +274,10 @@
     <string name="alert_device_admin_text">A device admin app can lock or wipe the phone, and you cannot remove it until you turn this off. If you did not turn it on, someone else may have.</string>
     <string name="alert_notification_access_title">An app can read your notifications</string>
     <string name="alert_notification_access_text">This lets the app read every notification, with your messages and codes. If you did not turn it on, someone else may have.</string>
+    <string name="alert_remote_access_exposed_title">Wireless debugging is on</string>
+    <string name="alert_remote_access_exposed_text">A computer paired with this phone over Wi-Fi can install apps and read its data. If you do not use it, turn it off.</string>
+    <string name="alert_new_root_certificate_title">A new trusted certificate was added</string>
+    <string name="alert_new_root_certificate_text">With it, someone may be able to read your web traffic. Work or school phones may need one. If you did not add it, remove it.</string>
 
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>

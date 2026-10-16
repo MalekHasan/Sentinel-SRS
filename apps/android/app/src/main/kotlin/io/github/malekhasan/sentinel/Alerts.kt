@@ -44,6 +44,7 @@ import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.IndicatorSighting
 import io.github.malekhasan.sentinel.core.IndicatorThreat
+import io.github.malekhasan.sentinel.core.RemoteAccessService
 import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
 import java.time.LocalDate
@@ -360,6 +361,8 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.PROXY_CHANGED -> R.string.alert_proxy_changed_title
     AlertRule.KNOWN_INDICATOR -> R.string.alert_known_indicator_title
     AlertRule.SPECIAL_ACCESS -> R.string.alert_special_access_title
+    AlertRule.REMOTE_ACCESS_EXPOSED -> R.string.alert_remote_access_exposed_title
+    AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -371,6 +374,8 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.PROXY_CHANGED -> R.string.alert_proxy_changed_text
     AlertRule.KNOWN_INDICATOR -> R.string.alert_known_indicator_text
     AlertRule.SPECIAL_ACCESS -> R.string.alert_special_access_text
+    AlertRule.REMOTE_ACCESS_EXPOSED -> R.string.alert_remote_access_exposed_text
+    AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_text
 }
 
 @Composable
@@ -453,6 +458,12 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
                 SpecialAccess.NOTIFICATION_LISTENER -> R.string.alert_evidence_notification_access
             },
         )
+        is AlertEvidence.RemoteAccess -> when (evidence.service) {
+            RemoteAccessService.WIRELESS_DEBUGGING -> stringResource(R.string.alert_evidence_wireless_debugging)
+        }
+        is AlertEvidence.Certificate -> stringResource(
+            R.string.alert_evidence_certificate, isolate(evidence.subject), isolate(evidence.sha256),
+        )
     }
 
 /** How many connections the history holds, and on which days (MS-02). */
@@ -498,4 +509,6 @@ private fun actionLabel(action: AlertAction, label: (String) -> String): String 
         is AlertAction.AllowApp -> stringResource(R.string.alert_action_allow_app, isolate(label(action.app)))
         is AlertAction.BlockApp -> stringResource(R.string.alert_action_block_app, isolate(label(action.app)))
         is AlertAction.OpenAccessSettings -> stringResource(R.string.alert_action_open_access_settings)
+        is AlertAction.OpenDeveloperSettings -> stringResource(R.string.alert_action_open_developer_settings)
+        is AlertAction.OpenCertificateSettings -> stringResource(R.string.alert_action_open_certificate_settings)
     }

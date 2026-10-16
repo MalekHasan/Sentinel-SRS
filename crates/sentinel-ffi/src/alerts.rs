@@ -3,7 +3,8 @@
 //! explanation in the user's language from its rule and evidence (ADR-0012).
 
 use sentinel_detect::{
-    Access, Action, AlertState, Delivery, Evidence, Feedback, Rule, Severity, Sighting, Threat,
+    Access, Action, AlertState, Delivery, Evidence, Feedback, RemoteAccess, Rule, Severity,
+    Sighting, Threat,
 };
 use sentinel_store::StoredAlert;
 
@@ -36,6 +37,17 @@ pub enum AlertRule {
     KnownIndicator,
     /// An app gained accessibility, device admin or notification access (ID-12).
     SpecialAccess,
+    /// A way in from the network was turned on, such as wireless debugging (ID-03).
+    RemoteAccessExposed,
+    /// The user added a certificate authority to the trusted ones (ID-10).
+    NewRootCertificate,
+}
+
+/// A way in from the network that the user can turn on (ID-03).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RemoteAccessService {
+    /// ADB over Wi-Fi.
+    WirelessDebugging,
 }
 
 /// Special access an app holds (ID-12).
@@ -156,6 +168,11 @@ pub enum AlertEvidence {
     },
     /// Special access the app holds (ID-12).
     Access { access: SpecialAccess },
+    /// A way in from the network that is on (ID-03).
+    RemoteAccess { service: RemoteAccessService },
+    /// A certificate authority the user added to the trusted ones (ID-10): its SHA-256
+    /// in lower-case hex, and who it was issued to.
+    Certificate { sha256: String, subject: String },
 }
 
 /// What the user can do from an alert (SRS §9).
@@ -183,6 +200,10 @@ pub enum AlertAction {
     OpenAccessSettings {
         access: SpecialAccess,
     },
+    /// Open Android's developer options, where wireless debugging is turned off (ID-03).
+    OpenDeveloperSettings,
+    /// Open Android's trusted certificates, where one can be removed (ID-10).
+    OpenCertificateSettings,
 }
 
 /// One alert from the history.
@@ -254,6 +275,8 @@ impl From<Rule> for AlertRule {
             Rule::ProxyChanged => AlertRule::ProxyChanged,
             Rule::KnownIndicator => AlertRule::KnownIndicator,
             Rule::SpecialAccess => AlertRule::SpecialAccess,
+            Rule::RemoteAccessExposed => AlertRule::RemoteAccessExposed,
+            Rule::NewRootCertificate => AlertRule::NewRootCertificate,
         }
     }
 }
@@ -314,6 +337,8 @@ impl From<StoredAlert> for HistoryAlert {
                     Action::OpenAccessSettings { access } => AlertAction::OpenAccessSettings {
                         access: access.into(),
                     },
+                    Action::OpenDeveloperSettings => AlertAction::OpenDeveloperSettings,
+                    Action::OpenCertificateSettings => AlertAction::OpenCertificateSettings,
                 })
                 .collect(),
             evidence: alert
@@ -368,6 +393,16 @@ impl From<StoredAlert> for HistoryAlert {
                     Evidence::Access { access } => AlertEvidence::Access {
                         access: access.into(),
                     },
+                    Evidence::RemoteAccess { service } => AlertEvidence::RemoteAccess {
+                        service: match service {
+                            RemoteAccess::WirelessDebugging => {
+                                RemoteAccessService::WirelessDebugging
+                            }
+                        },
+                    },
+                    Evidence::Certificate { sha256, subject } => {
+                        AlertEvidence::Certificate { sha256, subject }
+                    }
                 })
                 .collect(),
             open: stored.state == AlertState::Open,

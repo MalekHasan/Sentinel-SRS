@@ -242,8 +242,19 @@ CREATE TABLE app_access (
 );
 ";
 
+/// The device settings last seen (ID-03, ID-10, ADR-0025): one row, the state as JSON
+/// (`sentinel_detect::Posture`), so that wireless debugging turned on, or a certificate
+/// added, is found even when it happened while Sentinel was not running.
+const V16: &str = "
+CREATE TABLE posture_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  state TEXT NOT NULL,
+  updated INTEGER NOT NULL
+);
+";
+
 const STEPS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16,
 ];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {

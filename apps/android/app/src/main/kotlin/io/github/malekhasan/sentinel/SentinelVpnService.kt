@@ -45,7 +45,7 @@ class SentinelVpnService : VpnService() {
     private var networkWatch: NetworkWatch? = null
     private var awayWatcher: AwayWatcher? = null
     private var installWatch: InstallWatch? = null
-    private var accessWatch: AccessWatch? = null
+    private var deviceWatch: DeviceWatch? = null
 
     // A new indicator list came into force, or the one in force was removed.
     private val feedChanged: () -> Unit = { main.post { engine?.let(::loadFeedData) } }
@@ -133,8 +133,9 @@ class SentinelVpnService : VpnService() {
         loadFeedData(started)
         // Apps installed or updated while monitoring runs are checked at once (ID-13).
         installWatch = InstallWatch(this).also(InstallWatch::start)
-        // Apps that hold or gain accessibility, device admin or notification access (ID-12).
-        accessWatch = AccessWatch(this).also(AccessWatch::start)
+        // Apps that hold or gain accessibility, device admin or notification access
+        // (ID-12); wireless debugging (ID-03) and trusted certificates (ID-10).
+        deviceWatch = DeviceWatch(this).also(DeviceWatch::start)
         IndicatorFeed.addListener(feedChanged)
         main.postDelayed(recheckFeed, IndicatorFeed.RECHECK_EVERY_MILLIS)
         FeedUpdateJob.schedule(this)
@@ -239,8 +240,8 @@ class SentinelVpnService : VpnService() {
         awayWatcher = null
         installWatch?.stop()
         installWatch = null
-        accessWatch?.stop()
-        accessWatch = null
+        deviceWatch?.stop()
+        deviceWatch = null
         engine?.let {
             it.stop()
             it.close()

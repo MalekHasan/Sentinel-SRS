@@ -2,8 +2,8 @@
 // A tiny app the device tests install while they run, so that Sentinel sees an app
 // installed after it started (CM-04) or after Block-unknown was turned on (CM-08), one the
 // test indicator lists name (ID-13), or one that holds special access (ID-12). It connects
-// where the test tells it to. It is never shipped: the app's androidTest APK carries it as
-// an asset.
+// where the test tells it to, and as device owner adds a test certificate authority
+// (ID-10). It is never shipped: the app's androidTest APK carries it as an asset.
 plugins {
     alias(libs.plugins.android.application)
 }
