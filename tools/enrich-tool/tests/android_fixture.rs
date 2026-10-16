@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The IP database and tracker list the Android device tests use
-//! (`androidTest/assets/test-ip.db` and `test-trackers.db`) must be exactly what the tool
-//! builds from the text files next to them, so they cannot drift from them. To rebuild
-//! them, from the repository root:
+//! (`apps/android/scripts/test-feed/ip.db` and `trackers.db`, which reach the tests inside
+//! the signed test lists of `androidTest/assets/feed`) must be exactly what the tool builds
+//! from the text files in `androidTest`, so they cannot drift from them. To rebuild them,
+//! from the repository root:
 //!
 //! ```sh
 //! D=apps/android/app/src/androidTest
+//! T=apps/android/scripts/test-feed
 //! cargo run -p sentinel-enrich-tool -- build --iptoasn $D/ipdb/iptoasn.tsv \
 //!     --dbip-country $D/ipdb/dbip-country.csv --network-source "IPtoASN test data" \
-//!     --country-source "DB-IP Lite test data" --out $D/assets/test-ip.db
+//!     --country-source "DB-IP Lite test data" --out $T/ip.db
 //! cargo run -p sentinel-enrich-tool -- trackers --radar $D/trackers/radar \
 //!     --radar-source "Tracker Radar test data" \
 //!     --app-trackers $D/trackers/app-trackers.json \
-//!     --app-trackers-source "App tracker list test data" --out $D/assets/test-trackers.db
+//!     --app-trackers-source "App tracker list test data" --out $T/trackers.db
+//! apps/android/scripts/make-test-feed.sh
 //! ```
 
 #![allow(clippy::unwrap_used)]
@@ -29,6 +32,21 @@ fn android_tests() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/android/app/src/androidTest")
 }
 
+/// The committed file `name` of the test lists, checked to be the same in each signed list.
+fn committed(name: &str) -> Vec<u8> {
+    let android = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/android");
+    let committed = std::fs::read(android.join("scripts/test-feed").join(name)).unwrap();
+    for version in 1..=3 {
+        let signed = android.join(format!("app/src/androidTest/assets/feed/v{version}/{name}"));
+        assert!(
+            std::fs::read(&signed).unwrap() == committed,
+            "{} differs from scripts/test-feed/{name}; run make-test-feed.sh",
+            signed.display()
+        );
+    }
+    committed
+}
+
 #[test]
 fn android_test_database_matches_its_sources() {
     let dir = android_tests();
@@ -40,10 +58,10 @@ fn android_test_database_matches_its_sources() {
     read_iptoasn(open("ipdb/iptoasn.tsv"), &mut builder).unwrap();
     read_dbip_country(open("ipdb/dbip-country.csv"), &mut builder).unwrap();
     let built = builder.build().unwrap();
-    let committed = std::fs::read(dir.join("assets/test-ip.db")).unwrap();
+    let committed = committed("ip.db");
     assert!(
         built == committed,
-        "androidTest/assets/test-ip.db is out of date; rebuild it (see this file's header)"
+        "scripts/test-feed/ip.db is out of date; rebuild it (see this file's header)"
     );
     // What the device test expects of it.
     let db = IpDb::from_bytes(&committed).unwrap();
@@ -73,10 +91,10 @@ fn android_test_tracker_list_matches_its_sources() {
         1
     );
     let built = builder.build().unwrap();
-    let committed = std::fs::read(dir.join("assets/test-trackers.db")).unwrap();
+    let committed = committed("trackers.db");
     assert!(
         built == committed,
-        "androidTest/assets/test-trackers.db is out of date; rebuild it (see this file's header)"
+        "scripts/test-feed/trackers.db is out of date; rebuild it (see this file's header)"
     );
     // What the device test expects of it.
     let db = TrackerDb::from_bytes(&committed).unwrap();

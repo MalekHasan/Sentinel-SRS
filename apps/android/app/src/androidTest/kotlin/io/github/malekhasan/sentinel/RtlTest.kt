@@ -37,6 +37,8 @@ import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.CategoryFact
 import io.github.malekhasan.sentinel.core.CompanyFact
+import io.github.malekhasan.sentinel.core.FeedSource
+import io.github.malekhasan.sentinel.core.FeedStatus
 import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.FirewallRule
 import io.github.malekhasan.sentinel.core.FlowProto
@@ -65,6 +67,7 @@ private const val PACKAGE = "org.example.chat"
 private const val LABEL = "Chat"
 private const val HOST = "chat.example.com"
 private const val ADDRESS = "203.0.113.5"
+private const val LIST_SOURCE = "Sentinel test indicators"
 
 /**
  * Every screen in Arabic, laid out right to left (S3.4): the Arabic strings are used,
@@ -184,6 +187,33 @@ class RtlTest {
                 .format(listOf(isolate(HOST), isolate(ADDRESS))),
         )
         assertRightToLeft(compose.onNodeWithText(destinations, useUnmergedTree = true))
+    }
+
+    @Test
+    fun indicatorList() {
+        val status = FeedStatus(
+            version = 3u,
+            createdMs = now - 20 * 24 * 60 * 60 * 1000L,
+            expiresMs = now - 24 * 60 * 60 * 1000L,
+            sources = listOf(FeedSource("sentinel-test", LIST_SOURCE, "https://example.org", "CC0", 3u)),
+            indicators = 3u,
+            skipped = 0u,
+        )
+        compose.setContent {
+            InArabic {
+                IndicatorList(IndicatorFeed.State(status = status, last = IndicatorFeed.Outcome.UP_TO_DATE), {}, {})
+            }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.feed_title)).assertAtTheRight()
+        val dates = DateFormat.getDateInstance(DateFormat.MEDIUM, Locale.forLanguageTag("ar"))
+        val installed = arabic.getString(R.string.feed_installed, dates.format(Date(status.createdMs)), "3")
+        assertRightToLeft(compose.onNodeWithText(installed))
+        // Arabic's own plural for three, around a Latin source name.
+        val count = arabic.resources.getQuantityString(R.plurals.feed_indicators, 3, 3, isolate(LIST_SOURCE))
+        assertRightToLeft(compose.onNodeWithText(count))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.feed_expired, dates.format(Date(status.expiresMs)))))
+        compose.onNodeWithText(arabic.getString(R.string.feed_outcome_up_to_date)).assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.feed_check)).assertAtTheRight()
     }
 
     @Test

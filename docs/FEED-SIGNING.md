@@ -30,7 +30,7 @@ sentinel-feed-tool keygen --secret /media/usb/feed-a.key --public /media/usb/fee
 
 - The secret key file is created with owner-only permissions, and the tool refuses to overwrite an existing file.
 - Make a backup copy of the secret key on a second encrypted USB drive, stored in a different place.
-- Copy **only** `feed-a.pub` back to a networked computer. Commit it as `keys/feed/feed-a.pub` and add it to the app's trust root in a reviewed PR.
+- Copy **only** `feed-a.pub` back to a networked computer. Commit it as `keys/feed/feed-a.pub` in a reviewed PR: every `.pub` file in `keys/feed` is compiled into the apps' trust root (ADR-0019), so the next app release trusts it.
 
 ## Every release: build, review, sign, publish
 
@@ -56,7 +56,7 @@ sentinel-feed-tool keygen --secret /media/usb/feed-a.key --public /media/usb/fee
    sentinel-feed-tool verify --dir bundle/ --public keys/feed/feed-a.pub --public keys/feed/feed-b.pub --installed-version <previous>
    ```
 
-   Publish the bundle as a GitHub release only if this prints `OK`.
+   Publish the bundle only if this prints `OK`. The apps fetch the newest bundle from the GitHub release tagged `feed` ([ADR-0019](adr/0019-indicator-feed-on-android.md)): replace all of its assets with the manifest and every file of the bundle, side by side, and upload nothing else there. To keep a record, also publish the bundle as its own release, tagged `feed-<version>`.
 
 ## Urgent updates
 

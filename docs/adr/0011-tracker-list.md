@@ -48,7 +48,7 @@ Tracker Radar describes `doubleclick.net` (Google; Advertising) but not `g.doubl
 - Tracker Radar is built from websites. App-only tracker domains appear only through the app list, which is three years old. Some app trackers will not be recognised. The app says so next to the companies: destinations the lists do not name may belong to other companies.
 - Owners are the lists' "display names" (Google, Facebook, AppLovin), not legal entities. Parent companies are not followed.
 - Categories are the lists' own words. The app translates the 25 categories Tracker Radar uses into Arabic and shows any other category as the list writes it.
-- Until the feed download exists (Sprint 7), phones have no tracker list and show no company or category. Tests build their own files.
+- The list arrives in the indicator list ([ADR-0019](0019-indicator-feed-on-android.md)) as `trackers.db`. Until a list with one is installed, phones show no company or category.
 
 ## Still open
 

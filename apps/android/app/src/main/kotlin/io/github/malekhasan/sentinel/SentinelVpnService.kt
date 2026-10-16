@@ -45,6 +45,17 @@ class SentinelVpnService : VpnService() {
     private var networkWatch: NetworkWatch? = null
     private var awayWatcher: AwayWatcher? = null
 
+    // A new indicator list came into force, or the one in force was removed.
+    private val feedChanged: () -> Unit = { main.post { engine?.let(::loadFeedData) } }
+
+    // Checks the indicator list in force again every hour while monitoring runs (SP-04).
+    private val recheckFeed = object : Runnable {
+        override fun run() {
+            Thread({ IndicatorFeed.recheck(this@SentinelVpnService) }, "sentinel-feed-recheck").start()
+            main.postDelayed(this, IndicatorFeed.RECHECK_EVERY_MILLIS)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         GapLog.recordUnexpectedExit(this)
@@ -117,8 +128,28 @@ class SentinelVpnService : VpnService() {
         }.also { it.start() }
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
-        // The network and country (DT-01), company and category (DT-06) of each
-        // destination, if a feed brought the data.
+        loadFeedData(started)
+        IndicatorFeed.addListener(feedChanged)
+        main.postDelayed(recheckFeed, IndicatorFeed.RECHECK_EVERY_MILLIS)
+        FeedUpdateJob.schedule(this)
+        if (history != null) {
+            // Roll old flows into daily totals (SRS §13.2), off the main thread.
+            Thread({
+                try {
+                    history.applyRetention(System.currentTimeMillis(), History.KEEP_DAYS)
+                } catch (e: Exception) {
+                    Log.w(TAG, "retention failed", e)
+                }
+            }, "sentinel-retention").start()
+        }
+    }
+
+    /**
+     * The network and country (DT-01), company and category (DT-06) of each destination,
+     * from the indicator list in force, if it brought the data. The list is checked when
+     * it is first opened (SP-04).
+     */
+    private fun loadFeedData(started: Engine) {
         Thread({
             val ip = IpData.open(this)
             val trackers = TrackerData.open(this)
@@ -135,16 +166,6 @@ class SentinelVpnService : VpnService() {
                 }
             }
         }, "sentinel-feed-data").start()
-        if (history != null) {
-            // Roll old flows into daily totals (SRS §13.2), off the main thread.
-            Thread({
-                try {
-                    history.applyRetention(System.currentTimeMillis(), History.KEEP_DAYS)
-                } catch (e: Exception) {
-                    Log.w(TAG, "retention failed", e)
-                }
-            }, "sentinel-retention").start()
-        }
     }
 
     private fun tunnelBuilder(): Builder {
@@ -193,6 +214,8 @@ class SentinelVpnService : VpnService() {
 
     private fun teardown() {
         listener = null
+        IndicatorFeed.removeListener(feedChanged)
+        main.removeCallbacks(recheckFeed)
         underlyingDns?.stop()
         underlyingDns = null
         networkWatch?.stop()

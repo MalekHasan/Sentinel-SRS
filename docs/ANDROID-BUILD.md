@@ -32,6 +32,8 @@ python3 apps/android/scripts/test-server.py
 
 It is Python's `http.server` with a listen backlog large enough for the 500 connections `LiveViewTest` opens at once.
 
+The tests that need an indicator list (`FeedTest`, `DestinationFactsTest`, `TrackerListTest`) install the signed lists in the test APK's `assets/feed`. `apps/android/scripts/make-test-feed.sh` builds them from `apps/android/scripts/test-feed/` with a key it makes and deletes; debug builds trust that key, release builds do not ([ADR-0019](adr/0019-indicator-feed-on-android.md)). Run it again when the feed's format changes; the Rust tests fail first if the lists no longer install.
+
 `FirewallModeTest` needs an app installed while it runs. The `probe` module is that app: a test fixture that opens one connection where it is told and ships nowhere. The app's Gradle build copies its APK into the test APK's assets, and the test installs it with `pm install`. Run the device tests of the app module only (`:app:connectedDebugAndroidTest`): the probe has none. On a real phone, run it with `--bind 0.0.0.0` on a computer the phone can reach and pass its address with `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServer=192.168.1.10:8765`. The tests grant themselves the VPN consent through `appops` and need no tapping.
 
 Two Gradle tasks run before the Android build. Both are skipped when nothing under `crates/` or `third_party/` changed.

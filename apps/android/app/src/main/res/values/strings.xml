@@ -88,6 +88,27 @@
     <string name="journal_undo_done">Undone. It is back as it was.</string>
     <string name="journal_changed_since">This was changed again since, so it was left as it is.</string>
     <string name="journal_cannot_undo">This cannot be undone.</string>
+    <string name="feed_title">Indicator list</string>
+    <string name="feed_none">No indicator list yet. Sentinel needs one to look for known spyware and stalkerware.</string>
+    <string name="feed_no_keys">This version of Sentinel cannot check indicator lists yet, so it uses none.</string>
+    <string name="feed_installed">The list in use is from %1$s (version %2$s).</string>
+    <plurals name="feed_indicators">
+        <item quantity="one">%1$d indicator, from %2$s.</item>
+        <item quantity="other">%1$d indicators, from %2$s.</item>
+    </plurals>
+    <string name="feed_expired">This list is out of date since %1$s. Sentinel still uses it until a newer one arrives.</string>
+    <string name="feed_check">Check for a new list</string>
+    <string name="feed_import">Import from a folder</string>
+    <string name="feed_checking">Checking…</string>
+    <string name="feed_explainer">Every few hours Sentinel looks for a new list where it is published on GitHub, and checks its signature before using it. The request carries nothing about you or this phone.</string>
+    <string name="feed_outcome_installed">The new list is installed.</string>
+    <string name="feed_outcome_up_to_date">You have the newest list.</string>
+    <string name="feed_outcome_refused">A list was found but could not be verified, so it was not installed.</string>
+    <string name="feed_outcome_not_found">No list was found there.</string>
+    <string name="feed_outcome_incomplete">Some of the list\'s files are missing, so it was not installed.</string>
+    <string name="feed_outcome_unreachable">The list could not be reached. Try again later, or import it from a folder.</string>
+    <string name="feed_outcome_failed">The list could not be saved on this phone.</string>
+    <string name="feed_outcome_removed">The list in use failed its regular check, so it was removed.</string>
     <string name="app_detail_nothing">Nothing about this app is in the history yet.</string>
     <string name="app_detail_destinations_title">Destinations, most data sent first</string>
     <string name="app_detail_destinations_shown">Destinations shown: %1$d of %2$d.</string>

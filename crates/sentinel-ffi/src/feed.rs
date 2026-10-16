@@ -570,6 +570,34 @@ mod tests {
         assert_eq!(feed.recheck().unwrap(), None);
     }
 
+    /// The bundles the Android device tests install (apps/android/scripts/make-test-feed.sh)
+    /// pass every check, in order, so that a change of format cannot leave them behind.
+    #[test]
+    fn the_device_tests_bundles_install() {
+        let android = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/android");
+        let key = fs::read_to_string(android.join("scripts/test-feed/test-key.pub")).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let feed = Feed::open(
+            path(&tmp.path().join("feed")),
+            vec![key.trim().to_owned()],
+            1,
+        )
+        .unwrap();
+        for version in 1..=3u64 {
+            let fixture = android.join(format!("app/src/androidTest/assets/feed/v{version}"));
+            let staged = tmp.path().join(format!("staged-{version}"));
+            fs::create_dir(&staged).unwrap();
+            for entry in fs::read_dir(&fixture).unwrap() {
+                let entry = entry.unwrap();
+                fs::copy(entry.path(), staged.join(entry.file_name())).unwrap();
+            }
+            let status = feed.install(path(&staged)).unwrap();
+            assert_eq!(status.version, version);
+            assert_eq!(status.indicators, version as u32);
+            assert_eq!(status.sources[0].id, "sentinel-test");
+        }
+    }
+
     /// Without keys nothing can be checked, so nothing is installed; every key compiled
     /// into this build is a key.
     #[test]

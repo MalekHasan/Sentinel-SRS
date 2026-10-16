@@ -18,9 +18,10 @@ import org.junit.runner.RunWith
  * DT-01 and DT-02 on a device: with an IP database in place, the history keeps each
  * destination's network, owner and country, with the source of each.
  *
- * Uses `assets/test-ip.db`, which places 10.0.2.0/24 (the emulator's view of the test
- * machine) in AS64500 "SENTINEL-TEST-NET" and in Jordan. Needs the HTTP server described
- * at [testServer] at one of those addresses, as on the emulator.
+ * Uses the IP database of the test indicator list ([TestFeed]), which places 10.0.2.0/24
+ * (the emulator's view of the test machine) in AS64500 "SENTINEL-TEST-NET" and in Jordan.
+ * Needs the HTTP server described at [testServer] at one of those addresses, as on the
+ * emulator.
  */
 @RunWith(AndroidJUnit4::class)
 class DestinationFactsTest {
@@ -30,17 +31,13 @@ class DestinationFactsTest {
     @Before
     fun setUp() {
         grantMonitoringPermissions()
-        val file = IpData.file(context)
-        checkNotNull(file.parentFile).mkdirs()
-        instrumentation.context.assets.open("test-ip.db").use { input ->
-            file.outputStream().use { input.copyTo(it) }
-        }
+        TestFeed.install(1)
     }
 
     @After
     fun tearDown() {
         stopMonitoring()
-        IpData.file(context).delete()
+        TestFeed.clear()
     }
 
     @Test

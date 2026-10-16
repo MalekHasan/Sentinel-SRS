@@ -24,7 +24,8 @@ private const val NAME = "pixel.g.ads.sentinel.test"
  * destination's company and kind of service, with the lists that say so, and adds up the
  * companies per app.
  *
- * Uses `assets/test-trackers.db`, in which the app tracker list names g.ads.sentinel.test
+ * Uses the tracker list of the test indicator list ([TestFeed]), in which the app tracker
+ * list names g.ads.sentinel.test
  * and its owner, and Tracker Radar gives ads.sentinel.test its categories. The test
  * connects to the HTTP server described at [testServer] with a TLS ClientHello naming
  * [NAME], so the engine learns the name from the connection itself.
@@ -37,17 +38,13 @@ class TrackerListTest {
     @Before
     fun setUp() {
         grantMonitoringPermissions()
-        val file = TrackerData.file(context)
-        checkNotNull(file.parentFile).mkdirs()
-        instrumentation.context.assets.open("test-trackers.db").use { input ->
-            file.outputStream().use { input.copyTo(it) }
-        }
+        TestFeed.install(1)
     }
 
     @After
     fun tearDown() {
         stopMonitoring()
-        TrackerData.file(context).delete()
+        TestFeed.clear()
     }
 
     @Test

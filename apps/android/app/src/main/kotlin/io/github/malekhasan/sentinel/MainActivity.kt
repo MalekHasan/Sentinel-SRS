@@ -79,10 +79,20 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { askVpnConsent() }
 
+    // A folder holding an indicator list, for phones that cannot reach where it is
+    // published (MS-10).
+    private val importFeed =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+            if (tree != null) {
+                Thread({ IndicatorFeed.importFrom(this, tree) }, "sentinel-feed-import").start()
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         GapLog.recordUnexpectedExit(this)
+        FeedUpdateJob.schedule(this)
         if (savedInstanceState == null) showRequestedAlert(intent)
         // Calls into the Rust core through UniFFI: proves the native library loads.
         val version = coreVersion()
@@ -151,6 +161,7 @@ class MainActivity : ComponentActivity() {
                             onStop = ::stopMonitoring,
                             onShowLive = { showLive = true },
                             onShowJournal = { showJournal = true },
+                            onImportFeed = { importFeed.launch(null) },
                             onOpenApp = { openApp = it },
                             onOpenAlert = { openAlert = it },
                         )
@@ -195,6 +206,12 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         visible.value = true
+        // A new list as soon as the app opens, when one is due (MS-10).
+        Thread({
+            if (IndicatorFeed.get(this) != null && IndicatorFeed.checkDue(this)) {
+                IndicatorFeed.checkPublished(this)
+            }
+        }, "sentinel-feed-check").start()
     }
 
     override fun onStop() {
@@ -248,9 +265,11 @@ fun MonitorScreen(
     onOpenApp: (String) -> Unit,
     onOpenAlert: (Long) -> Unit,
     onShowJournal: () -> Unit,
+    onImportFeed: () -> Unit,
 ) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
+    val feed by IndicatorFeed.states.collectAsState()
     var snapshot by remember { mutableStateOf<EngineSnapshot?>(null) }
     var flows by remember { mutableStateOf(emptyList<HistoryFlow>()) }
     var gaps by remember { mutableStateOf(emptyList<GapLog.Gap>()) }
@@ -263,6 +282,9 @@ fun MonitorScreen(
     var confirmWipe by remember { mutableStateOf(false) }
     // Bumped after a wipe so the lists reload.
     var generation by remember { mutableIntStateOf(0) }
+
+    // Opening the feed checks the list in force (SP-04).
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { IndicatorFeed.get(context) } }
 
     LaunchedEffect(visible, status, generation) {
         suspend fun reload() {
@@ -335,6 +357,9 @@ fun MonitorScreen(
             }
         },
         onShowJournal = onShowJournal,
+        feed = feed,
+        onCheckFeed = { scope.launch(Dispatchers.IO) { IndicatorFeed.checkPublished(context) } },
+        onImportFeed = onImportFeed,
         firewallMode = mode,
         onFirewallMode = { chosen ->
             scope.launch {
@@ -369,6 +394,9 @@ fun MonitorContent(
     onIsolate: () -> Unit = {},
     onEndIsolation: () -> Unit = {},
     onShowJournal: () -> Unit = {},
+    feed: IndicatorFeed.State? = null,
+    onCheckFeed: () -> Unit = {},
+    onImportFeed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     Column(
@@ -427,6 +455,9 @@ fun MonitorContent(
         FirewallModeChoice(firewallMode, onFirewallMode)
         // Every change to the firewall, with Undo (SRS §9).
         OutlinedButton(onClick = onShowJournal) { Text(stringResource(R.string.journal_action)) }
+
+        // What known spyware and stalkerware is looked for, and from when (MS-10).
+        feed?.let { IndicatorList(it, onCheckFeed, onImportFeed) }
 
         if (away.isNotEmpty()) {
             Text(stringResource(R.string.away_title), style = MaterialTheme.typography.titleSmall)

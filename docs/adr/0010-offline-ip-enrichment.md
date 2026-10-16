@@ -39,7 +39,7 @@ The public data sets that allow this are listed in [LICENCE-REVIEW.md](../LICENC
 
 - The app holds the whole file in memory while monitoring. Its size with the real data sets has not been measured yet: the development sandbox cannot reach iptoasn.com or db-ip.com. It must be measured when the first feed is built, before Sprint 7 ships it; if it is too large, the format can store IPv6 starts as /64 prefixes or compress the tables in a version 2.
 - DB-IP Lite requires attribution wherever results are shown: the "About and licences" screen (LICENCE-REVIEW L4) and the "why we believe this" details (DT-02).
-- Until the feed download exists (Sprint 7), phones have no IP database and show no network or country. Tests build their own files.
+- The database arrives in the indicator list ([ADR-0019](0019-indicator-feed-on-android.md)) as `ip.db`. Until a list with one is installed, phones show no network or country.
 
 ## Still open
 
