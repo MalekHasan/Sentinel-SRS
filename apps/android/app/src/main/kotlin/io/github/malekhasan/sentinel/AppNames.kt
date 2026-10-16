@@ -2,8 +2,10 @@
 package io.github.malekhasan.sentinel
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Process
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -16,6 +18,7 @@ class AppNames(context: Context) {
     private val cache = ConcurrentHashMap<Int, String>()
     private val labels = ConcurrentHashMap<String, String>()
     private val installed = ConcurrentHashMap<String, Long>()
+    private val system = ConcurrentHashMap<String, Boolean>()
 
     /**
      * The package that owns [uid], or Android's name for a shared or system UID (for
@@ -47,6 +50,29 @@ class AppNames(context: Context) {
         info.firstInstallTime.also { installed[packageName] = it }
     } catch (e: PackageManager.NameNotFoundException) {
         null
+    }
+
+    /**
+     * Whether [uid] belongs to the system: one of Android's own UIDs, or [packageName]
+     * came with the phone (`FLAG_SYSTEM`, kept through updates). Their regular check-ins
+     * are not flagged (DL-04). Asks the package manager once per package.
+     */
+    fun isSystem(uid: Int, packageName: String?): Boolean {
+        if (uid in 0 until Process.FIRST_APPLICATION_UID) return true
+        val name = packageName ?: return false
+        return system.getOrPut(name) {
+            try {
+                val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    packages.getApplicationInfo(name, PackageManager.ApplicationInfoFlags.of(0))
+                } else {
+                    @Suppress("DEPRECATION")
+                    packages.getApplicationInfo(name, 0)
+                }
+                (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            } catch (e: PackageManager.NameNotFoundException) {
+                false
+            }
+        }
     }
 
     /**

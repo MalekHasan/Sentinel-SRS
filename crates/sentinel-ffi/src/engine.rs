@@ -356,6 +356,7 @@ mod tests {
                 uid: OWNER,
                 app: Some(OWNER_APP.to_owned()),
                 installed_ms: self.installed_ms,
+                system: false,
             }
         }
         fn flows(&self, records: Vec<FlowRecord>) {
@@ -1279,6 +1280,7 @@ mod tests {
                 uid: OWNER,
                 app: Some(OWNER_APP.to_owned()),
                 installed_ms: None,
+                system: false,
             }
         }
         fn flows(&self, records: Vec<FlowRecord>) {

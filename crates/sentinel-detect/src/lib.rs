@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 mod access;
+mod beacon;
 mod delivery;
 mod firewall;
 mod first_seen;
@@ -20,6 +21,10 @@ mod posture;
 mod sensor;
 
 pub use access::{Access, special_access};
+pub use beacon::{
+    BEACON_CHECK_INS, BEACON_MAX_BYTES, BEACON_MAX_INTERVAL_MS, BEACON_MIN_INTERVAL_MS, Beacon,
+    Beacons, beacon_like,
+};
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
 pub use firewall::{
     Destination, FirewallMode, FirewallRule, Isolation, Network, Place, RuleAction, RuleError,
@@ -100,6 +105,9 @@ pub enum Rule {
     /// An app had as many connections open as it may; Sentinel refused more
     /// (THREAT-MODEL-A D2).
     FlowLimit,
+    /// An app connects to the same place at a fixed interval with little data each time,
+    /// as spyware checking in does (DL-04).
+    BeaconLike,
 }
 
 impl Rule {
@@ -117,6 +125,7 @@ impl Rule {
             Rule::NewRootCertificate => "new-root-certificate",
             Rule::SensorWhileAway => "sensor-while-away",
             Rule::FlowLimit => "flow-limit",
+            Rule::BeaconLike => "beacon-like",
         }
     }
 
@@ -134,6 +143,7 @@ impl Rule {
             Rule::NewRootCertificate,
             Rule::SensorWhileAway,
             Rule::FlowLimit,
+            Rule::BeaconLike,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -146,7 +156,8 @@ impl Rule {
             Rule::FirstNetworkUse
             | Rule::NewDestination
             | Rule::KnownIndicator
-            | Rule::FlowLimit => Vec::new(),
+            | Rule::FlowLimit
+            | Rule::BeaconLike => Vec::new(),
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
@@ -177,6 +188,7 @@ impl Rule {
                 | Rule::KnownIndicator
                 | Rule::SpecialAccess
                 | Rule::FlowLimit
+                | Rule::BeaconLike
         );
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } if blocked => Some(Action::AllowApp {
@@ -255,6 +267,15 @@ pub enum Evidence {
     /// The app had `limit` connections open at once, as many as it may; more were
     /// refused (THREAT-MODEL-A D2).
     FlowLimit { limit: u32 },
+    /// The app connected to `destination` (a name, or an address when no name is known)
+    /// `check_ins` times in a row, typically every `interval_ms` milliseconds, each time
+    /// with at most `max_bytes` both ways (DL-04).
+    Beacon {
+        destination: String,
+        interval_ms: i64,
+        check_ins: u32,
+        max_bytes: u64,
+    },
     /// A sensor in use since `started` (Unix ms) (SE-01). `guess` is the app that was on
     /// screen when the use began, if known: a guess, not the app's identity (AM-15).
     Sensor {
@@ -461,6 +482,7 @@ mod tests {
             Some(Rule::SensorWhileAway)
         );
         assert_eq!(Rule::from_id("flow-limit"), Some(Rule::FlowLimit));
+        assert_eq!(Rule::from_id("beacon-like"), Some(Rule::BeaconLike));
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {
             assert_eq!(AlertState::from_name(state.as_str()), Some(state));

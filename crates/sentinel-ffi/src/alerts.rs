@@ -46,6 +46,9 @@ pub enum AlertRule {
     /// An app had as many connections open as it may; more were refused
     /// (THREAT-MODEL-A D2).
     FlowLimit,
+    /// An app connects to the same place at a fixed interval with little data each time
+    /// (DL-04).
+    BeaconLike,
 }
 
 /// A sensor whose use is recorded (SE-01).
@@ -206,6 +209,15 @@ pub enum AlertEvidence {
     /// The app had `limit` connections open at once, as many as it may; more were
     /// refused.
     FlowLimit { limit: u32 },
+    /// The app connected to `destination` (a name, or an address when no name is known)
+    /// `check_ins` times in a row, typically every `interval_ms`, each time with at most
+    /// `max_bytes` both ways (DL-04).
+    Beacon {
+        destination: String,
+        interval_ms: i64,
+        check_ins: u32,
+        max_bytes: u64,
+    },
     /// A sensor in use since `started_ms` (SE-01). `guess` is the app that was on screen
     /// when the use began, if known: a guess, not the app's identity.
     Sensor {
@@ -322,6 +334,7 @@ impl From<Rule> for AlertRule {
             Rule::NewRootCertificate => AlertRule::NewRootCertificate,
             Rule::SensorWhileAway => AlertRule::SensorWhileAway,
             Rule::FlowLimit => AlertRule::FlowLimit,
+            Rule::BeaconLike => AlertRule::BeaconLike,
         }
     }
 }
@@ -450,6 +463,17 @@ impl From<StoredAlert> for HistoryAlert {
                         AlertEvidence::Certificate { sha256, subject }
                     }
                     Evidence::FlowLimit { limit } => AlertEvidence::FlowLimit { limit },
+                    Evidence::Beacon {
+                        destination,
+                        interval_ms,
+                        check_ins,
+                        max_bytes,
+                    } => AlertEvidence::Beacon {
+                        destination,
+                        interval_ms,
+                        check_ins,
+                        max_bytes,
+                    },
                     Evidence::Sensor {
                         sensor,
                         started,

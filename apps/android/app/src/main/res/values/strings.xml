@@ -251,6 +251,7 @@
     <string name="alert_evidence_wireless_debugging">Wireless debugging (ADB over Wi-Fi) is on.</string>
     <string name="alert_evidence_certificate">Issued to %1$s. Fingerprint %2$s.</string>
     <string name="alert_evidence_flow_limit">It had %1$d connections open at once, as many as one app may.</string>
+    <string name="alert_evidence_beacon">It connected to %1$s %2$d times in a row, about every %3$s, with at most %4$s each time.</string>
     <string name="alert_evidence_sensor">%1$s in use from %2$s.</string>
     <string name="alert_evidence_sensor_guess">On screen when it began: %1$s. This is only a guess.</string>
     <string name="alert_evidence_indicator_listed">%1$s is on the list as a sign of %2$s (%3$s).</string>
@@ -343,6 +344,8 @@
     <string name="alert_new_root_certificate_text">With it, someone may be able to read your web traffic. Work or school phones may need one. If you did not add it, remove it.</string>
     <string name="alert_flow_limit_title">An app opened too many connections</string>
     <string name="alert_flow_limit_text">Sentinel let it keep the ones open and turned down the rest. A busy app may do this, and so may one that floods the network.</string>
+    <string name="alert_beacon_like_title">An app checks in with a server at set times</string>
+    <string name="alert_beacon_like_text">It connects to the same place again and again, at the same pace, with little data each time. Spyware can check in like this. So do many apps that just look for news.</string>
     <string name="alert_sensor_while_away_title">The microphone or a camera was used while the screen was off</string>
     <string name="alert_sensor_while_away_text">An app used it while nobody was looking. On Android 12 and later, the privacy dashboard shows which app.</string>
     <string name="alert_microphone_while_away_title">The microphone was used while the screen was off</string>

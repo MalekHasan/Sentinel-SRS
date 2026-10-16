@@ -725,6 +725,37 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
     }
 
+    /** DL-04: check-ins at set times, right to left, with the server's name, the interval
+     *  and the size in Arabic. */
+    @Test
+    fun beaconAlert() {
+        val alert = HistoryAlert(
+            id = 13,
+            rule = AlertRule.BEACON_LIKE,
+            severity = AlertSeverity.INFO,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.Beacon(destination = HOST, intervalMs = 60_000, checkIns = 8u, maxBytes = 1_200uL),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_beacon_like_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_beacon_like_text)))
+        val line = arabic.getString(
+            R.string.alert_evidence_beacon,
+            isolate(HOST),
+            8,
+            duration(60_000, Locale.forLanguageTag("ar")),
+            Formatter.formatShortFileSize(arabic, 1_200),
+        )
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
     /** MS-02: a match found in the history says how many connections, and on which days,
      *  right to left. */
     @Test

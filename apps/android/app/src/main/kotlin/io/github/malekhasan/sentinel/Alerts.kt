@@ -4,6 +4,7 @@ package io.github.malekhasan.sentinel
 import android.content.Context
 import android.icu.text.ListFormatter
 import android.text.format.DateUtils
+import android.text.format.Formatter
 import android.util.Log
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -380,6 +381,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_title
     AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_title
     AlertRule.FLOW_LIMIT -> R.string.alert_flow_limit_title
+    AlertRule.BEACON_LIKE -> R.string.alert_beacon_like_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -395,6 +397,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_text
     AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_text
     AlertRule.FLOW_LIMIT -> R.string.alert_flow_limit_text
+    AlertRule.BEACON_LIKE -> R.string.alert_beacon_like_text
 }
 
 @Composable
@@ -484,6 +487,13 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             R.string.alert_evidence_certificate, isolate(evidence.subject), isolate(evidence.sha256),
         )
         is AlertEvidence.FlowLimit -> stringResource(R.string.alert_evidence_flow_limit, evidence.limit.toInt())
+        is AlertEvidence.Beacon -> stringResource(
+            R.string.alert_evidence_beacon,
+            isolate(evidence.destination),
+            evidence.checkIns.toInt(),
+            duration(evidence.intervalMs, LocalConfiguration.current.locales[0]),
+            Formatter.formatShortFileSize(LocalContext.current, evidence.maxBytes.toLong()),
+        )
         is AlertEvidence.Sensor -> {
             val started = DateFormat.getDateTimeInstance(
                 DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],

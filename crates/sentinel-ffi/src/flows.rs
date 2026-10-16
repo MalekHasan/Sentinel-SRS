@@ -94,6 +94,10 @@ pub struct FlowOwner {
     /// to the network when the history first sees it (CM-04).
     #[uniffi(default = None)]
     pub installed_ms: Option<i64>,
+    /// Whether the app is part of the system: on Android, `ApplicationInfo.FLAG_SYSTEM`
+    /// or a system UID. Its check-ins are not flagged (DL-04).
+    #[uniffi(default = false)]
+    pub system: bool,
 }
 
 impl FlowOwner {
@@ -103,6 +107,7 @@ impl FlowOwner {
             uid: -1,
             app: None,
             installed_ms: None,
+            system: false,
         }
     }
 }
@@ -171,6 +176,8 @@ pub(crate) struct FlowEvents {
     refused: Mutex<HashSet<u64>>,
     /// The apps that reached [`MAX_FLOWS_PER_APP`] in this run, alerted once each.
     limited: Mutex<HashSet<String>>,
+    /// Each app's connections to each place, for check-ins at a fixed interval (DL-04).
+    beacons: Mutex<sentinel_detect::Beacons>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -195,6 +202,7 @@ impl FlowEvents {
             open_per_app: Mutex::new(HashMap::new()),
             refused: Mutex::new(HashSet::new()),
             limited: Mutex::new(HashSet::new()),
+            beacons: Mutex::new(sentinel_detect::Beacons::new()),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
@@ -417,6 +425,33 @@ impl FlowEvents {
         false
     }
 
+    /// DL-04: an app's check-ins with one place at a fixed interval, with little data
+    /// each time, raise an Info alert, once per app and place in a run. Not for system
+    /// apps, nor for DNS (DL-05), nor for blocked connections, which carried nothing.
+    fn watch_check_ins(&self, flow: &FlowInfo, owner: &FlowOwner, totals: &FlowTotals) {
+        let Some(app) = &owner.app else {
+            return;
+        };
+        if owner.system
+            || self.history.is_none()
+            || totals.verdict == Verdict::Block
+            || flow.dst.port() == 53
+        {
+            return;
+        }
+        let destination = flow
+            .hostname
+            .clone()
+            .unwrap_or_else(|| flow.dst.ip().to_string());
+        let started = i64::try_from(flow.started_ms).unwrap_or(i64::MAX);
+        let bytes = totals.bytes_up.saturating_add(totals.bytes_down);
+        let found = lock(&self.beacons).connection(app, &destination, started, bytes);
+        if let Some(beacon) = found {
+            lock(&self.sightings).push(sentinel_detect::beacon_like(now_ms(), app, beacon));
+            self.ready.notify_one();
+        }
+    }
+
     /// The indicators in force, if alerts can be raised at all.
     fn matcher(&self) -> Option<Arc<sentinel_ioc::Matcher>> {
         self.history.as_ref()?;
@@ -571,6 +606,7 @@ impl Observer for FlowEvents {
         ended.bytes_up_away = totals.bytes_up_away;
         ended.bytes_down_away = totals.bytes_down_away;
         self.push(ended);
+        self.watch_check_ins(flow, &owner, &totals);
     }
 }
 
@@ -763,6 +799,7 @@ mod tests {
             uid,
             app: Some(app.to_owned()),
             installed_ms: None,
+            system: false,
         }
     }
 
@@ -972,6 +1009,7 @@ mod tests {
             uid: 10_100,
             app: Some(app.to_owned()),
             installed_ms,
+            system: false,
         }
     }
 
@@ -982,6 +1020,82 @@ mod tests {
         });
         history.set_alert_listener(Some(observer.clone()));
         observer
+    }
+
+    /// DL-04, the beacon simulation: an app that checks in with one server every minute,
+    /// a little data each time, raises one Info alert naming it, the server and the
+    /// interval. The same pattern from a system app, or over DNS, raises nothing.
+    #[test]
+    fn an_app_checking_in_every_minute_raises_one_info_alert() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+
+        let (_dir, history) = history();
+        let system = FlowOwner {
+            system: true,
+            ..installed("com.android.example", None)
+        };
+        let observer = listen(
+            &history,
+            vec![
+                (443, installed("org.example.beacon", None)),
+                (8443, system),
+                (53, installed("org.example.lookups", None)),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let mut id = 0;
+        for minute in 0..10u64 {
+            for (dst, hostname) in [
+                ("203.0.113.9:443", Some("c2.example.net")),
+                ("203.0.113.10:8443", Some("time.example.com")),
+                ("10.215.173.53:53", None),
+            ] {
+                id += 1;
+                let check_in = FlowInfo {
+                    // A second or so late, now and then.
+                    started_ms: 1_000_000 + minute * 60_000 + (minute % 3) * 700,
+                    ..flow(id, dst, hostname)
+                };
+                assert_eq!(events.flow_started(&check_in), Verdict::Allow);
+                events.flow_ended(
+                    &check_in,
+                    FlowTotals {
+                        bytes_up: 300,
+                        bytes_down: 900,
+                        bytes_up_away: 0,
+                        bytes_down_away: 0,
+                        ended_ms: check_in.started_ms + 400,
+                        verdict: Verdict::Allow,
+                    },
+                );
+            }
+        }
+        events.flush();
+
+        // Each app's first destinations raise their own alerts (CM-04).
+        let alerts: Vec<_> = history
+            .alerts(true, 10)
+            .unwrap()
+            .into_iter()
+            .filter(|alert| alert.rule == AlertRule::BeaconLike)
+            .collect();
+        assert_eq!(alerts.len(), 1, "{alerts:?}");
+        assert_eq!(alerts[0].severity, AlertSeverity::Info);
+        assert_eq!(
+            alerts[0].evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.beacon".to_owned()
+                },
+                AlertEvidence::Beacon {
+                    destination: "c2.example.net".to_owned(),
+                    // The median of its seven intervals.
+                    interval_ms: 60_700,
+                    check_ins: 8,
+                    max_bytes: 1_200,
+                }
+            ]
+        );
     }
 
     /// THREAT-MODEL-A D2: an app may have `MAX_FLOWS_PER_APP` flows open; more are
