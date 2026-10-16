@@ -48,6 +48,10 @@ pub enum IndicatorSighting {
     /// The history holds the app's connections to this name, learned from a DNS answer
     /// or a TLS handshake.
     ConnectionName,
+    /// The app is installed under this package name.
+    InstalledPackage,
+    /// The app is signed with the certificate whose SHA-256 this is.
+    SigningCertificate,
 }
 
 /// The kind of threat an indicator belongs to.
@@ -295,6 +299,8 @@ impl From<StoredAlert> for HistoryAlert {
                             Sighting::ServerName => IndicatorSighting::ServerName,
                             Sighting::Address => IndicatorSighting::Address,
                             Sighting::ConnectionName => IndicatorSighting::ConnectionName,
+                            Sighting::InstalledPackage => IndicatorSighting::InstalledPackage,
+                            Sighting::SigningCertificate => IndicatorSighting::SigningCertificate,
                         },
                         family: matched.family,
                         threat: match matched.threat {

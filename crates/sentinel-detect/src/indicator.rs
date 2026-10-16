@@ -21,6 +21,10 @@ pub enum Sighting {
     /// The history holds connections by an app to this name, learned from a DNS answer
     /// or a TLS handshake; it does not keep which (MS-02).
     ConnectionName,
+    /// An app is installed under this package name.
+    InstalledPackage,
+    /// An app is signed with the certificate whose SHA-256 this is.
+    SigningCertificate,
 }
 
 /// The kind of threat an indicator belongs to, as its report says.
@@ -160,6 +164,23 @@ mod tests {
         assert_eq!(alert.app(), None);
         assert_eq!(alert.actions(), []);
         assert_eq!(alert.evidence.len(), 1);
+    }
+
+    /// How a match was seen is stored by name; the names are part of the stored format.
+    #[test]
+    fn sightings_are_stored_by_name() {
+        for (sighting, name) in [
+            (Sighting::DnsQuery, "dns_query"),
+            (Sighting::ServerName, "server_name"),
+            (Sighting::Address, "address"),
+            (Sighting::ConnectionName, "connection_name"),
+            (Sighting::InstalledPackage, "installed_package"),
+            (Sighting::SigningCertificate, "signing_certificate"),
+        ] {
+            let json = serde_json::to_string(&sighting).unwrap();
+            assert_eq!(json, format!("\"{name}\""));
+            assert_eq!(serde_json::from_str::<Sighting>(&json).unwrap(), sighting);
+        }
     }
 
     /// The stored form is part of the history's format: it must not change by accident.

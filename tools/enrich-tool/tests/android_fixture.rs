@@ -36,7 +36,7 @@ fn android_tests() -> PathBuf {
 fn committed(name: &str) -> Vec<u8> {
     let android = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/android");
     let committed = std::fs::read(android.join("scripts/test-feed").join(name)).unwrap();
-    for version in 1..=3 {
+    for version in 1..=5 {
         let signed = android.join(format!("app/src/androidTest/assets/feed/v{version}/{name}"));
         assert!(
             std::fs::read(&signed).unwrap() == committed,

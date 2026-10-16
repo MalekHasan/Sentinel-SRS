@@ -184,6 +184,8 @@
     <string name="alert_evidence_indicator_dns">Looked up the name %1$s.</string>
     <string name="alert_evidence_indicator_tls">Connected to %1$s.</string>
     <string name="alert_evidence_indicator_address">Connected to the address %1$s.</string>
+    <string name="alert_evidence_indicator_package">Installed as %1$s.</string>
+    <string name="alert_evidence_indicator_certificate">Signed with the certificate %1$s.</string>
     <string name="alert_evidence_indicator_listed">%1$s is on the list as a sign of %2$s (%3$s).</string>
     <string name="alert_evidence_indicator_source">Source: %1$s, in a report from %2$s: %3$s</string>
     <string name="alert_threat_spyware">spyware</string>
@@ -252,6 +254,8 @@
     <string name="alert_proxy_changed_text">Your web traffic may now pass through a different proxy, which can see or change what you send.</string>
     <string name="alert_known_indicator_title">Known traces of spyware found</string>
     <string name="alert_known_indicator_text">An app on this phone reached a server that public reports link to spyware or stalkerware.</string>
+    <string name="alert_known_indicator_app_title">Known stalkerware or spyware app found</string>
+    <string name="alert_known_indicator_app_text">An app on this phone is one that public reports name as stalkerware or spyware.</string>
     <string name="alert_known_indicator_past_title">Known traces of spyware found in past traffic</string>
     <string name="alert_known_indicator_past_text">A new list of known spyware servers matches connections this phone made before the list arrived.</string>
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Matching what the phone's traffic names against the indicators in force (ID-13): the
-//! names apps look up or connect to, and the addresses they connect to.
+//! Matching against the indicators in force (ID-13): the names apps look up or connect
+//! to and the addresses they connect to, and the package names and signing certificates
+//! of installed apps.
 //!
 //! Lookups run on the packet engine's threads for every DNS query, TLS server name and
 //! new connection, so each is a few hash lookups and allocates only for a name not
@@ -21,13 +22,14 @@ pub struct Hit {
     pub source: Arc<Source>,
 }
 
-/// The domain and address indicators of a list, ready to match. Package names and
-/// signing certificates are matched against installed apps, not traffic, and are not
-/// kept here.
+/// The indicators of a list, ready to match: domains and addresses against traffic,
+/// package names and signing certificates against installed apps.
 #[derive(Debug, Default)]
 pub struct Matcher {
     domains: HashMap<String, Hit>,
     addresses: HashMap<IpAddr, Hit>,
+    packages: HashMap<String, Hit>,
+    certificates: HashMap<String, Hit>,
 }
 
 impl Matcher {
@@ -57,7 +59,20 @@ impl Matcher {
                             entry.insert(hit());
                         }
                     }
-                    Kind::Package | Kind::Certificate => {}
+                    Kind::Package => {
+                        if let Entry::Vacant(entry) =
+                            matcher.packages.entry(indicator.value.clone())
+                        {
+                            entry.insert(hit());
+                        }
+                    }
+                    Kind::Certificate => {
+                        if let Entry::Vacant(entry) =
+                            matcher.certificates.entry(indicator.value.clone())
+                        {
+                            entry.insert(hit());
+                        }
+                    }
                 }
             }
         }
@@ -101,9 +116,25 @@ impl Matcher {
         self.addresses.get(&address)
     }
 
+    /// The package indicator an app installed as `package` is. Package names are
+    /// compared exactly, as Android does.
+    pub fn package(&self, package: &str) -> Option<&Hit> {
+        self.packages.get(package)
+    }
+
+    /// The certificate indicator a signing certificate with this SHA-256 (hex, either
+    /// case) is.
+    pub fn certificate(&self, sha256: &str) -> Option<&Hit> {
+        if sha256.bytes().any(|b| b.is_ascii_uppercase()) {
+            self.certificates.get(&sha256.to_ascii_lowercase())
+        } else {
+            self.certificates.get(sha256)
+        }
+    }
+
     /// How many indicators it matches against.
     pub fn len(&self) -> usize {
-        self.domains.len() + self.addresses.len()
+        self.domains.len() + self.addresses.len() + self.packages.len() + self.certificates.len()
     }
 
     pub fn is_empty(&self) -> bool {

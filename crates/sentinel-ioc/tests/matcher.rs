@@ -122,27 +122,62 @@ fn an_address_matches_exactly() {
 }
 
 #[test]
-fn names_and_addresses_do_not_cross() {
+fn kinds_do_not_cross() {
+    let certificate = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
     let matcher = Matcher::new([file(
         "lab",
         &[
             ("domain", "bad.example", "Hermit"),
             ("address", "203.0.113.9", "Hermit"),
             ("package", "com.example.watch", "Hermit"),
-            (
-                "certificate",
-                "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
-                "Hermit",
-            ),
+            ("certificate", certificate, "Hermit"),
         ],
     )]);
+    assert_eq!(matcher.len(), 4);
     assert_eq!(matcher.name("203.0.113.9"), None);
-    assert_eq!(matcher.name("com.example.watch"), None);
     assert_eq!(
-        matcher.len(),
-        2,
-        "packages and certificates are matched against apps, not traffic"
+        matcher.name("com.example.watch"),
+        None,
+        "a package is not a name"
     );
+    assert_eq!(matcher.package("bad.example"), None);
+    assert_eq!(matcher.certificate("bad.example"), None);
+}
+
+/// ID-13: installed apps are matched by their exact package name, and by the SHA-256 of
+/// any certificate they are signed with, whatever its case.
+#[test]
+fn an_app_matches_by_package_or_certificate() {
+    let certificate = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
+    let matcher = Matcher::new([file(
+        "lab",
+        &[
+            ("package", "com.example.watch", "Hermit"),
+            ("certificate", certificate, "Hermit"),
+        ],
+    )]);
+    let hit = matcher.package("com.example.watch").unwrap();
+    assert_eq!(hit.indicator.value, "com.example.watch");
+    assert_eq!(hit.source.id, "lab");
+    for other in [
+        "com.example.watch2",
+        "com.example",
+        "Com.Example.Watch",
+        "watch",
+    ] {
+        assert_eq!(matcher.package(other), None, "{other}");
+    }
+    assert_eq!(
+        matcher.certificate(certificate).unwrap().indicator.value,
+        certificate
+    );
+    assert!(
+        matcher
+            .certificate(&certificate.to_ascii_uppercase())
+            .is_some()
+    );
+    assert_eq!(matcher.certificate(&certificate[1..]), None);
+    assert_eq!(matcher.certificate(&"5e".repeat(31)), None);
 }
 
 #[test]

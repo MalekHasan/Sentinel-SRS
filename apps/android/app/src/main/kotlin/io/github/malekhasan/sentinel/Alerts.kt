@@ -306,16 +306,24 @@ private fun HistoryAlert.blocked(): Boolean = evidence.any { it is AlertEvidence
 /** Whether the alert was found in the history after the fact (MS-02). */
 private fun HistoryAlert.past(): Boolean = evidence.any { it is AlertEvidence.PastConnections }
 
-/** The alert's title: its rule's, a blocked new app's, or a match found in the history. */
+/** Whether the alert is about an installed app the indicator list names (ID-13). */
+private fun HistoryAlert.installedApp(): Boolean = evidence.any {
+    it is AlertEvidence.Indicator &&
+        (it.sighting == IndicatorSighting.INSTALLED_PACKAGE || it.sighting == IndicatorSighting.SIGNING_CERTIFICATE)
+}
+
+/** The alert's title: its rule's, a blocked new app's, an installed app's, or a match found in the history. */
 fun titleRes(alert: HistoryAlert): Int = when {
     alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked() -> R.string.alert_first_network_use_blocked_title
+    alert.rule == AlertRule.KNOWN_INDICATOR && alert.installedApp() -> R.string.alert_known_indicator_app_title
     alert.rule == AlertRule.KNOWN_INDICATOR && alert.past() -> R.string.alert_known_indicator_past_title
     else -> titleRes(alert.rule)
 }
 
-/** The alert's explanation: its rule's, a blocked new app's, or a match found in the history. */
+/** The alert's explanation: its rule's, a blocked new app's, an installed app's, or a match found in the history. */
 fun explanationRes(alert: HistoryAlert): Int = when {
     alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked() -> R.string.alert_first_network_use_blocked_text
+    alert.rule == AlertRule.KNOWN_INDICATOR && alert.installedApp() -> R.string.alert_known_indicator_app_text
     alert.rule == AlertRule.KNOWN_INDICATOR && alert.past() -> R.string.alert_known_indicator_past_text
     else -> explanationRes(alert.rule)
 }
@@ -389,6 +397,8 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
                     IndicatorSighting.CONNECTION_NAME,
                     -> R.string.alert_evidence_indicator_tls
                     IndicatorSighting.ADDRESS -> R.string.alert_evidence_indicator_address
+                    IndicatorSighting.INSTALLED_PACKAGE -> R.string.alert_evidence_indicator_package
+                    IndicatorSighting.SIGNING_CERTIFICATE -> R.string.alert_evidence_indicator_certificate
                 },
                 isolate(evidence.seen),
             ),
