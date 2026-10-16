@@ -508,7 +508,8 @@ class RtlTest {
         compose.setContent {
             InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
         }
-        compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_past_title)).assertAtTheRight()
+        // The title wraps across the whole width on a small screen: its direction is checked.
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_past_title)))
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_past_text)))
         val dates = DateFormat.getDateInstance(DateFormat.MEDIUM, arabic.resources.configuration.locales[0])
         val line = arabic.resources.getQuantityString(
