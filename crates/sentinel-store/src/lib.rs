@@ -17,7 +17,10 @@ use sentinel_detect::{
 };
 use zeroize::Zeroizing;
 
+mod export;
 mod schema;
+
+pub use export::{ExportFormat, ExportKind, ExportPage};
 
 /// A flow as the engine reports it, when it starts and again when it ends.
 #[derive(Debug, Clone, PartialEq, Eq)]

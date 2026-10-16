@@ -183,6 +183,31 @@ pub struct HistoryStore {
     pub(crate) hunting: Mutex<()>,
 }
 
+/// What to export from the history (SRS §12.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ExportKind {
+    /// Each connection kept in full (rolled-up days are not).
+    Flows,
+    Alerts,
+    /// The action journal.
+    Actions,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ExportFormat {
+    Json,
+    Csv,
+}
+
+/// One page of an export: the pages of one export, written out in order, make one JSON
+/// array or one CSV table with its header.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ExportPage {
+    pub text: String,
+    /// Pass it to get the next page; `None` when this page ends the export.
+    pub next: Option<i64>,
+}
+
 #[uniffi::export]
 impl HistoryStore {
     /// Open or create the history at `path` with a random 32-byte key (on Android,
@@ -576,6 +601,37 @@ impl HistoryStore {
             .collect())
     }
 
+    /// One page of an export (SRS §12.3, ADR-0033): at most `limit` records of `kind`
+    /// from `from_ms` (inclusive) to `to_ms` (exclusive), oldest first, as `format`.
+    /// `after` is the previous page's `next`, or `None` for the first page. Only ever
+    /// called at the user's request (SRS §15.2).
+    pub fn export_page(
+        &self,
+        kind: ExportKind,
+        format: ExportFormat,
+        from_ms: i64,
+        to_ms: i64,
+        after: Option<i64>,
+        limit: u32,
+    ) -> Result<ExportPage, HistoryError> {
+        let kind = match kind {
+            ExportKind::Flows => sentinel_store::ExportKind::Flows,
+            ExportKind::Alerts => sentinel_store::ExportKind::Alerts,
+            ExportKind::Actions => sentinel_store::ExportKind::Actions,
+        };
+        let format = match format {
+            ExportFormat::Json => sentinel_store::ExportFormat::Json,
+            ExportFormat::Csv => sentinel_store::ExportFormat::Csv,
+        };
+        let page = self
+            .store
+            .export_page(kind, format, from_ms, to_ms, after, limit)?;
+        Ok(ExportPage {
+            text: page.text,
+            next: page.next,
+        })
+    }
+
     /// Roll flows older than `keep_days` into daily totals (SRS §13.2). Returns how
     /// many flows were rolled up.
     pub fn apply_retention(&self, now_ms: i64, keep_days: u32) -> Result<u64, HistoryError> {
@@ -728,6 +784,48 @@ mod tests {
         ));
         wipe_history(path).unwrap();
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// SRS §12.3: the alerts of a range export through the app's interface, a page at a
+    /// time, as one JSON array.
+    #[test]
+    fn alerts_export_a_page_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        for at in [5, 50] {
+            history.open_gap(Some(at), "stopped".into()).unwrap();
+            history.close_gap(at + 1).unwrap();
+        }
+        let first = history
+            .export_page(ExportKind::Alerts, ExportFormat::Json, 0, i64::MAX, None, 1)
+            .unwrap();
+        let next = first.next.expect("a second page");
+        let second = history
+            .export_page(
+                ExportKind::Alerts,
+                ExportFormat::Json,
+                0,
+                i64::MAX,
+                Some(next),
+                1,
+            )
+            .unwrap();
+        let third = history
+            .export_page(
+                ExportKind::Alerts,
+                ExportFormat::Json,
+                0,
+                i64::MAX,
+                second.next,
+                1,
+            )
+            .unwrap();
+        assert_eq!(third.next, None);
+        let whole = [first.text, second.text, third.text].concat();
+        let alerts: serde_json::Value = serde_json::from_str(&whole).unwrap();
+        assert_eq!(alerts.as_array().unwrap().len(), 2, "{whole}");
+        assert_eq!(alerts[0]["rule"], "monitoring-interrupted");
     }
 
     /// SP-03: each new monitoring gap raises one alert, which the user can dismiss.
