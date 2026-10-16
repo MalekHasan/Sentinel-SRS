@@ -101,6 +101,16 @@
     <string name="feed_import">Import from a folder</string>
     <string name="feed_checking">Checking…</string>
     <string name="feed_explainer">Every few hours Sentinel looks for a new list where it is published on GitHub, and checks its signature before using it. The request carries nothing about you or this phone.</string>
+    <!-- The result (MS-15): "Known traces found" or "No known traces found", with the list's date. Never "clean" or "safe". -->
+    <string name="feed_result_found">Known traces found</string>
+    <plurals name="feed_result_found_text">
+        <item quantity="one">%1$d alert names known spyware or stalkerware. The list in use is from %2$s. Open the alert to see what was found and what to do.</item>
+        <item quantity="other">%1$d alerts name known spyware or stalkerware. The list in use is from %2$s. Open the alerts to see what was found and what to do.</item>
+    </plurals>
+    <string name="feed_result_none">No known traces found</string>
+    <string name="feed_result_none_text">Nothing in the traffic Sentinel kept since %1$s matches the list from %2$s.</string>
+    <string name="feed_result_limits">This is not proof that the phone has no spyware. Sentinel finds only traces that have been published, in traffic it saw. Spyware that controls a phone can hide from every app on it.</string>
+    <string name="feed_result_pending">The history has not been checked against this list yet.</string>
     <string name="feed_outcome_installed">The new list is installed.</string>
     <string name="feed_outcome_up_to_date">You have the newest list.</string>
     <string name="feed_outcome_refused">A list was found but could not be verified, so it was not installed.</string>
@@ -178,6 +188,13 @@
     <string name="alert_evidence_indicator_source">Source: %1$s, in a report from %2$s: %3$s</string>
     <string name="alert_threat_spyware">spyware</string>
     <string name="alert_threat_stalkerware">stalkerware</string>
+    <!-- MS-13: shown on every known-indicator alert. -->
+    <string name="alert_advice_title">Before you act</string>
+    <string name="alert_advice_keep">Do not reset or wipe the phone yet. That would delete the traces an expert needs to see.</string>
+    <string name="alert_advice_move">Move sensitive conversations to another device you trust.</string>
+    <string name="alert_advice_help">Ask a digital security helpline for help. They are free for people at risk, such as journalists and activists.</string>
+    <string name="alert_advice_access_now">Access Now Helpline</string>
+    <string name="alert_advice_amnesty">Amnesty Security Lab</string>
     <plurals name="alert_evidence_past_on">
         <item quantity="one">%1$d connection, on %2$s.</item>
         <item quantity="other">%1$d connections, on %2$s.</item>

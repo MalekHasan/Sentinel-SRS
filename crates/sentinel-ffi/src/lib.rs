@@ -33,7 +33,7 @@ pub use history::{
     HistoryApp, HistoryAway, HistoryCompany, HistoryDestination, HistoryError, HistoryFlow,
     HistoryGap, HistoryStore, wipe_history,
 };
-pub use hunt::HuntReport;
+pub use hunt::{HuntReport, KnownTraces};
 pub use journal::{JournalEntry, JournalState, UndoResult};
 
 uniffi::setup_scaffolding!();

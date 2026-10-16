@@ -3,10 +3,13 @@ package io.github.malekhasan.sentinel
 
 import android.icu.text.ListFormatter
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
@@ -30,6 +33,8 @@ import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.HistoryAlert
+import io.github.malekhasan.sentinel.core.IndicatorSighting
+import io.github.malekhasan.sentinel.core.IndicatorThreat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -79,6 +84,66 @@ class AlertsTest {
     }
 
     /** AL-02: severity, title and one-sentence explanation, then evidence, then actions. */
+    /** MS-13: every known-indicator alert says to keep the evidence and to move sensitive
+     *  talk to another device, before what the user can do, and where to get help. Each
+     *  helpline opens in the browser, and its address is written out. */
+    @Test
+    fun aKnownIndicatorAlertSaysWhatToDoAndWhereToGetHelp() {
+        val opened = mutableListOf<String>()
+        val links = object : UriHandler {
+            override fun openUri(uri: String) {
+                opened += uri
+            }
+        }
+        var shown by mutableStateOf(knownIndicator())
+        compose.setContent {
+            CompositionLocalProvider(LocalUriHandler provides links) {
+                SentinelTheme { AlertDetail(AlertDetails(shown, emptyMap()), {}, {}, {}) }
+            }
+        }
+        listOf(
+            R.string.alert_advice_title,
+            R.string.alert_advice_keep,
+            R.string.alert_advice_move,
+            R.string.alert_advice_help,
+        ).forEach { compose.onNodeWithText(context.getString(it)).performScrollTo().assertIsDisplayed() }
+        val advice = compose.onNodeWithText(context.getString(R.string.alert_advice_title)).getBoundsInRoot().top
+        val actions = compose.onNodeWithText(context.getString(R.string.alert_actions_title)).getBoundsInRoot().top
+        assertTrue("the advice comes before the actions", advice < actions)
+        HELPLINES.forEach { (name, link) ->
+            compose.onNodeWithText(context.getString(name)).performScrollTo().performClick()
+            compose.onNodeWithText(isolate(link)).performScrollTo().assertIsDisplayed()
+        }
+        assertEquals(HELPLINES.map { it.second }, opened)
+
+        // Other alerts give no such advice.
+        shown = alert()
+        compose.waitForIdle()
+        compose.onNodeWithText(context.getString(R.string.alert_advice_title)).assertDoesNotExist()
+    }
+
+    private fun knownIndicator() = HistoryAlert(
+        id = 7,
+        rule = AlertRule.KNOWN_INDICATOR,
+        severity = AlertSeverity.CRITICAL,
+        createdMs = now,
+        evidence = listOf(
+            AlertEvidence.App(app = "org.example.chat"),
+            AlertEvidence.Indicator(
+                indicator = "spy.example",
+                seen = "spy.example",
+                sighting = IndicatorSighting.DNS_QUERY,
+                family = "Example",
+                threat = IndicatorThreat.STALKERWARE,
+                source = "Example lab",
+                date = "2025-01-31",
+                report = "https://example.org/report",
+            ),
+        ),
+        actions = listOf(AlertAction.BlockApp(app = "org.example.chat"), AlertAction.OpenApp(app = "org.example.chat")),
+        open = true,
+    )
+
     @Test
     fun theDetailShowsTitleAndExplanationThenEvidenceThenActions() {
         val chosen = mutableListOf<AlertAction>()

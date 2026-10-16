@@ -116,6 +116,19 @@
     <string name="feed_import">استورد من مجلد</string>
     <string name="feed_checking">عم يتحقق…</string>
     <string name="feed_explainer">كل كم ساعة بيدوّر Sentinel على قائمة جديدة بالمكان اللي بتنشر فيه على GitHub، وبيتحقق من توقيعها قبل ما يستعملها. الطلب ما فيه إشي عنك أو عن هالتلفون.</string>
+    <string name="feed_result_found">لقينا آثار معروفة</string>
+    <plurals name="feed_result_found_text">
+        <item quantity="zero">ما في تنبيهات عن برامج تجسس أو مراقبة خفية معروفة. القائمة المستعملة من تاريخ %2$s.</item>
+        <item quantity="one">في تنبيه واحد عن برنامج تجسس أو مراقبة خفية معروف. القائمة المستعملة من تاريخ %2$s. افتح التنبيه لتشوف شو انلقى وشو لازم تعمل.</item>
+        <item quantity="two">في تنبيهين عن برامج تجسس أو مراقبة خفية معروفة. القائمة المستعملة من تاريخ %2$s. افتح التنبيهات لتشوف شو انلقى وشو لازم تعمل.</item>
+        <item quantity="few">في %1$d تنبيهات عن برامج تجسس أو مراقبة خفية معروفة. القائمة المستعملة من تاريخ %2$s. افتح التنبيهات لتشوف شو انلقى وشو لازم تعمل.</item>
+        <item quantity="many">في %1$d تنبيه عن برامج تجسس أو مراقبة خفية معروفة. القائمة المستعملة من تاريخ %2$s. افتح التنبيهات لتشوف شو انلقى وشو لازم تعمل.</item>
+        <item quantity="other">في %1$d تنبيه عن برامج تجسس أو مراقبة خفية معروفة. القائمة المستعملة من تاريخ %2$s. افتح التنبيهات لتشوف شو انلقى وشو لازم تعمل.</item>
+    </plurals>
+    <string name="feed_result_none">ما لقينا آثار معروفة</string>
+    <string name="feed_result_none_text">ولا إشي بالترافيك اللي احتفظ فيه Sentinel من %1$s بيطابق القائمة اللي من تاريخ %2$s.</string>
+    <string name="feed_result_limits">هاد مش دليل إنه التلفون ما فيه برامج تجسس. Sentinel بيلاقي بس الآثار اللي انتشرت عنها تقارير، وبالترافيك اللي شافه بس. وبرنامج التجسس اللي بيتحكم بالتلفون بيقدر يتخبّى عن كل تطبيق عليه.</string>
+    <string name="feed_result_pending">لسا ما انفحص السجل مع هالقائمة.</string>
     <string name="feed_outcome_installed">تثبّتت القائمة الجديدة.</string>
     <string name="feed_outcome_up_to_date">عندك أحدث قائمة.</string>
     <string name="feed_outcome_refused">لقينا قائمة بس ما قدرنا نتحقق منها، فما ثبّتناها.</string>
@@ -197,6 +210,12 @@
     <string name="alert_evidence_indicator_source">المصدر: %1$s، بتقرير من تاريخ %2$s: %3$s</string>
     <string name="alert_threat_spyware">برنامج تجسس</string>
     <string name="alert_threat_stalkerware">برنامج مراقبة خفية</string>
+    <string name="alert_advice_title">قبل ما تعمل أي إشي</string>
+    <string name="alert_advice_keep">لا تعمل reset ولا تمسح التلفون هلأ. هيك بتنمسح الآثار اللي بيحتاج يشوفها الخبير.</string>
+    <string name="alert_advice_move">انقل المحادثات الحساسة لجهاز تاني بتثق فيه.</string>
+    <string name="alert_advice_help">اطلب مساعدة من خط مساعدة للأمن الرقمي. هالخدمة ببلاش للناس المعرّضين للخطر، متل الصحفيين والناشطين.</string>
+    <string name="alert_advice_access_now">خط مساعدة Access Now</string>
+    <string name="alert_advice_amnesty">مختبر الأمن الرقمي بمنظمة العفو الدولية</string>
     <plurals name="alert_evidence_past_on">
         <item quantity="zero">ولا اتصال، بتاريخ %2$s.</item>
         <item quantity="one">اتصال واحد، بتاريخ %2$s.</item>

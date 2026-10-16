@@ -36,6 +36,21 @@ class StringsTest {
         assertEquals("strings that start right to left", emptyList<String>(), wrongDirection("en", rtl = false))
     }
 
+    /** MS-15: no text calls the phone or a result clean or safe, in either language. */
+    @Test
+    fun noTextSaysCleanOrSafe() {
+        val banned = mapOf(
+            "en" to Regex("\\b(clean|safe)\\b", RegexOption.IGNORE_CASE),
+            "ar" to Regex("نظيف|آمن"),
+        )
+        val found = banned.flatMap { (language, words) ->
+            texts(resources(language))
+                .filter { (_, text) -> words.containsMatchIn(text) }
+                .map { (name, text) -> "$language $name: $text" }
+        }
+        assertEquals(emptyList<String>(), found)
+    }
+
     private fun wrongDirection(language: String, rtl: Boolean): List<String> =
         texts(resources(language)).filter { (_, text) -> startsRightToLeft(text) == !rtl }
             .map { (name, text) -> "$name: $text" }

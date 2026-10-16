@@ -55,6 +55,7 @@ import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryFlow
+import io.github.malekhasan.sentinel.core.KnownTraces
 import io.github.malekhasan.sentinel.core.coreVersion
 import java.text.DateFormat
 import java.util.Date
@@ -206,11 +207,13 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         visible.value = true
-        // A new list as soon as the app opens, when one is due (MS-10).
+        // A new list as soon as the app opens, when one is due (MS-10). Then the history
+        // is checked against the list in force, should that not have been done (MS-02).
         Thread({
             if (IndicatorFeed.get(this) != null && IndicatorFeed.checkDue(this)) {
                 IndicatorFeed.checkPublished(this)
             }
+            History.hunt(this)
         }, "sentinel-feed-check").start()
     }
 
@@ -270,6 +273,8 @@ fun MonitorScreen(
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
     val feed by IndicatorFeed.states.collectAsState()
+    val hunts by History.hunts.collectAsState()
+    var traces by remember { mutableStateOf<KnownTraces?>(null) }
     var snapshot by remember { mutableStateOf<EngineSnapshot?>(null) }
     var flows by remember { mutableStateOf(emptyList<HistoryFlow>()) }
     var gaps by remember { mutableStateOf(emptyList<GapLog.Gap>()) }
@@ -286,8 +291,9 @@ fun MonitorScreen(
     // Opening the feed checks the list in force (SP-04).
     LaunchedEffect(Unit) { withContext(Dispatchers.IO) { IndicatorFeed.get(context) } }
 
-    LaunchedEffect(visible, status, generation) {
+    LaunchedEffect(visible, status, generation, hunts, feed.status?.version) {
         suspend fun reload() {
+            traces = withContext(Dispatchers.IO) { History.knownTraces(context) }
             flows = withContext(Dispatchers.IO) { recentFlows(context) }
             gaps = withContext(Dispatchers.IO) { GapLog.recent(context, 5) }
             away = withContext(Dispatchers.IO) { awayRows(context, names) }
@@ -358,6 +364,7 @@ fun MonitorScreen(
         },
         onShowJournal = onShowJournal,
         feed = feed,
+        traces = traces,
         onCheckFeed = { scope.launch(Dispatchers.IO) { IndicatorFeed.checkPublished(context) } },
         onImportFeed = onImportFeed,
         firewallMode = mode,
@@ -397,6 +404,7 @@ fun MonitorContent(
     feed: IndicatorFeed.State? = null,
     onCheckFeed: () -> Unit = {},
     onImportFeed: () -> Unit = {},
+    traces: KnownTraces? = null,
 ) {
     val context = LocalContext.current
     Column(
@@ -457,7 +465,7 @@ fun MonitorContent(
         OutlinedButton(onClick = onShowJournal) { Text(stringResource(R.string.journal_action)) }
 
         // What known spyware and stalkerware is looked for, and from when (MS-10).
-        feed?.let { IndicatorList(it, onCheckFeed, onImportFeed) }
+        feed?.let { IndicatorList(it, onCheckFeed, onImportFeed, traces) }
 
         if (away.isNotEmpty()) {
             Text(stringResource(R.string.away_title), style = MaterialTheme.typography.titleSmall)

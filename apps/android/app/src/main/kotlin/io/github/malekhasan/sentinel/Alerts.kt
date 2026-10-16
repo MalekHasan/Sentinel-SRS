@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -157,6 +158,7 @@ fun AlertDetail(
         alert.evidence.forEach { evidence ->
             Text(describeEvidence(evidence, label), style = MaterialTheme.typography.bodyMedium)
         }
+        if (alert.rule == AlertRule.KNOWN_INDICATOR) Advice()
 
         if (alert.actions.isNotEmpty()) {
             Text(stringResource(R.string.alert_actions_title), style = MaterialTheme.typography.titleSmall)
@@ -170,6 +172,36 @@ fun AlertDetail(
             Text(stringResource(R.string.alert_dismissed), style = MaterialTheme.typography.bodySmall)
         }
         Feedback(alert, onFeedback)
+    }
+}
+
+/** MS-13: where to get help with a match. Each is also written out, to type on another device. */
+val HELPLINES = listOf(
+    R.string.alert_advice_access_now to "https://www.accessnow.org/help/",
+    R.string.alert_advice_amnesty to "https://securitylab.amnesty.org/get-help/",
+)
+
+/**
+ * MS-13, on every known-indicator alert: keep the evidence, move sensitive talk to
+ * another device, and ask a helpline.
+ */
+@Composable
+private fun Advice() {
+    val links = LocalUriHandler.current
+    Text(stringResource(R.string.alert_advice_title), style = MaterialTheme.typography.titleSmall)
+    Text(stringResource(R.string.alert_advice_keep), style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.alert_advice_move), style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.alert_advice_help), style = MaterialTheme.typography.bodyMedium)
+    HELPLINES.forEach { (name, link) ->
+        OutlinedButton(onClick = {
+            try {
+                links.openUri(link)
+            } catch (e: RuntimeException) {
+                // No browser: the address below can be typed elsewhere.
+                Log.w(TAG, "could not open $link", e)
+            }
+        }) { Text(stringResource(name)) }
+        Text(isolate(link), style = MaterialTheme.typography.bodySmall)
     }
 }
 

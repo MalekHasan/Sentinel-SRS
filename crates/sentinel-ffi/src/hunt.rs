@@ -24,8 +24,31 @@ pub struct HuntReport {
     pub raised: u32,
 }
 
+/// What the history says about known traces, for the result the app shows (MS-15).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct KnownTraces {
+    /// Known-indicator alerts the history keeps, open or dismissed: each is a known
+    /// trace found, live or in the history. Dismissing one does not unfind it.
+    pub alerts: u64,
+    /// The version of the indicator list the history was last checked against, if any.
+    pub checked_version: Option<u64>,
+    /// Since when the history holds the phone's traffic: when it began, Unix
+    /// milliseconds.
+    pub since_ms: i64,
+}
+
 #[uniffi::export]
 impl HistoryStore {
+    /// What the history says about known traces (MS-15): how many were found, and
+    /// against which list it was last checked.
+    pub fn known_traces(&self) -> Result<KnownTraces, HistoryError> {
+        Ok(KnownTraces {
+            alerts: self.store.count_alerts(Rule::KnownIndicator)?,
+            checked_version: self.store.hunted()?,
+            since_ms: self.store.began(),
+        })
+    }
+
     /// Check the history against the indicator list `feed` has in force (MS-02): every
     /// app, name and address it holds connections to, kept flows and rolled-up days.
     /// Each app and indicator found raises one Critical alert with when the connections
@@ -201,6 +224,12 @@ mod tests {
         let history = history(dir.path());
         let feed = open(&dir.path().join("feed"));
         assert_eq!(history.hunt(Arc::clone(&feed)).unwrap(), None, "no list");
+        let nothing = KnownTraces {
+            alerts: 0,
+            checked_version: None,
+            since_ms: history.began_ms(),
+        };
+        assert_eq!(history.known_traces().unwrap(), nothing);
 
         let now = now_ms();
         let (t1, t2, t3) = (now - 3 * DAY, now - 2 * DAY, now - DAY);
@@ -311,6 +340,14 @@ mod tests {
             None,
             "once per list"
         );
+        assert_eq!(
+            history.known_traces().unwrap(),
+            KnownTraces {
+                alerts: 3,
+                checked_version: Some(1),
+                ..nothing
+            }
+        );
 
         // A newer list that adds an indicator: only the new match is raised, although the
         // chat app's alert was dismissed.
@@ -343,6 +380,15 @@ mod tests {
         let open = reported(&history);
         assert_eq!(open.len(), 3, "{open:?}");
         assert_eq!(open[2][0], app("org.example.news"));
+        assert_eq!(
+            history.known_traces().unwrap(),
+            KnownTraces {
+                alerts: 4,
+                checked_version: Some(2),
+                ..nothing
+            },
+            "a dismissed alert is still a trace found"
+        );
     }
 
     /// A match already reported live (ID-13) is not reported again from the history.

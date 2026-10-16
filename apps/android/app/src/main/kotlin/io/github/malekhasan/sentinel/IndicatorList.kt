@@ -13,16 +13,24 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.github.malekhasan.sentinel.core.FeedStatus
+import io.github.malekhasan.sentinel.core.KnownTraces
 import java.text.DateFormat
 import java.util.Date
 
 /**
  * The indicator list on the main screen (SRS MS-10, ADR-0019): which list is in force,
  * from when and from whom, whether it is out of date, what the last check found, and how
- * to get a new one.
+ * to get a new one. Then the result (MS-15, ADR-0022): known traces found or not, with
+ * the list's date, and what a "not found" cannot say.
  */
 @Composable
-fun IndicatorList(state: IndicatorFeed.State, onCheck: () -> Unit, onImport: () -> Unit) {
+fun IndicatorList(
+    state: IndicatorFeed.State,
+    onCheck: () -> Unit,
+    onImport: () -> Unit,
+    traces: KnownTraces? = null,
+) {
     val locale = LocalConfiguration.current.locales[0]
     val format = DateFormat.getDateInstance(DateFormat.MEDIUM, locale)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -57,6 +65,7 @@ fun IndicatorList(state: IndicatorFeed.State, onCheck: () -> Unit, onImport: () 
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                traces?.let { TraceResult(status, it, format) }
             }
         }
         state.last?.let { Text(stringResource(outcomeText(it)), style = MaterialTheme.typography.bodySmall) }
@@ -71,6 +80,39 @@ fun IndicatorList(state: IndicatorFeed.State, onCheck: () -> Unit, onImport: () 
             }
             Text(stringResource(R.string.feed_explainer), style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+/**
+ * MS-15: "Known traces found" whenever an alert named one, open or dismissed, else "No
+ * known traces found" once the history was checked against the list in force, with the
+ * list's date and the limits of such a result (SRS §8A.3).
+ */
+@Composable
+private fun TraceResult(status: FeedStatus, traces: KnownTraces, format: DateFormat) {
+    val listDate = format.format(Date(status.createdMs))
+    when {
+        traces.alerts > 0uL -> {
+            Text(
+                stringResource(R.string.feed_result_found),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            val count = traces.alerts.toInt()
+            Text(
+                pluralStringResource(R.plurals.feed_result_found_text, count, count, listDate),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        traces.checkedVersion == status.version -> {
+            Text(stringResource(R.string.feed_result_none), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.feed_result_none_text, format.format(Date(traces.sinceMs)), listDate),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(stringResource(R.string.feed_result_limits), style = MaterialTheme.typography.bodySmall)
+        }
+        else -> Text(stringResource(R.string.feed_result_pending), style = MaterialTheme.typography.bodyMedium)
     }
 }
 

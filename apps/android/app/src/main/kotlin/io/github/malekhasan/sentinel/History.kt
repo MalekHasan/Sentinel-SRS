@@ -5,8 +5,13 @@ import android.content.Context
 import android.util.Log
 import io.github.malekhasan.sentinel.core.HistoryStore
 import io.github.malekhasan.sentinel.core.HuntReport
+import io.github.malekhasan.sentinel.core.KnownTraces
 import io.github.malekhasan.sentinel.core.wipeHistory
 import java.io.File
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /** The encrypted local history (SRS §13, ADR-0009), opened once per process. */
 object History {
@@ -18,6 +23,11 @@ object History {
 
     @Volatile
     private var store: HistoryStore? = null
+
+    private val checks = MutableStateFlow(0)
+
+    /** Counts the checks of the history against a list, so the result shown follows them. */
+    val hunts: StateFlow<Int> = checks.asStateFlow()
 
     fun get(context: Context): HistoryStore =
         store ?: synchronized(this) {
@@ -37,13 +47,21 @@ object History {
     fun hunt(context: Context): HuntReport? {
         val feed = IndicatorFeed.get(context) ?: return null
         return try {
-            get(context).hunt(feed)
+            get(context).hunt(feed)?.also { checks.update { it + 1 } }
         } catch (e: Exception) {
             // HistoryException, or the history could not be opened at all.
             Log.w(TAG, "the history could not be checked against the indicator list", e)
             null
         }
     }
+
+    /** What the history says about known traces (MS-15), or null if it cannot be read. */
+    fun knownTraces(context: Context): KnownTraces? =
+        try {
+            get(context).knownTraces()
+        } catch (e: Exception) {
+            null
+        }
 
     /**
      * One-tap wipe (SRS §13.2): delete the database and its key. Only while monitoring

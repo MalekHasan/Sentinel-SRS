@@ -632,6 +632,16 @@ impl Store {
         rows.into_iter().map(stored_alert).collect()
     }
 
+    /// How many alerts `rule` raised that the history still keeps, open or dismissed.
+    pub fn count_alerts(&self, rule: Rule) -> Result<u64> {
+        let count: i64 = lock(&self.conn).query_row(
+            "SELECT count(*) FROM alert WHERE rule_id = ?1",
+            [rule.id()],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(count).unwrap_or(0))
+    }
+
     /// One alert, if there is one with this id.
     pub fn alert(&self, id: i64) -> Result<Option<StoredAlert>> {
         let row = lock(&self.conn)
