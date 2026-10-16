@@ -1136,6 +1136,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sentinel-ioc"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "sentinel-store"
 version = "0.0.0"
 dependencies = [
