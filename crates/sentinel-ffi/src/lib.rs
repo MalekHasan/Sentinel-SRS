@@ -12,6 +12,7 @@ mod enrich;
 mod feed;
 mod firewall;
 mod flows;
+mod hardening;
 mod history;
 mod hunt;
 mod journal;
@@ -34,6 +35,9 @@ pub use feed::{
 };
 pub use firewall::{FirewallRule, HistoryRule, RuleAction, RuleDestination};
 pub use flows::{FlowObserver, FlowOwner, FlowProto, FlowRecord, LiveApp, NameSource};
+pub use hardening::{
+    HardeningFacts, HardeningItem, HardeningStatus, HardeningStep, hardening_checklist,
+};
 pub use history::{
     HistoryApp, HistoryAway, HistoryCompany, HistoryDestination, HistoryError, HistoryFlow,
     HistoryGap, HistoryStore, wipe_history,
