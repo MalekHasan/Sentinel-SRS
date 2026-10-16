@@ -26,7 +26,7 @@ Finish each task with a report: what was built, which files changed, which check
 | Rust tests | `cargo test --workspace --all-features --locked` | IPv6 tests skip on hosts without IPv6; CI sets `SENTINEL_REQUIRE_IPV6=1` |
 | Licences, advisories | `cargo deny check` | |
 | Packet engine lab | `sudo crates/sentinel-vpn/lab/run-lab.sh /tmp/lab` | Needs root, `iproute2`, `iperf3`; see the lab README |
-| Android | `cd apps/android && ./gradlew assembleDebug lintDebug connectedDebugAndroidTest` | Needs the Android SDK and NDK; see [docs/ANDROID-BUILD.md](docs/ANDROID-BUILD.md) |
+| Android | `cd apps/android && ./gradlew assembleDebug lintDebug :app:connectedDebugAndroidTest` | Needs the Android SDK and NDK; see [docs/ANDROID-BUILD.md](docs/ANDROID-BUILD.md) |
 
 CI (`.github/workflows/`) runs all of these on every push.
 

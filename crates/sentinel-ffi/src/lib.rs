@@ -1,11 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The Sentinel core as seen from Kotlin.
 //!
-//! The API grows with Phase A: engine control now, then flows, alerts and storage.
+//! The API grows with Phase A: engine control, flow events and the encrypted history
+//! now, then alerts.
 
+mod alerts;
 mod engine;
+mod enrich;
+mod feed;
+mod firewall;
+mod flows;
+mod history;
+mod hunt;
+mod journal;
 
+pub use alerts::{
+    AlertAction, AlertDelivery, AlertEvidence, AlertFeedback, AlertListener, AlertRule,
+    AlertSeverity, AllowedRule, HistoryAlert,
+};
 pub use engine::{Engine, EngineError, EngineListener, EngineSnapshot, SocketProtector};
+pub use enrich::{
+    CategoryFact, CompanyFact, IpDatabase, IpDatabaseError, IpSources, TrackerDatabase,
+    TrackerDatabaseError,
+};
+pub use feed::{
+    Feed, FeedFailure, FeedFile, FeedOffer, FeedSource, FeedStatus, trusted_feed_keys,
+    trusted_feed_threshold,
+};
+pub use firewall::{FirewallRule, HistoryRule, RuleAction, RuleDestination};
+pub use flows::{FlowObserver, FlowOwner, FlowProto, FlowRecord, LiveApp, NameSource};
+pub use history::{
+    HistoryApp, HistoryAway, HistoryCompany, HistoryDestination, HistoryError, HistoryFlow,
+    HistoryGap, HistoryStore, wipe_history,
+};
+pub use hunt::HuntReport;
+pub use journal::{JournalEntry, JournalState, UndoResult};
 
 uniffi::setup_scaffolding!();
 

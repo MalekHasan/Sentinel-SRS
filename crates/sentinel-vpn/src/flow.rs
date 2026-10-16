@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,13 +25,26 @@ pub enum Verdict {
 }
 
 /// Live byte counters, readable while the flow is running (for the live view, CM-03).
+/// Bytes carried while the user is away are also counted separately (CM-06).
 #[derive(Debug, Default)]
 pub struct FlowCounters {
     up: AtomicU64,
     down: AtomicU64,
+    up_away: AtomicU64,
+    down_away: AtomicU64,
+    /// The engine's "user is away" switch ([`crate::EngineConfig::away`]).
+    away: Arc<AtomicBool>,
 }
 
 impl FlowCounters {
+    /// Counters that follow the engine's `away` switch.
+    pub fn new(away: Arc<AtomicBool>) -> Self {
+        FlowCounters {
+            away,
+            ..FlowCounters::default()
+        }
+    }
+
     pub fn bytes_up(&self) -> u64 {
         self.up.load(Ordering::Relaxed)
     }
@@ -40,12 +53,31 @@ impl FlowCounters {
         self.down.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn add_up(&self, n: usize) {
-        self.up.fetch_add(n as u64, Ordering::Relaxed);
+    /// Of [`Self::bytes_up`], the bytes sent while the user was away.
+    pub fn bytes_up_away(&self) -> u64 {
+        self.up_away.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn add_down(&self, n: usize) {
+    /// Of [`Self::bytes_down`], the bytes received while the user was away.
+    pub fn bytes_down_away(&self) -> u64 {
+        self.down_away.load(Ordering::Relaxed)
+    }
+
+    /// Counts bytes the app sent. Public so that other stacks, and tests, can feed the
+    /// same live view.
+    pub fn add_up(&self, n: usize) {
+        self.up.fetch_add(n as u64, Ordering::Relaxed);
+        if self.away.load(Ordering::Relaxed) {
+            self.up_away.fetch_add(n as u64, Ordering::Relaxed);
+        }
+    }
+
+    /// Counts bytes the app received.
+    pub fn add_down(&self, n: usize) {
         self.down.fetch_add(n as u64, Ordering::Relaxed);
+        if self.away.load(Ordering::Relaxed) {
+            self.down_away.fetch_add(n as u64, Ordering::Relaxed);
+        }
     }
 }
 
@@ -68,6 +100,9 @@ pub struct FlowInfo {
 pub struct FlowTotals {
     pub bytes_up: u64,
     pub bytes_down: u64,
+    /// Of the above, the bytes carried while the user was away (CM-06).
+    pub bytes_up_away: u64,
+    pub bytes_down_away: u64,
     pub ended_ms: u64,
     pub verdict: Verdict,
 }
@@ -94,8 +129,44 @@ pub trait Observer: Send + Sync + 'static {
         Verdict::Allow
     }
 
+    /// A DNS query for `qname` is about to be sent. Returning [`Verdict::Block`] answers
+    /// it at once with "no such name" instead, and nothing is sent.
+    fn dns_query(&self, _flow: &FlowInfo, _qname: &str) -> Verdict {
+        Verdict::Allow
+    }
+
     /// A DNS response passed through the tunnel.
     fn dns_answer(&self, _flow: &FlowInfo, _qname: &str, _ips: &[IpAddr]) {}
 
+    /// The firewall changed ([`crate::EngineConfig::firewall_changes`]) while `flow` was
+    /// open: may it go on? Returning [`Verdict::Block`] ends it at once, in both
+    /// directions. Called for every open flow on each change.
+    fn recheck(&self, _flow: &FlowInfo) -> Verdict {
+        Verdict::Allow
+    }
+
     fn flow_ended(&self, _flow: &FlowInfo, _totals: FlowTotals) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bytes_carried_while_away_are_counted_apart() {
+        let away = Arc::new(AtomicBool::new(false));
+        let counters = FlowCounters::new(Arc::clone(&away));
+        counters.add_up(10);
+        counters.add_down(100);
+        away.store(true, Ordering::Relaxed);
+        counters.add_up(1);
+        counters.add_down(2);
+        away.store(false, Ordering::Relaxed);
+        counters.add_up(1_000);
+        assert_eq!((counters.bytes_up(), counters.bytes_down()), (1_011, 102));
+        assert_eq!(
+            (counters.bytes_up_away(), counters.bytes_down_away()),
+            (1, 2)
+        );
+    }
 }

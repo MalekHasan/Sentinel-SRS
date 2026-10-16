@@ -178,6 +178,20 @@ def checks():
             results["half_close_ok"] = data == b"half"
     except OSError:
         results["half_close_ok"] = False
+    # 5. The server closes first (HTTP/1.0): read its whole answer, then close. The
+    #    engine must end the flow at once, not after TIME-WAIT (report.py checks).
+    try:
+        with socket.create_connection((TARGET, 8081), timeout=3) as s:
+            s.sendall(b"GET / HTTP/1.0\r\n\r\n")
+            data = b""
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            results["server_close_answered"] = data.endswith(b"ok")
+    except OSError:
+        results["server_close_answered"] = False
     return results
 
 

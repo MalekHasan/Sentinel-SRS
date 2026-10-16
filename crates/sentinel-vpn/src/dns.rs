@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use simple_dns::rdata::RData;
-use simple_dns::{Packet, PacketFlag};
+use simple_dns::{Packet, PacketFlag, RCODE};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DnsAnswer {
@@ -41,6 +41,36 @@ pub fn parse_dns_response(datagram: &[u8]) -> Option<DnsAnswer> {
         return None;
     }
     Some(DnsAnswer { qname, ips })
+}
+
+/// The name a DNS query asks for: lower-cased, without the trailing dot. `None` for
+/// responses, malformed packets and queries without a question.
+pub fn parse_dns_query(datagram: &[u8]) -> Option<String> {
+    let packet = Packet::parse(datagram).ok()?;
+    if packet.has_flags(PacketFlag::RESPONSE) {
+        return None;
+    }
+    let qname = packet.questions.first()?.qname.to_string();
+    let qname = qname.trim_end_matches('.').to_ascii_lowercase();
+    (!qname.is_empty()).then_some(qname)
+}
+
+/// An answer to `query` saying that the name does not exist (NXDOMAIN): what a blocked
+/// lookup gets (ADR-0015). It repeats the query's id and questions, so the app's
+/// resolver accepts it at once. `None` if `query` cannot be read.
+pub fn name_error_reply(query: &[u8]) -> Option<Vec<u8>> {
+    let query = Packet::parse(query).ok()?;
+    if query.has_flags(PacketFlag::RESPONSE) {
+        return None;
+    }
+    let mut reply = Packet::new_reply(query.id());
+    reply.questions = query.questions.clone();
+    if query.has_flags(PacketFlag::RECURSION_DESIRED) {
+        reply.set_flags(PacketFlag::RECURSION_DESIRED);
+    }
+    reply.set_flags(PacketFlag::RECURSION_AVAILABLE);
+    *reply.rcode_mut() = RCODE::NameError;
+    reply.build_bytes_vec().ok()
 }
 
 /// Maps IP addresses back to the name an app looked up.
@@ -128,6 +158,57 @@ pub(crate) mod tests {
             ));
         }
         p.build_bytes_vec().unwrap()
+    }
+
+    pub(crate) fn query(id: u16, name: &str) -> Vec<u8> {
+        let mut p = Packet::new_query(id);
+        p.set_flags(PacketFlag::RECURSION_DESIRED);
+        p.questions.push(Question::new(
+            Name::new_unchecked(name),
+            TYPE::A.into(),
+            CLASS::IN.into(),
+            false,
+        ));
+        p.build_bytes_vec().unwrap()
+    }
+
+    #[test]
+    fn reads_the_name_a_query_asks_for() {
+        assert_eq!(
+            parse_dns_query(&query(1, "Ads.Example.")).as_deref(),
+            Some("ads.example")
+        );
+        assert_eq!(
+            parse_dns_query(&response("ads.example", &[Ipv4Addr::LOCALHOST], &[])),
+            None,
+            "an answer is not a query"
+        );
+        assert_eq!(
+            parse_dns_query(&Packet::new_query(2).build_bytes_vec().unwrap()),
+            None
+        );
+        assert_eq!(parse_dns_query(b"not dns"), None);
+    }
+
+    /// A blocked lookup gets "no such name" for its own question, with its own id.
+    #[test]
+    fn a_name_error_reply_answers_the_query() {
+        let reply = name_error_reply(&query(0xbeef, "ads.example")).unwrap();
+        let packet = Packet::parse(&reply).unwrap();
+        assert_eq!(packet.id(), 0xbeef);
+        assert!(packet.has_flags(PacketFlag::RESPONSE));
+        assert!(packet.has_flags(PacketFlag::RECURSION_DESIRED));
+        assert!(packet.has_flags(PacketFlag::RECURSION_AVAILABLE));
+        assert_eq!(packet.rcode(), RCODE::NameError);
+        assert_eq!(packet.questions.len(), 1);
+        assert_eq!(packet.questions[0].qname.to_string(), "ads.example");
+        assert!(packet.answers.is_empty());
+        assert_eq!(parse_dns_response(&reply), None, "it names no address");
+        assert_eq!(
+            name_error_reply(&response("ads.example", &[Ipv4Addr::LOCALHOST], &[])),
+            None
+        );
+        assert_eq!(name_error_reply(b"\x00"), None);
     }
 
     #[test]

@@ -11,6 +11,7 @@
 use std::io::{self, Read};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::os::fd::OwnedFd;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -28,12 +29,33 @@ const APP_PORT: u16 = 40_000;
 #[derive(Default)]
 struct Recorder {
     block_port: Option<u16>,
+    block_name: Option<&'static str>,
+    /// Blocks every flow, new or open, while set.
+    block_all: AtomicBool,
+    rechecks: AtomicUsize,
     ended: Mutex<Vec<(FlowInfo, FlowTotals)>>,
 }
 
 impl Observer for Recorder {
     fn flow_started(&self, flow: &FlowInfo) -> Verdict {
-        if Some(flow.dst.port()) == self.block_port {
+        if Some(flow.dst.port()) == self.block_port || self.block_all.load(Ordering::SeqCst) {
+            Verdict::Block
+        } else {
+            Verdict::Allow
+        }
+    }
+
+    fn recheck(&self, _flow: &FlowInfo) -> Verdict {
+        self.rechecks.fetch_add(1, Ordering::SeqCst);
+        if self.block_all.load(Ordering::SeqCst) {
+            Verdict::Block
+        } else {
+            Verdict::Allow
+        }
+    }
+
+    fn dns_query(&self, _flow: &FlowInfo, qname: &str) -> Verdict {
+        if Some(qname) == self.block_name {
             Verdict::Block
         } else {
             Verdict::Allow
@@ -293,5 +315,108 @@ async fn dns_to_the_tunnel_resolver_follows_the_network() {
     ));
     assert!(h.recv().await.is_none(), "port 853 must not be relayed");
     assert_eq!(h.stats.upstream_failures(), 1);
+    h.engine.abort();
+}
+
+fn dns_query(id: u16, name: &str) -> Vec<u8> {
+    let mut packet = simple_dns::Packet::new_query(id);
+    packet.questions.push(simple_dns::Question::new(
+        simple_dns::Name::new_unchecked(name),
+        simple_dns::TYPE::A.into(),
+        simple_dns::CLASS::IN.into(),
+        false,
+    ));
+    packet.build_bytes_vec().unwrap()
+}
+
+/// A lookup the observer blocks is answered "no such name" by the engine at once and
+/// never reaches the resolver; other lookups are forwarded as before (ADR-0015).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_blocked_lookup_is_answered_no_such_name() {
+    let tunnel_dns = SocketAddr::new(Ipv4Addr::new(10, 111, 0, 53).into(), 53);
+    let forward = Arc::new(DnsForward::new(vec![tunnel_dns.ip()]));
+    // The resolver echoes what it gets after "R", so a forwarded query shows.
+    forward.set_upstream(vec![udp_echo_tagged(Ipv4Addr::LOCALHOST.into(), b"R")]);
+    let h = start_with(
+        Recorder {
+            block_name: Some("ads.example"),
+            ..Recorder::default()
+        },
+        EngineConfig {
+            dns_forward: Some(Arc::clone(&forward)),
+            ..EngineConfig::default()
+        },
+    );
+
+    let app = SocketAddr::new(APP_V4.into(), 40_010);
+    h.send(&udp_packet_from(
+        app,
+        tunnel_dns,
+        &dns_query(7, "ads.example"),
+    ));
+    let (src, dst, payload) = parse_udp(&h.recv().await.expect("no answer"));
+    assert_eq!((src, dst), (tunnel_dns, app));
+    let answer = simple_dns::Packet::parse(&payload).expect("a DNS answer, not the echo");
+    assert_eq!(answer.id(), 7);
+    assert_eq!(answer.rcode(), simple_dns::RCODE::NameError);
+    assert!(
+        h.recv().await.is_none(),
+        "nothing came back from the resolver"
+    );
+
+    let other = SocketAddr::new(APP_V4.into(), 40_011);
+    let allowed = dns_query(8, "chat.example");
+    h.send(&udp_packet_from(other, tunnel_dns, &allowed));
+    let (_, _, payload) = parse_udp(&h.recv().await.expect("no answer"));
+    assert_eq!(payload, [b"R".as_slice(), &allowed].concat(), "forwarded");
+    h.engine.abort();
+}
+
+/// RA-01, RA-03: when the firewall changes, every open flow is asked again, and one it
+/// now blocks ends at once: nothing more reaches the server, and it is reported as
+/// blocked. Without a change, open flows are not asked again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_open_flow_ends_when_the_firewall_now_blocks_it() {
+    let (changes, watched) = tokio::sync::watch::channel(0u64);
+    let h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            firewall_changes: Some(watched),
+            ..EngineConfig::default()
+        },
+    );
+    let server = udp_echo(Ipv4Addr::LOCALHOST.into());
+    assert_udp_round_trip(&h, APP_V4.into(), server).await;
+    assert_udp_round_trip(&h, APP_V4.into(), server).await;
+    assert_eq!(
+        h.recorder.rechecks.load(Ordering::SeqCst),
+        0,
+        "nothing changed"
+    );
+
+    // A change that still allows the flow leaves it open.
+    changes.send_modify(|version| *version += 1);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(h.recorder.rechecks.load(Ordering::SeqCst), 1);
+    assert_udp_round_trip(&h, APP_V4.into(), server).await;
+    assert!(h.recorder.ended.lock().unwrap().is_empty());
+
+    h.recorder.block_all.store(true, Ordering::SeqCst);
+    changes.send_modify(|version| *version += 1);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    while h.recorder.ended.lock().unwrap().is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the flow did not end within a second"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let (flow, totals) = h.recorder.ended.lock().unwrap()[0].clone();
+    assert_eq!(flow.dst, server);
+    assert_eq!(totals.verdict, Verdict::Block);
+    assert_eq!(h.stats.flows_blocked(), 1);
+    // The next datagram starts a new flow, which is blocked when it starts.
+    h.send(&udp_packet(APP_V4.into(), server, b"after"));
+    assert!(h.recv().await.is_none(), "nothing came back once blocked");
     h.engine.abort();
 }

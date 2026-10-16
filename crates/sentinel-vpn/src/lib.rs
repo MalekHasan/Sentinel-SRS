@@ -31,7 +31,7 @@ mod stack_ipstack;
 mod stack_smoltcp;
 
 pub use device::{TunClosed, TunDevice};
-pub use dns::{DnsAnswer, DnsCache, parse_dns_response};
+pub use dns::{DnsAnswer, DnsCache, name_error_reply, parse_dns_query, parse_dns_response};
 pub use engine::{EngineConfig, EngineStats};
 pub use flow::{FlowCounters, FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 pub use forward::DnsForward;

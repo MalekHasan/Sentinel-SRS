@@ -4,6 +4,7 @@
 
 - TCP echo on port 7007 (all lab addresses)
 - TCP "server speaks first" on port 2222: sends a banner on connect, like SSH
+- TCP "server closes first" on port 8081: answers one request and closes, like HTTP/1.0
 - UDP echo on port 7007
 - DNS on 10.88.0.53:53: web.lab.test -> 10.88.0.2, any other *.lab.test -> 10.88.0.1;
   AAAA: web6.lab.test -> fd88::2, any other *.lab.test -> fd88::1
@@ -30,6 +31,13 @@ class Banner(Echo):
     def handle(self):
         self.request.sendall(b"SSH-2.0-lab\r\n")
         super().handle()
+
+
+class CloseFirst(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.recv(65536)
+        self.request.sendall(b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        # Closing here, before the client, is what HTTP/1.0 servers do.
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -105,6 +113,8 @@ if __name__ == "__main__":
         threading.Thread(target=udp_echo, args=(socket.AF_INET6, "fd88::1"), daemon=True).start()
         echo6 = Server6(("::", 7007), Echo)
         threading.Thread(target=echo6.serve_forever, daemon=True).start()
+    close_first = Server(("0.0.0.0", 8081), CloseFirst)
+    threading.Thread(target=close_first.serve_forever, daemon=True).start()
     banner = Server(("0.0.0.0", 2222), Banner)
     threading.Thread(target=banner.serve_forever, daemon=True).start()
     print("servers ready", flush=True)

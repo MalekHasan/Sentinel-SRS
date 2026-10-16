@@ -22,6 +22,7 @@ The A0 plan asked: can a Rust userspace TCP/IP stack do this well enough, or sho
 | Metadata | Hostname from DNS answers (cache) or from the TLS ClientHello (SNI), including ClientHellos split across two segments. Payloads are never stored. |
 | Blocking | Before any upstream connection (by app or address), or by server name before the ClientHello is forwarded. |
 | Stacks | `netstack-smoltcp` 0.2.4 on smoltcp 0.12 (default since Sprint 1) and `ipstack` 1.0.1 (`--features ipstack`). Both vendored and patched in `third_party/`. |
+| DNS forwarding | Queries to the tunnel's own resolver address go to the current network's resolvers (Sprint 1, [ADR-0008](0008-android-tunnel-setup.md)). |
 
 The lab (`crates/sentinel-vpn/lab/`, run in CI) builds two network namespaces on Linux and runs real traffic through the engine, with the same TUN-and-protect mechanics as Android. Each benchmark runs once over direct routing and once through the engine.
 

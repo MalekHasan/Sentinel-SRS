@@ -246,6 +246,11 @@ impl TcpListenerRunner {
 
                     socket.close();
                     control.send_state = TcpSocketState::Closing;
+
+                    // Sentinel patch 2: the FIN is queued, so a pending shutdown is done.
+                    if let Some(waker) = control.send_waker.take() {
+                        waker.wake();
+                    }
                 }
 
                 // Check if readable
@@ -563,7 +568,13 @@ impl AsyncWrite for TcpStream {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let mut control = self.control.lock();
 
-        if matches!(control.send_state, TcpSocketState::Closed) {
+        // Sentinel patch 2: the write half is shut down once the FIN is queued (Closing),
+        // not when the whole connection has closed. Waiting for Closed made a relay wait
+        // out TIME-WAIT (10 s) whenever the server closed first.
+        if matches!(
+            control.send_state,
+            TcpSocketState::Closing | TcpSocketState::Closed
+        ) {
             return Ok(()).into();
         }
 

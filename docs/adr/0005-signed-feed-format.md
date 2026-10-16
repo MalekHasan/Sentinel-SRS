@@ -34,7 +34,7 @@ Use a **small signed manifest in a DSSE envelope**, not full TUF, for now.
 | Limits | Envelope ≤ 1 MiB, ≤ 1000 files, so a hostile manifest cannot exhaust memory. |
 | Tooling | `sentinel-feed-tool`: `keygen`, `manifest`, `sign` (offline), `verify`. |
 
-Provenance (source, date and report link per indicator) lives inside the data files, whose format is defined in Phase A Sprint 7. The manifest guarantees those files are exactly what the maintainers signed.
+Provenance (source, date and report link per indicator) lives inside the data files, whose format is [ADR-0019](0019-indicator-feed-on-android.md). The manifest guarantees those files are exactly what the maintainers signed.
 
 ## Why not TUF now
 

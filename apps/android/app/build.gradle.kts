@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import com.android.build.api.variant.HasAndroidTest
 import javax.inject.Inject
 import org.gradle.process.ExecOperations
 
@@ -52,6 +53,9 @@ dependencies {
 
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
 
 // --- Rust core -------------------------------------------------------------------------
@@ -153,9 +157,35 @@ val uniffiBindings = tasks.register<UniffiBindings>("uniffiBindings") {
     workspace.set(rustWorkspace)
 }
 
+// --- Probe app for the device tests ----------------------------------------------------
+// The device tests install a second app while they run (FirewallModeTest), so its APK
+// goes into the test APK's assets as probe.apk.
+
+abstract class ProbeApk : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val apks: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val apk = apks.asFileTree.matching { include("*.apk") }.singleFile
+        apk.copyTo(outputDir.get().file("probe.apk").asFile, overwrite = true)
+    }
+}
+
+val probeApk = tasks.register<ProbeApk>("probeApk") {
+    apks.from(project(":probe").layout.buildDirectory.dir("outputs/apk/debug"))
+    dependsOn(":probe:assembleDebug")
+}
+
 androidComponents {
     onVariants { variant ->
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoNdkBuild, CargoNdkBuild::outputDir)
         variant.sources.kotlin?.addGeneratedSourceDirectory(uniffiBindings, UniffiBindings::outputDir)
+        (variant as? HasAndroidTest)?.androidTest?.sources?.assets
+            ?.addGeneratedSourceDirectory(probeApk, ProbeApk::outputDir)
     }
 }

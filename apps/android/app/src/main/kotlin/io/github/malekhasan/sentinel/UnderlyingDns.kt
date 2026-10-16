@@ -18,8 +18,15 @@ import android.os.Looper
  * Sentinel's own app is inside its tunnel (its connections are monitored like any
  * other app's), so its default network is the VPN itself. This asks for the best
  * network that is *not* a VPN instead.
+ *
+ * [onNetwork] hears of that network and all its settings on every change, for the
+ * network watch (CM-07); [onChange] hears of its resolvers when they change.
  */
-class UnderlyingDns(context: Context, private val onChange: (List<String>) -> Unit) {
+class UnderlyingDns(
+    context: Context,
+    private val onNetwork: (Network?, LinkProperties?) -> Unit = { _, _ -> },
+    private val onChange: (List<String>) -> Unit,
+) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val bestMatching = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
@@ -70,11 +77,14 @@ class UnderlyingDns(context: Context, private val onChange: (List<String>) -> Un
     }
 
     private fun publish() {
-        val best = networks.values.sortedBy { (capabilities, _) ->
-            if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) 1 else 0
-        }.firstOrNull { (_, properties) -> properties != null }
+        val best = networks.entries.sortedBy { (_, info) ->
+            if (info.first?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) 1 else 0
+        }.firstOrNull { (_, info) -> info.second != null }
+        val properties = best?.value?.second
+        // Its settings, in full, for the network watch (CM-07).
+        onNetwork(best?.key, properties)
         // Scoped link-local resolvers (fe80::1%wlan0) cannot be reached from the engine.
-        val servers = best?.second?.dnsServers.orEmpty()
+        val servers = properties?.dnsServers.orEmpty()
             .filterNot { it.isLinkLocalAddress }
             .mapNotNull { it.hostAddress }
         if (servers != published) {

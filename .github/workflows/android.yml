@@ -92,11 +92,10 @@ jobs:
             /usr/local/share/boost
           sudo docker image prune --all --force >/dev/null || true
           df -h /
-      - name: Start the server MonitoringTest connects to through the tunnel
+      - name: Start the server the device tests connect to through the tunnel
         # The emulator reaches this machine's loopback as 10.0.2.2.
         run: |
-          mkdir -p "$RUNNER_TEMP/www"
-          nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/www" \
+          nohup python3 apps/android/scripts/test-server.py --bind 127.0.0.1 --port 8765 \
             >"$RUNNER_TEMP/http-server.log" 2>&1 &
           sleep 1
           curl -sf -o /dev/null http://127.0.0.1:8765/
@@ -106,13 +105,16 @@ jobs:
           api-level: 34
           arch: x86_64
           target: default
-          script: cd apps/android && ./gradlew --no-daemon --stacktrace connectedDebugAndroidTest
+          script: cd apps/android && ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest
       - name: List the device tests that ran
         # Gradle prints no per-test results; show them so a skipped test cannot pass unseen.
         if: always()
         run: |
           find apps/android/app/build/outputs/androidTest-results -name '*.xml' \
             -exec grep -ho '<testsuite [^>]*\|<testcase [^>]*\|<skipped\|<failure [^>]*' {} +
+          # And what each failure said, which Gradle does not print.
+          find apps/android/app/build/outputs/androidTest-results -name '*.xml' \
+            -exec sed -n '/<failure/,/<\/failure>/p' {} + | head -n 300
       - uses: actions/upload-artifact@v4
         if: always()
         with:

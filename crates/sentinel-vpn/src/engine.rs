@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
+
+use tokio::sync::watch;
 
 use crate::DnsForward;
 
@@ -26,6 +28,13 @@ pub struct EngineConfig {
     /// The tunnel's own resolver address and the real resolvers behind it. `None`
     /// relays DNS to whatever address the app asked, like any other flow.
     pub dns_forward: Option<Arc<DnsForward>>,
+    /// Set while the user is away (on Android: the screen is off or locked). Bytes
+    /// relayed meanwhile are also counted as "while away" in each flow (CM-06).
+    pub away: Arc<AtomicBool>,
+    /// Changes whenever the firewall may decide differently (its rules or mode). Every
+    /// open flow then asks [`crate::Observer::recheck`] again, and ends if it is now
+    /// blocked. `None`: verdicts never change while a flow is open.
+    pub firewall_changes: Option<watch::Receiver<u64>>,
 }
 
 impl Default for EngineConfig {
@@ -39,6 +48,8 @@ impl Default for EngineConfig {
             dns_cache_capacity: 20_000,
             tcp_buffer: Some(32 * 1024),
             dns_forward: None,
+            away: Arc::new(AtomicBool::new(false)),
+            firewall_changes: None,
         }
     }
 }

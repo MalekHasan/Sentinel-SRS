@@ -8,14 +8,24 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
+import android.system.OsConstants
+import android.util.Log
 import io.github.malekhasan.sentinel.core.Engine
 import io.github.malekhasan.sentinel.core.EngineException
 import io.github.malekhasan.sentinel.core.EngineListener
+import io.github.malekhasan.sentinel.core.FlowObserver
+import io.github.malekhasan.sentinel.core.FlowOwner
+import io.github.malekhasan.sentinel.core.FlowProto
+import io.github.malekhasan.sentinel.core.FlowRecord
 import io.github.malekhasan.sentinel.core.SocketProtector
+import java.net.InetAddress
+import java.net.InetSocketAddress
 
 /**
  * The local VPN: hands every app's traffic to the Rust engine, which relays it over
@@ -32,6 +42,19 @@ class SentinelVpnService : VpnService() {
     private var engine: Engine? = null
     private var listener: Listener? = null
     private var underlyingDns: UnderlyingDns? = null
+    private var networkWatch: NetworkWatch? = null
+    private var awayWatcher: AwayWatcher? = null
+
+    // A new indicator list came into force, or the one in force was removed.
+    private val feedChanged: () -> Unit = { main.post { engine?.let(::loadFeedData) } }
+
+    // Checks the indicator list in force again every hour while monitoring runs (SP-04).
+    private val recheckFeed = object : Runnable {
+        override fun run() {
+            Thread({ IndicatorFeed.recheck(this@SentinelVpnService) }, "sentinel-feed-recheck").start()
+            main.postDelayed(this, IndicatorFeed.RECHECK_EVERY_MILLIS)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -57,7 +80,7 @@ class SentinelVpnService : VpnService() {
             goForeground()
         } catch (e: RuntimeException) {
             // For example, the VPN permission was withdrawn since the user granted it.
-            fail(getString(R.string.gap_start_failed, e.message.orEmpty()))
+            fail(getString(R.string.gap_start_failed, isolate(e.message.orEmpty())))
             return
         }
         GapLog.setMonitoringWanted(this, true)
@@ -72,20 +95,84 @@ class SentinelVpnService : VpnService() {
             return
         }
         val listener = Listener()
+        // Monitoring without a history is still monitoring: the engine runs either way.
+        val history = try {
+            History.get(this)
+        } catch (e: Exception) {
+            Log.w(TAG, "the history is not available; flows will not be stored", e)
+            null
+        }
         val started = try {
-            Engine.start(tunnel.detachFd(), listOf(TUNNEL_DNS), Protector(), listener)
+            Engine.start(tunnel.detachFd(), listOf(TUNNEL_DNS), Protector(), listener, Flows(), history)
         } catch (e: EngineException) {
-            fail(getString(R.string.gap_start_failed, e.message.orEmpty()))
+            fail(getString(R.string.gap_start_failed, isolate(e.message.orEmpty())))
             return
         }
         engine = started
         this.listener = listener
-        underlyingDns = UnderlyingDns(this) { servers ->
+        // Changes to DNS, Private DNS and proxies raise alerts (CM-07).
+        val watch = history?.let { NetworkWatch(this, it).also(NetworkWatch::start) }
+        networkWatch = watch
+        underlyingDns = UnderlyingDns(
+            this,
+            onNetwork = { network, properties ->
+                if (engine === started) watch?.networkChanged(network, properties)
+            },
+        ) { servers ->
             // A callback queued before teardown must not reach a closed engine.
             if (engine === started) started.setUpstreamDns(servers)
         }.also { it.start() }
+        // Traffic while the screen is off or locked is counted apart (CM-06).
+        awayWatcher = AwayWatcher(this) { away ->
+            if (engine === started) started.setAway(away)
+        }.also { it.start() }
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
+        loadFeedData(started)
+        IndicatorFeed.addListener(feedChanged)
+        main.postDelayed(recheckFeed, IndicatorFeed.RECHECK_EVERY_MILLIS)
+        FeedUpdateJob.schedule(this)
+        if (history != null) {
+            // Roll old flows into daily totals (SRS §13.2), off the main thread.
+            Thread({
+                try {
+                    history.applyRetention(System.currentTimeMillis(), History.KEEP_DAYS)
+                } catch (e: Exception) {
+                    Log.w(TAG, "retention failed", e)
+                }
+            }, "sentinel-retention").start()
+        }
+    }
+
+    /**
+     * The indicators every lookup and connection is matched against (ID-13), and the
+     * network and country (DT-01), company and category (DT-06) of each destination, from
+     * the indicator list in force, if it brought the data. The list is checked when it is
+     * first opened (SP-04). The engine follows the feed to each new list, and stops
+     * matching a list that fails its check.
+     */
+    private fun loadFeedData(started: Engine) {
+        Thread({
+            val feed = IndicatorFeed.get(this)
+            val ip = IpData.open(this)
+            val trackers = TrackerData.open(this)
+            main.post {
+                if (engine === started) {
+                    started.setFeed(feed)
+                    Monitor.feedSet(feed)
+                    ip?.let {
+                        started.setIpDatabase(it)
+                        Monitor.ipDataLoaded(it.sources())
+                    }
+                    trackers?.let {
+                        started.setTrackerDatabase(it)
+                        Monitor.trackerDataLoaded(it.sources())
+                    }
+                }
+            }
+            // Should a check of the history against this list have been cut short (MS-02).
+            History.hunt(this)
+        }, "sentinel-feed-data").start()
     }
 
     private fun tunnelBuilder(): Builder {
@@ -134,8 +221,14 @@ class SentinelVpnService : VpnService() {
 
     private fun teardown() {
         listener = null
+        IndicatorFeed.removeListener(feedChanged)
+        main.removeCallbacks(recheckFeed)
         underlyingDns?.stop()
         underlyingDns = null
+        networkWatch?.stop()
+        networkWatch = null
+        awayWatcher?.stop()
+        awayWatcher = null
         engine?.let {
             it.stop()
             it.close()
@@ -197,6 +290,46 @@ class SentinelVpnService : VpnService() {
         override fun protect(fd: Int): Boolean = this@SentinelVpnService.protect(fd)
     }
 
+    /** Called on engine threads. */
+    private inner class Flows : FlowObserver {
+        private val connectivity = getSystemService(ConnectivityManager::class.java)
+        private val appNames = AppNames(this@SentinelVpnService)
+
+        override fun owner(
+            proto: FlowProto,
+            localIp: String,
+            localPort: UShort,
+            remoteIp: String,
+            remotePort: UShort,
+        ): FlowOwner {
+            val uid = ownerUid(proto, localIp, localPort, remoteIp, remotePort)
+            val app = appNames.packageFor(uid)
+            // An app installed since the history began is new to the network (CM-04).
+            return FlowOwner(uid, app, app?.let(appNames::installedAt))
+        }
+
+        /** Only the active VPN app may ask Android who owns a connection (API 29+). */
+        private fun ownerUid(
+            proto: FlowProto,
+            localIp: String,
+            localPort: UShort,
+            remoteIp: String,
+            remotePort: UShort,
+        ): Int = try {
+            connectivity.getConnectionOwnerUid(
+                if (proto == FlowProto.TCP) OsConstants.IPPROTO_TCP else OsConstants.IPPROTO_UDP,
+                // Numeric addresses: no lookup happens.
+                InetSocketAddress(InetAddress.getByName(localIp), localPort.toInt()),
+                InetSocketAddress(InetAddress.getByName(remoteIp), remotePort.toInt()),
+            )
+        } catch (e: RuntimeException) {
+            // SecurityException once this app is no longer the active VPN.
+            Process.INVALID_UID
+        }
+
+        override fun flows(records: List<FlowRecord>) = Monitor.flowsUpdated(records)
+    }
+
     /** Called on the engine's thread. */
     private inner class Listener : EngineListener {
         override fun engineStopped(error: String?) {
@@ -204,13 +337,14 @@ class SentinelVpnService : VpnService() {
             if (error == null) return
             main.post {
                 if (listener === this@Listener) {
-                    fail(getString(R.string.gap_engine_failed, error))
+                    fail(getString(R.string.gap_engine_failed, isolate(error)))
                 }
             }
         }
     }
 
     companion object {
+        private const val TAG = "SentinelVpn"
         const val ACTION_START = "io.github.malekhasan.sentinel.action.START"
         const val ACTION_STOP = "io.github.malekhasan.sentinel.action.STOP"
         const val NOTIFICATION_ID = 1

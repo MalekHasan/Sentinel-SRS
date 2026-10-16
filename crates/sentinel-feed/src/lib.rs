@@ -21,6 +21,7 @@ mod envelope;
 mod error;
 mod manifest;
 mod sign;
+mod store;
 mod trust;
 mod verify;
 
@@ -28,6 +29,7 @@ pub use envelope::{Envelope, EnvelopeSignature, PAYLOAD_TYPE};
 pub use error::FeedError;
 pub use manifest::{FileEntry, MANIFEST_SCHEMA, Manifest};
 pub use sign::{SecretKey, sign_manifest};
+pub use store::{BundleStore, Installed, MAX_CLOCK_SKEW, Offer};
 pub use trust::{KeyId, TrustRoot};
 pub use verify::{
     Freshness, UpdatePolicy, VerifiedManifest, verify_installed, verify_update, verify_update_dir,

@@ -5,23 +5,23 @@ import android.app.ActivityManager
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
-import java.io.File
+import android.util.Log
 
 /**
  * Monitoring gaps (SRS SP-03, NF-07): times when the user had turned monitoring on but
  * Sentinel was not watching traffic. Android sends traffic outside the tunnel whenever
  * the engine is gone (it fails open), so every such stop must be recorded and shown.
  *
- * Kept in a small private file until the encrypted store arrives (Sprint 2).
+ * Stored in the encrypted history (ADR-0009). A failure to record is logged, never
+ * thrown: it must not stop the VPN service.
  */
 object GapLog {
     /** Times are Unix milliseconds; `null` means unknown (start) or still open (end). */
     data class Gap(val startMillis: Long?, val endMillis: Long?, val reason: String)
 
-    private const val FILE = "gaps.tsv"
+    private const val TAG = "SentinelGaps"
     private const val PREFS = "monitor"
     private const val WANTED = "wanted"
-    private const val MAX_ENTRIES = 200
     private val lock = Any()
     private var exitChecked = false
 
@@ -49,31 +49,21 @@ object GapLog {
 
     /** Start a gap, unless one is already open. */
     fun open(context: Context, startMillis: Long?, reason: String) {
-        synchronized(lock) {
-            val gaps = read(context)
-            if (gaps.lastOrNull()?.let { it.endMillis == null } == true) return
-            write(context, gaps + Gap(startMillis, null, reason))
-        }
+        safely("open a gap") { History.get(context).openGap(startMillis, reason) }
     }
 
     /** Monitoring is back: close the open gap, if any. */
     fun closeOpen(context: Context, endMillis: Long) {
-        synchronized(lock) {
-            val gaps = read(context)
-            val last = gaps.lastOrNull() ?: return
-            if (last.endMillis != null) return
-            write(context, gaps.dropLast(1) + last.copy(endMillis = endMillis))
-        }
-    }
-
-    /** Delete the whole gap history. */
-    fun clear(context: Context) {
-        synchronized(lock) { file(context).delete() }
+        safely("close a gap") { History.get(context).closeGap(endMillis) }
     }
 
     /** The most recent gaps, newest first. */
     fun recent(context: Context, limit: Int): List<Gap> =
-        synchronized(lock) { read(context).takeLast(limit).reversed() }
+        safely("read gaps") {
+            History.get(context).recentGaps(limit.toUInt()).map {
+                Gap(it.startedMs, it.endedMs, it.reason)
+            }
+        } ?: emptyList()
 
     private fun lastExit(context: Context): Pair<Long?, String> {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -96,25 +86,11 @@ object GapLog {
         return null to context.getString(R.string.gap_process_other)
     }
 
-    private fun file(context: Context) = File(context.filesDir, FILE)
-
-    private fun read(context: Context): List<Gap> {
-        val file = file(context)
-        if (!file.exists()) return emptyList()
-        return file.readLines().mapNotNull { line ->
-            val parts = line.split('\t', limit = 3)
-            if (parts.size != 3) null else Gap(parts[0].toLongOrNull(), parts[1].toLongOrNull(), parts[2])
+    private fun <T> safely(what: String, action: () -> T): T? =
+        try {
+            action()
+        } catch (e: Exception) {
+            Log.w(TAG, "could not $what", e)
+            null
         }
-    }
-
-    private fun write(context: Context, gaps: List<Gap>) {
-        val text = gaps.takeLast(MAX_ENTRIES).joinToString(separator = "") { gap ->
-            val reason = gap.reason.replace('\t', ' ').replace('\n', ' ')
-            "${gap.startMillis ?: "-"}\t${gap.endMillis ?: "-"}\t$reason\n"
-        }
-        val file = file(context)
-        val tmp = File(file.path + ".tmp")
-        tmp.writeText(text)
-        tmp.renameTo(file)
-    }
 }

@@ -48,6 +48,10 @@ pub enum FeedError {
     DigestMismatch(String),
     #[error("file {0:?} is not listed in the manifest")]
     NotListed(String),
+    /// A file is signed but does not hold what its name says, for example an indicator
+    /// without its provenance.
+    #[error("file {path:?} is not valid: {reason}")]
+    BadContent { path: String, reason: String },
     #[error("invalid key: {0}")]
     BadKey(String),
     #[error("I/O error on {path:?}: {source}")]

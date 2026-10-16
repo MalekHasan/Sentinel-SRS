@@ -1,0 +1,17 @@
+[package]
+name = "sentinel-detect"
+description = "Alerts and the rules that raise them: severity, evidence and actions (SRS §12.1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+
+[lints]
+workspace = true

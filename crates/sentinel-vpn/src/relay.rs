@@ -12,9 +12,10 @@ use std::time::Duration;
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpSocket, TcpStream, UdpSocket};
+use tokio::sync::watch;
 use tokio::time::{Instant, timeout_at};
 
-use crate::dns::{DnsCache, parse_dns_response};
+use crate::dns::{DnsCache, name_error_reply, parse_dns_query, parse_dns_response};
 use crate::engine::{EngineConfig, EngineStats};
 use crate::flow::{FlowCounters, FlowInfo, FlowTotals, HostnameSource, Proto, Verdict, now_ms};
 use crate::sni::{ClientHelloScan, scan_client_hello};
@@ -47,7 +48,7 @@ impl Ctx {
             hostname_source: hostname.as_ref().map(|_| HostnameSource::Dns),
             hostname,
             started_ms: now_ms(),
-            counters: Arc::new(FlowCounters::default()),
+            counters: Arc::new(FlowCounters::new(Arc::clone(&self.config.away))),
         }
     }
 
@@ -59,6 +60,14 @@ impl Ctx {
         }
     }
 
+    /// A view of the firewall's changes from now on: taken before a flow is first
+    /// decided, so that no change after that decision goes unseen.
+    fn firewall_changes(&self) -> Option<watch::Receiver<u64>> {
+        let mut changes = self.config.firewall_changes.clone()?;
+        changes.mark_unchanged();
+        Some(changes)
+    }
+
     fn finish(&self, flow: &FlowInfo, verdict: Verdict) {
         if verdict == Verdict::Block {
             self.stats.flows_blocked.fetch_add(1, Ordering::Relaxed);
@@ -68,6 +77,8 @@ impl Ctx {
             FlowTotals {
                 bytes_up: flow.counters.bytes_up(),
                 bytes_down: flow.counters.bytes_down(),
+                bytes_up_away: flow.counters.bytes_up_away(),
+                bytes_down_away: flow.counters.bytes_down_away(),
                 ended_ms: now_ms(),
                 verdict,
             },
@@ -99,6 +110,7 @@ where
 {
     let _active = ActiveGuard::new(&ctx.stats);
     let mut flow = ctx.new_flow(Proto::Tcp, src, dst);
+    let changes = ctx.firewall_changes();
     if ctx.observer.flow_started(&flow) == Verdict::Block {
         // Dropping the stream resets the app's connection.
         ctx.finish(&flow, Verdict::Block);
@@ -155,7 +167,11 @@ where
         flow.counters.add_up(first.len());
         copy_counted(&mut client_rx, &mut up_tx, |n| flow.counters.add_up(n)).await
     };
-    run_both(to_server, to_client).await;
+    tokio::select! {
+        _ = run_both(to_server, to_client) => {}
+        // Dropping both directions resets the app's connection and the server's.
+        _ = blocked_later(&ctx, &flow, changes) => blocked.store(true, Ordering::Relaxed),
+    }
 
     if let Some(name) = sni.into_inner() {
         flow.hostname = Some(name);
@@ -259,6 +275,7 @@ where
 {
     let _active = ActiveGuard::new(&ctx.stats);
     let flow = ctx.new_flow(Proto::Udp, src, dst);
+    let changes = ctx.firewall_changes();
     if ctx.observer.flow_started(&flow) == Verdict::Block {
         ctx.finish(&flow, Verdict::Block);
         return;
@@ -276,19 +293,68 @@ where
         }
     };
     let (mut client_rx, mut client_tx) = tokio::io::split(client);
-    let idle = if flow.dst.port() == DNS_PORT {
+    let is_dns = flow.dst.port() == DNS_PORT;
+    let idle = if is_dns {
         DNS_IDLE
     } else {
         ctx.config.udp_idle_timeout
     };
-    let to_server = udp_to_server(&mut client_rx, &upstream, &flow.counters, idle);
-    let to_client = udp_to_client(&upstream, &mut client_tx, &ctx, &flow);
+    // Answers the engine writes itself: "no such name" for a blocked lookup.
+    let (replies_tx, replies_rx) = tokio::sync::mpsc::channel(16);
+    let lookups = is_dns.then(|| Lookups {
+        ctx: &ctx,
+        flow: &flow,
+        replies: replies_tx,
+    });
+    let to_server = udp_to_server(&mut client_rx, &upstream, &flow.counters, idle, lookups);
+    let to_client = udp_to_client(&upstream, &mut client_tx, &ctx, &flow, replies_rx);
     // UDP has no half-close: the flow ends when either side stops.
-    tokio::select! {
-        _ = to_server => {}
-        _ = to_client => {}
+    let verdict = tokio::select! {
+        _ = to_server => Verdict::Allow,
+        _ = to_client => Verdict::Allow,
+        _ = blocked_later(&ctx, &flow, changes) => Verdict::Block,
+    };
+    ctx.finish(&flow, verdict);
+}
+
+/// Resolves once a firewall change makes the observer block `flow`; never resolves
+/// without changes to watch.
+async fn blocked_later(ctx: &Ctx, flow: &FlowInfo, changes: Option<watch::Receiver<u64>>) {
+    let Some(mut changes) = changes else {
+        return std::future::pending().await;
+    };
+    // Ends with an error only when the firewall is gone, and then nothing changes.
+    while changes.changed().await.is_ok() {
+        if ctx.observer.recheck(flow) == Verdict::Block {
+            return;
+        }
     }
-    ctx.finish(&flow, Verdict::Allow);
+    std::future::pending().await
+}
+
+/// The lookups of a DNS flow, each asked about before it is sent.
+struct Lookups<'a> {
+    ctx: &'a Ctx,
+    flow: &'a FlowInfo,
+    replies: tokio::sync::mpsc::Sender<Vec<u8>>,
+}
+
+impl Lookups<'_> {
+    /// True if the query was blocked: it was answered "no such name" and must not be
+    /// sent.
+    fn blocked(&self, query: &[u8]) -> bool {
+        let Some(qname) = parse_dns_query(query) else {
+            return false;
+        };
+        if self.ctx.observer.dns_query(self.flow, &qname) != Verdict::Block {
+            return false;
+        }
+        if let Some(reply) = name_error_reply(query) {
+            // A full queue means the app is not reading: its resolver retries.
+            let _ = self.replies.try_send(reply);
+        }
+        true
+    }
 }
 
 async fn udp_to_server<R: AsyncRead + Unpin>(
@@ -296,6 +362,7 @@ async fn udp_to_server<R: AsyncRead + Unpin>(
     upstream: &UdpSocket,
     counters: &FlowCounters,
     idle: Duration,
+    lookups: Option<Lookups<'_>>,
 ) -> io::Result<()> {
     let mut buf = vec![0u8; usize::from(u16::MAX)];
     loop {
@@ -305,6 +372,9 @@ async fn udp_to_server<R: AsyncRead + Unpin>(
             .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
         if n == 0 {
             return Ok(());
+        }
+        if lookups.as_ref().is_some_and(|l| l.blocked(&buf[..n])) {
+            continue;
         }
         upstream.send(&buf[..n]).await?;
         counters.add_up(n);
@@ -316,18 +386,28 @@ async fn udp_to_client<W: AsyncWrite + Unpin>(
     client: &mut W,
     ctx: &Ctx,
     flow: &FlowInfo,
+    mut replies: tokio::sync::mpsc::Receiver<Vec<u8>>,
 ) -> io::Result<()> {
     let is_dns = flow.dst.port() == DNS_PORT;
     let mut buf = vec![0u8; usize::from(u16::MAX)];
     loop {
-        let n = upstream.recv(&mut buf).await?;
-        if is_dns && let Some(answer) = parse_dns_response(&buf[..n]) {
-            ctx.dns.insert(&answer);
-            let ips: Vec<_> = answer.ips.iter().map(|(ip, _)| *ip).collect();
-            ctx.observer.dns_answer(flow, &answer.qname, &ips);
+        tokio::select! {
+            // Both are cancel-safe: a datagram is either received whole or not at all.
+            received = upstream.recv(&mut buf) => {
+                let n = received?;
+                if is_dns && let Some(answer) = parse_dns_response(&buf[..n]) {
+                    ctx.dns.insert(&answer);
+                    let ips: Vec<_> = answer.ips.iter().map(|(ip, _)| *ip).collect();
+                    ctx.observer.dns_answer(flow, &answer.qname, &ips);
+                }
+                client.write_all(&buf[..n]).await?;
+                flow.counters.add_down(n);
+            }
+            Some(reply) = replies.recv() => {
+                // Written here, not sent upstream: nothing crossed the network.
+                client.write_all(&reply).await?;
+            }
         }
-        client.write_all(&buf[..n]).await?;
-        flow.counters.add_down(n);
     }
 }
 
