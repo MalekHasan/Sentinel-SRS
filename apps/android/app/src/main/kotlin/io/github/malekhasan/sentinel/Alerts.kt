@@ -384,6 +384,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.BEACON_LIKE -> R.string.alert_beacon_like_title
     AlertRule.DNS_TUNNEL -> R.string.alert_dns_tunnel_title
     AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_title
+    AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -402,6 +403,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.BEACON_LIKE -> R.string.alert_beacon_like_text
     AlertRule.DNS_TUNNEL -> R.string.alert_dns_tunnel_text
     AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_text
+    AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_text
 }
 
 @Composable
@@ -506,6 +508,12 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
         )
         is AlertEvidence.DnsTxtLookups -> stringResource(R.string.alert_evidence_dns_txt, evidence.lookups.toInt())
         is AlertEvidence.EncryptedDns -> stringResource(R.string.alert_evidence_encrypted_dns, isolate(evidence.server))
+        is AlertEvidence.UploadSurge -> stringResource(
+            R.string.alert_evidence_upload_surge,
+            Formatter.formatShortFileSize(LocalContext.current, evidence.lastDay.toLong()),
+            evidence.days.toInt(),
+            Formatter.formatShortFileSize(LocalContext.current, evidence.usualDay.toLong()),
+        )
         is AlertEvidence.Sensor -> {
             val started = DateFormat.getDateTimeInstance(
                 DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],

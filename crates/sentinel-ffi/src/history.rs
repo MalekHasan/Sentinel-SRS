@@ -719,6 +719,29 @@ impl HistoryStore {
         self.raise(alert)
     }
 
+    /// DL-02: a Warning about each app that sent ten times its usual day in the day
+    /// before `now`. At most one a day per app: not while its last one is open, nor
+    /// within a day of it.
+    pub(crate) fn raise_upload_surges(&self, now: i64) -> Result<(), HistoryError> {
+        const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+        for uploads in self.store.uploads(now)? {
+            let Some(alert) = sentinel_detect::upload_surge(now, &uploads) else {
+                continue;
+            };
+            let raised_lately = self
+                .store
+                .alerts_of(alert.rule, false)?
+                .iter()
+                .any(|stored| {
+                    stored.alert.app() == alert.app() && stored.alert.created > now - DAY_MS
+                });
+            if !raised_lately {
+                self.raise_unless_open(&alert, |new, open| new.app() == open.app())?;
+            }
+        }
+        Ok(())
+    }
+
     /// As [`HistoryStore::raise`], but if the app has an open alert of the same rule
     /// raised at or after `join_since`, the new alert's destinations join it instead,
     /// and the listener is not told again (CM-04).
@@ -784,6 +807,86 @@ mod tests {
         ));
         wipe_history(path).unwrap();
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// DL-02: an app that sends ten times its usual day raises one Warning; not again
+    /// while it is open or within a day, and again for a surge the next day.
+    #[test]
+    fn an_upload_surge_raises_one_warning_a_day() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+        use sentinel_store::{FlowEvent, FlowRow, Proto};
+
+        const MIB: i64 = 1024 * 1024;
+        const DAY: i64 = 24 * 60 * 60 * 1000;
+        const NOW: i64 = 1_791_979_200_000;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        let mut id = 0;
+        let mut sent = |started: i64, bytes_up: i64| {
+            id += 1;
+            let flow = FlowRow {
+                app: Some("org.example.app".to_owned()),
+                proto: Proto::Tcp,
+                local_ip: "10.215.173.1".to_owned(),
+                local_port: 40_000,
+                remote_ip: "203.0.113.9".to_owned(),
+                remote_port: 443,
+                hostname: None,
+                hostname_src: None,
+                started,
+                ended: Some(started + 1_000),
+                bytes_up,
+                bytes_down: 0,
+                bytes_up_away: 0,
+                bytes_down_away: 0,
+                blocked: false,
+            };
+            let event = FlowEvent {
+                engine_id: id,
+                flow,
+                destination: None,
+            };
+            history.store.record_flows(1, &[event]).unwrap();
+        };
+        sent(NOW - 20 * DAY, 0);
+        for days_ago in 2..=14 {
+            sent(NOW - days_ago * DAY, MIB);
+        }
+        sent(NOW - DAY / 2, 12 * MIB);
+        let surges = || {
+            history
+                .store
+                .alerts_of(sentinel_detect::Rule::UploadSurge, false)
+                .unwrap()
+        };
+
+        history.raise_upload_surges(NOW).unwrap();
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].rule, AlertRule::UploadSurge);
+        assert_eq!(alerts[0].severity, AlertSeverity::Warning);
+        assert_eq!(
+            alerts[0].evidence[1],
+            AlertEvidence::UploadSurge {
+                last_day: 12 * 1024 * 1024,
+                usual_day: 13 * 1024 * 1024 / 14,
+                days: 14,
+            }
+        );
+        history.raise_upload_surges(NOW + 60_000).unwrap();
+        assert_eq!(surges().len(), 1, "it is open");
+        history.dismiss_alert(alerts[0].id).unwrap();
+        history.raise_upload_surges(NOW + 60 * 60_000).unwrap();
+        assert_eq!(surges().len(), 1, "within a day of the last");
+
+        // Yesterday's surge is now part of the usual days: ten times them is 18 MiB.
+        sent(NOW + DAY - DAY / 2, 12 * MIB);
+        history.raise_upload_surges(NOW + DAY).unwrap();
+        assert_eq!(surges().len(), 1, "no longer ten times the usual day");
+        sent(NOW + DAY - DAY / 4, 8 * MIB);
+        history.raise_upload_surges(NOW + DAY).unwrap();
+        assert_eq!(surges().len(), 2, "the next day's surge");
     }
 
     /// SRS §12.3: the alerts of a range export through the app's interface, a page at a

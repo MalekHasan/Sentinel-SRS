@@ -20,6 +20,7 @@ mod journal;
 mod network;
 mod posture;
 mod sensor;
+mod upload;
 
 pub use access::{Access, special_access};
 pub use beacon::{
@@ -47,6 +48,10 @@ pub use journal::{Change, Setting};
 pub use network::{NetworkState, network_changes};
 pub use posture::{Certificate, Posture, RemoteAccess, posture_changes};
 pub use sensor::{Attribution, Sensor, sensor_while_away};
+pub use upload::{
+    BASELINE_DAYS, MIN_SURGE_BYTES, MIN_USUAL_DAY_BYTES, SURGE_FACTOR, Uploads, upload_surge,
+    upload_windows,
+};
 
 /// How urgent an alert is (AL-01). Ordered from least to most urgent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -119,6 +124,8 @@ pub enum Rule {
     /// An app reached an encrypted DNS service itself, by-passing the phone's resolver
     /// (DL-05).
     OwnEncryptedDns,
+    /// An app sent far more in a day than it usually does (DL-02).
+    UploadSurge,
 }
 
 impl Rule {
@@ -139,6 +146,7 @@ impl Rule {
             Rule::BeaconLike => "beacon-like",
             Rule::DnsTunnel => "dns-tunnel",
             Rule::OwnEncryptedDns => "own-encrypted-dns",
+            Rule::UploadSurge => "upload-surge",
         }
     }
 
@@ -159,6 +167,7 @@ impl Rule {
             Rule::BeaconLike,
             Rule::DnsTunnel,
             Rule::OwnEncryptedDns,
+            Rule::UploadSurge,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -174,7 +183,8 @@ impl Rule {
             | Rule::FlowLimit
             | Rule::BeaconLike
             | Rule::DnsTunnel
-            | Rule::OwnEncryptedDns => Vec::new(),
+            | Rule::OwnEncryptedDns
+            | Rule::UploadSurge => Vec::new(),
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
@@ -208,6 +218,7 @@ impl Rule {
                 | Rule::BeaconLike
                 | Rule::DnsTunnel
                 | Rule::OwnEncryptedDns
+                | Rule::UploadSurge
         );
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } if blocked => Some(Action::AllowApp {
@@ -306,6 +317,13 @@ pub enum Evidence {
     DnsTxtLookups { lookups: u32 },
     /// The app reached `server`, an encrypted DNS service, itself (DL-05).
     EncryptedDns { server: String },
+    /// The app sent `last_day` bytes in the last day, where it usually sends `usual_day`
+    /// a day, over the `days` before (DL-02).
+    UploadSurge {
+        last_day: u64,
+        usual_day: u64,
+        days: u32,
+    },
     /// A sensor in use since `started` (Unix ms) (SE-01). `guess` is the app that was on
     /// screen when the use began, if known: a guess, not the app's identity (AM-15).
     Sensor {
@@ -514,6 +532,7 @@ mod tests {
         assert_eq!(Rule::from_id("flow-limit"), Some(Rule::FlowLimit));
         assert_eq!(Rule::from_id("beacon-like"), Some(Rule::BeaconLike));
         assert_eq!(Rule::from_id("dns-tunnel"), Some(Rule::DnsTunnel));
+        assert_eq!(Rule::from_id("upload-surge"), Some(Rule::UploadSurge));
         assert_eq!(
             Rule::from_id("own-encrypted-dns"),
             Some(Rule::OwnEncryptedDns)

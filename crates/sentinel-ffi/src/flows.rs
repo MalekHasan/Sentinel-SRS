@@ -25,6 +25,9 @@ use crate::hunt::indicator_match;
 /// that every flow appears within a second (CM-01).
 const BATCH_DELAY: Duration = Duration::from_millis(250);
 
+/// How often the history is asked which apps sent far more than usual (DL-02).
+const UPLOAD_CHECK: Duration = Duration::from_secs(15 * 60);
+
 /// The most flows one app may have open at once (THREAT-MODEL-A D2, ADR-0028): half the
 /// engine's own limit, so that one app cannot take every connection it allows, and above
 /// the 500 one app opens in the CM-03 acceptance test.
@@ -182,6 +185,8 @@ pub(crate) struct FlowEvents {
     dns_watch: Mutex<sentinel_detect::DnsWatch>,
     /// The apps seen reaching an encrypted DNS service themselves in this run (DL-05).
     own_dns: Mutex<HashSet<String>>,
+    /// When the history was last asked about upload surges, Unix ms (DL-02).
+    uploads_checked: Mutex<i64>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -209,6 +214,7 @@ impl FlowEvents {
             beacons: Mutex::new(sentinel_detect::Beacons::new()),
             dns_watch: Mutex::new(sentinel_detect::DnsWatch::new()),
             own_dns: Mutex::new(HashSet::new()),
+            uploads_checked: Mutex::new(i64::MIN),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
@@ -291,9 +297,27 @@ impl FlowEvents {
                     log::warn!("could not raise an alert: {e}");
                 }
             }
+            self.check_uploads(history);
         }
         if !batch.is_empty() {
             self.foreign.flows(batch);
+        }
+    }
+
+    /// DL-02: asks the history which apps sent far more than usual, at most every
+    /// [`UPLOAD_CHECK`]. The first batch of a run asks at once.
+    fn check_uploads(&self, history: &HistoryStore) {
+        let now = now_ms();
+        let interval = i64::try_from(UPLOAD_CHECK.as_millis()).unwrap_or(i64::MAX);
+        {
+            let mut checked = lock(&self.uploads_checked);
+            if now.saturating_sub(*checked) < interval {
+                return;
+            }
+            *checked = now;
+        }
+        if let Err(e) = history.raise_upload_surges(now) {
+            log::warn!("could not check uploads: {e}");
         }
     }
 

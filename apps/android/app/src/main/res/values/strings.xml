@@ -255,6 +255,7 @@
     <string name="alert_evidence_dns_names">It looked up %1$d names under %2$s within a few minutes, such as %3$s</string>
     <string name="alert_evidence_dns_txt">It made %1$d TXT lookups within a few minutes. Most apps make none.</string>
     <string name="alert_evidence_encrypted_dns">It reached %1$s, a service that answers encrypted DNS.</string>
+    <string name="alert_evidence_upload_surge">It sent %1$s in the last day. Over the %2$d days before, it sent about %3$s a day.</string>
     <string name="alert_evidence_sensor">%1$s in use from %2$s.</string>
     <string name="alert_evidence_sensor_guess">On screen when it began: %1$s. This is only a guess.</string>
     <string name="alert_evidence_indicator_listed">%1$s is on the list as a sign of %2$s (%3$s).</string>
@@ -353,6 +354,8 @@
     <string name="alert_dns_tunnel_text">Its lookups look like coded data, not names. Spyware can send data out this way. A few security apps look things up like this too.</string>
     <string name="alert_own_encrypted_dns_title">An app uses its own encrypted DNS</string>
     <string name="alert_own_encrypted_dns_text">It looks up names through a service of its own, not the phone\'s. Sentinel cannot see those lookups. Browsers and privacy apps often do this.</string>
+    <string name="alert_upload_surge_title">An app sent far more than usual</string>
+    <string name="alert_upload_surge_text">In the last day it sent at least ten times what it sends on a usual day. A backup or a big upload can do this. So can spyware that sends files out.</string>
     <string name="alert_sensor_while_away_title">The microphone or a camera was used while the screen was off</string>
     <string name="alert_sensor_while_away_text">An app used it while nobody was looking. On Android 12 and later, the privacy dashboard shows which app.</string>
     <string name="alert_microphone_while_away_title">The microphone was used while the screen was off</string>

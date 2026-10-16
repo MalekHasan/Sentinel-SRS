@@ -53,6 +53,8 @@ pub enum AlertRule {
     DnsTunnel,
     /// An app reached an encrypted DNS service itself (DL-05).
     OwnEncryptedDns,
+    /// An app sent far more in a day than it usually does (DL-02).
+    UploadSurge,
 }
 
 /// A sensor whose use is recorded (SE-01).
@@ -233,6 +235,13 @@ pub enum AlertEvidence {
     DnsTxtLookups { lookups: u32 },
     /// The app reached `server`, an encrypted DNS service, itself (DL-05).
     EncryptedDns { server: String },
+    /// The app sent `last_day` bytes in the last day, where it usually sends `usual_day`
+    /// a day, over the `days` before (DL-02).
+    UploadSurge {
+        last_day: u64,
+        usual_day: u64,
+        days: u32,
+    },
     /// A sensor in use since `started_ms` (SE-01). `guess` is the app that was on screen
     /// when the use began, if known: a guess, not the app's identity.
     Sensor {
@@ -352,6 +361,7 @@ impl From<Rule> for AlertRule {
             Rule::BeaconLike => AlertRule::BeaconLike,
             Rule::DnsTunnel => AlertRule::DnsTunnel,
             Rule::OwnEncryptedDns => AlertRule::OwnEncryptedDns,
+            Rule::UploadSurge => AlertRule::UploadSurge,
         }
     }
 }
@@ -502,6 +512,15 @@ impl From<StoredAlert> for HistoryAlert {
                     },
                     Evidence::DnsTxtLookups { lookups } => AlertEvidence::DnsTxtLookups { lookups },
                     Evidence::EncryptedDns { server } => AlertEvidence::EncryptedDns { server },
+                    Evidence::UploadSurge {
+                        last_day,
+                        usual_day,
+                        days,
+                    } => AlertEvidence::UploadSurge {
+                        last_day,
+                        usual_day,
+                        days,
+                    },
                     Evidence::Sensor {
                         sensor,
                         started,

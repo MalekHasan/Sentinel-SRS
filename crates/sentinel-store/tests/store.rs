@@ -1946,3 +1946,65 @@ fn the_history_exports_as_json_and_csv() {
     );
     assert_eq!(empty(ExportFormat::Csv).text.lines().count(), 1);
 }
+
+/// DL-02: what each app sent in the last day and in the fourteen days before, for apps
+/// that sent enough in the last day to matter; the same once older days are rolled up.
+#[test]
+fn uploads_are_totalled_for_the_last_day_and_the_fortnight_before() {
+    const MIB: i64 = 1024 * 1024;
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let mut id = 0;
+    let mut sent = |app: &str, started: i64, bytes_up: i64| {
+        id += 1;
+        let row = FlowRow {
+            ended: Some(started + 1_000),
+            bytes_up,
+            ..flow(app, "upload.example", started)
+        };
+        store.record_flows(1, &[event(id, row)]).unwrap();
+    };
+    for app in [
+        "org.example.surge",
+        "org.example.steady",
+        "org.example.quiet",
+    ] {
+        sent(app, NOW - 20 * DAY, 0);
+        for days_ago in 2..=14 {
+            sent(app, NOW - days_ago * DAY, 2 * MIB);
+        }
+    }
+    sent("org.example.surge", NOW - DAY / 2, 25 * MIB);
+    sent("org.example.steady", NOW - DAY / 2, 15 * MIB);
+    sent("org.example.quiet", NOW - DAY / 2, 5 * MIB);
+
+    let totals = |store: &Store| {
+        let mut uploads = store.uploads(NOW).unwrap();
+        uploads.sort_by(|a, b| a.app.cmp(&b.app));
+        uploads
+    };
+    let expected = |app: &str, last_day: i64| sentinel_detect::Uploads {
+        app: app.to_owned(),
+        first_seen: NOW - 20 * DAY,
+        last_day: u64::try_from(last_day).unwrap(),
+        baseline: u64::try_from(26 * MIB).unwrap(),
+    };
+    let both = vec![
+        expected("org.example.steady", 15 * MIB),
+        expected("org.example.surge", 25 * MIB),
+    ];
+    assert_eq!(
+        totals(&store),
+        both,
+        "the quiet app sent too little to look at"
+    );
+    assert!(store.apply_retention(NOW, 1).unwrap() > 0);
+    assert_eq!(totals(&store), both, "rolled-up days count");
+
+    let surges: Vec<_> = both
+        .iter()
+        .filter_map(|uploads| sentinel_detect::upload_surge(NOW, uploads))
+        .collect();
+    assert_eq!(surges.len(), 1);
+    assert_eq!(surges[0].app(), Some("org.example.surge"));
+}

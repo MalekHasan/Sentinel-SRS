@@ -803,6 +803,35 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
     }
 
+    /** DL-02: an upload surge, right to left, with the sizes in Arabic. */
+    @Test
+    fun uploadSurgeAlert() {
+        val alert = HistoryAlert(
+            id = 16,
+            rule = AlertRule.UPLOAD_SURGE,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.UploadSurge(lastDay = 52_428_800uL, usualDay = 2_097_152uL, days = 14u),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_upload_surge_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_upload_surge_text)))
+        val line = arabic.getString(
+            R.string.alert_evidence_upload_surge,
+            Formatter.formatShortFileSize(arabic, 52_428_800),
+            14,
+            Formatter.formatShortFileSize(arabic, 2_097_152),
+        )
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
     /** MS-02: a match found in the history says how many connections, and on which days,
      *  right to left. */
     @Test

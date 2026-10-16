@@ -1254,6 +1254,36 @@ impl Store {
         Ok(removed)
     }
 
+    /// What each app that sent at least [`sentinel_detect::MIN_SURGE_BYTES`] in the day
+    /// before `now` sent then, and in the fourteen days before that (DL-02). Rolled-up
+    /// days count towards the fourteen. Open flows count with the bytes stored so far.
+    pub fn uploads(&self, now: i64) -> Result<Vec<sentinel_detect::Uploads>> {
+        let (last_day, baseline) = sentinel_detect::upload_windows(now);
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT a.identifier, a.first_seen, t.last_day, t.before + coalesce(d.before, 0)
+             FROM (SELECT app_id,
+                          sum(CASE WHEN started >= ?2 THEN bytes_up ELSE 0 END) AS last_day,
+                          sum(CASE WHEN started < ?2 THEN bytes_up ELSE 0 END) AS before
+                   FROM flow WHERE started >= ?1 AND app_id IS NOT NULL GROUP BY app_id) t
+             JOIN app a ON a.id = t.app_id
+             LEFT JOIN (SELECT app_id, sum(bytes_up) AS before FROM flow_daily
+                        WHERE day * ?3 >= ?1 AND day * ?3 < ?2 GROUP BY app_id) d
+                    ON d.app_id = t.app_id
+             WHERE t.last_day >= ?4",
+        )?;
+        let minimum = i64::try_from(sentinel_detect::MIN_SURGE_BYTES).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(params![baseline, last_day, DAY_MS, minimum], |r| {
+            Ok(sentinel_detect::Uploads {
+                app: r.get(0)?,
+                first_seen: r.get(1)?,
+                last_day: u64::try_from(r.get::<_, i64>(2)?).unwrap_or(0),
+                baseline: u64::try_from(r.get::<_, i64>(3)?).unwrap_or(0),
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Everything the history holds about `app`, with at most `limit` destinations,
     /// most data sent first. Rolled-up days count too. `None` if the app was never
     /// seen. Open flows count with the bytes stored when they started.

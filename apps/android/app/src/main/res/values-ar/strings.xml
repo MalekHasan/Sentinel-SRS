@@ -277,6 +277,7 @@
     <string name="alert_evidence_dns_names">دوّر على %1$d اسم تحت %2$s خلال كم دقيقة، متل %3$s</string>
     <string name="alert_evidence_dns_txt">عمل %1$d طلب TXT خلال كم دقيقة. أغلب التطبيقات ما بتعمل ولا واحد.</string>
     <string name="alert_evidence_encrypted_dns">وصل لـ%1$s، وهي خدمة بتجاوب على DNS مشفّر.</string>
+    <string name="alert_evidence_upload_surge">بعت %1$s باليوم الأخير. بالـ%2$d يوم اللي قبل، كان يبعت تقريباً %3$s باليوم.</string>
     <string name="alert_evidence_sensor">%1$s: بالاستعمال من %2$s.</string>
     <string name="alert_evidence_sensor_guess">اللي كان عالشاشة لما بلّش: %1$s. هاد بس تخمين.</string>
     <string name="alert_evidence_indicator_listed">%1$s موجود عالقائمة كعلامة على %2$s (%3$s).</string>
@@ -390,6 +391,8 @@
     <string name="alert_dns_tunnel_text">طلباته شكلها بيانات مرمّزة مش أسامي. برامج التجسس ممكن تبعت بيانات لبرّا بهالطريقة، وفي كم تطبيق حماية بيدوّروا على أشيا بنفس الطريقة كمان.</string>
     <string name="alert_own_encrypted_dns_title">في تطبيق عم يستعمل DNS مشفّر خاص فيه</string>
     <string name="alert_own_encrypted_dns_text">بيدوّر على الأسامي من خلال خدمة تبعه، مش خدمة التلفون، فما بيقدر Sentinel يشوف هالطلبات. المتصفحات وتطبيقات الخصوصية كتير بتعمل هيك.</string>
+    <string name="alert_upload_surge_title">في تطبيق بعت أكتر من العادة بكتير</string>
+    <string name="alert_upload_surge_text">باليوم الأخير بعت عشر أضعاف اللي بيبعته بيوم عادي أو أكتر. النسخ الاحتياطي أو رفع ملف كبير ممكن يعمل هيك، وكمان برامج التجسس لما تبعت ملفات لبرّا.</string>
     <string name="alert_sensor_while_away_title">انستعمل المايك أو الكاميرا والشاشة مطفية</string>
     <string name="alert_sensor_while_away_text">في تطبيق استعمله وما حدا عم يتطلّع. بأندرويد 12 وطالع، لوحة الخصوصية بتبيّن أي تطبيق.</string>
     <string name="alert_microphone_while_away_title">انستعمل المايك والشاشة مطفية</string>
