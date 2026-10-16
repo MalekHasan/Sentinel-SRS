@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Known indicators of spyware and stalkerware in the phone's traffic (ID-13): a name an
 //! app looked up or connected to, or an address it connected to, that the signed
-//! indicator list names (MS-10, ADR-0020).
+//! indicator list names (MS-10, ADR-0020). Also in the traffic the history kept from
+//! before the list arrived (MS-02, ADR-0021).
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,9 @@ pub enum Sighting {
     ServerName,
     /// An app connected to the address.
     Address,
+    /// The history holds connections by an app to this name, learned from a DNS answer
+    /// or a TLS handshake; it does not keep which (MS-02).
+    ConnectionName,
 }
 
 /// The kind of threat an indicator belongs to, as its report says.
@@ -66,6 +70,26 @@ pub fn known_indicator(now: i64, app: Option<&str>, matched: IndicatorMatch) -> 
         created: now,
         evidence,
     }
+}
+
+/// MS-02: the history holds `connections` by `app`, or by an app not known, that a list
+/// which arrived later matches, made from `first` until `last` (Unix milliseconds). As
+/// Critical as a match seen live (SRS §8.3).
+pub fn known_indicator_in_history(
+    now: i64,
+    app: Option<&str>,
+    matched: IndicatorMatch,
+    first: i64,
+    last: i64,
+    connections: u64,
+) -> Alert {
+    let mut alert = known_indicator(now, app, matched);
+    alert.evidence.push(Evidence::PastConnections {
+        first,
+        last,
+        connections,
+    });
+    alert
 }
 
 /// Whether `alert` and `other` are known-indicator alerts about the same app and the
@@ -152,6 +176,35 @@ mod tests {
             r#"[{"type":"app","package":"org.example.chat"},{"type":"indicator","indicator":"bad.example","seen":"cdn.bad.example","sighting":"server_name","family":"Pegasus","threat":"spyware","source":"Amnesty International Security Lab","date":"2021-07-18","report":"https://example.org/report"}]"#
         );
         assert_eq!(evidence_from_json(&json).unwrap(), alert.evidence);
+    }
+
+    /// MS-02: a match found in the history says when and how often; it is the same
+    /// sighting as a live one about the same app and indicator.
+    #[test]
+    fn a_match_in_the_history_says_when_and_how_often() {
+        let alert = known_indicator_in_history(
+            9_000,
+            Some("org.example.chat"),
+            matched("bad.example", "cdn.bad.example", Sighting::ConnectionName),
+            1_000,
+            2_000,
+            3,
+        );
+        assert_eq!(alert.severity, Severity::Critical);
+        assert_eq!(alert.created, 9_000);
+        let json = evidence_to_json(&alert.evidence[1..]);
+        assert_eq!(
+            json,
+            r#"[{"type":"indicator","indicator":"bad.example","seen":"cdn.bad.example","sighting":"connection_name","family":"Pegasus","threat":"spyware","source":"Amnesty International Security Lab","date":"2021-07-18","report":"https://example.org/report"},{"type":"past_connections","first":1000,"last":2000,"connections":3}]"#
+        );
+        assert_eq!(evidence_from_json(&json).unwrap(), alert.evidence[1..]);
+        let live = known_indicator(
+            1,
+            Some("org.example.chat"),
+            matched("bad.example", "bad.example", Sighting::DnsQuery),
+        );
+        assert!(same_sighting(&alert, &live));
+        assert_eq!(alert.actions(), live.actions());
     }
 
     #[test]

@@ -12,13 +12,14 @@ use std::net::IpAddr;
 use sentinel_vpn::{FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 use tokio::sync::Notify;
 
-use sentinel_detect::{IndicatorMatch, Place, Sighting};
+use sentinel_detect::{Place, Sighting};
 use sentinel_ioc::Hit;
 use sentinel_store::FirstSeen;
 
 use crate::enrich::{CategoryFact, CompanyFact, IpDatabase, TrackerDatabase};
 use crate::feed::Feed;
 use crate::history::{HistoryStore, now_ms};
+use crate::hunt::indicator_match;
 
 /// How long events wait so that several can cross into Kotlin together. Short enough
 /// that every flow appears within a second (CM-01).
@@ -381,23 +382,10 @@ impl FlowEvents {
     /// The owner's traffic showed `hit`: the first time in this run for this app and
     /// indicator, an alert goes out with the next batch. Nothing is blocked (SRS §9).
     fn sighted(&self, owner: &FlowOwner, hit: &Hit, seen: &str, sighting: Sighting) {
-        let indicator = &hit.indicator;
-        if !lock(&self.sighted).insert((owner.app.clone(), indicator.value.clone())) {
+        if !lock(&self.sighted).insert((owner.app.clone(), hit.indicator.value.clone())) {
             return;
         }
-        let matched = IndicatorMatch {
-            indicator: indicator.value.clone(),
-            seen: seen.to_owned(),
-            sighting,
-            family: indicator.family.clone(),
-            threat: match indicator.threat {
-                sentinel_ioc::Threat::Spyware => sentinel_detect::Threat::Spyware,
-                sentinel_ioc::Threat::Stalkerware => sentinel_detect::Threat::Stalkerware,
-            },
-            source: hit.source.name.clone(),
-            date: indicator.date.clone(),
-            report: indicator.report.clone(),
-        };
+        let matched = indicator_match(hit, seen, sighting);
         let alert = sentinel_detect::known_indicator(now_ms(), owner.app.as_deref(), matched);
         lock(&self.sightings).push(alert);
         self.ready.notify_one();

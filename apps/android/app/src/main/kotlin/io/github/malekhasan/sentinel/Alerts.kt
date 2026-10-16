@@ -271,21 +271,22 @@ fun alertExplanation(alert: HistoryAlert): String = stringResource(explanationRe
 /** Whether Block-unknown kept the app the alert is about off the network (CM-08). */
 private fun HistoryAlert.blocked(): Boolean = evidence.any { it is AlertEvidence.NewAppBlocked }
 
-/** The alert's title: its rule's, or a blocked new app's. */
-fun titleRes(alert: HistoryAlert): Int =
-    if (alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked()) {
-        R.string.alert_first_network_use_blocked_title
-    } else {
-        titleRes(alert.rule)
-    }
+/** Whether the alert was found in the history after the fact (MS-02). */
+private fun HistoryAlert.past(): Boolean = evidence.any { it is AlertEvidence.PastConnections }
 
-/** The alert's explanation: its rule's, or a blocked new app's. */
-fun explanationRes(alert: HistoryAlert): Int =
-    if (alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked()) {
-        R.string.alert_first_network_use_blocked_text
-    } else {
-        explanationRes(alert.rule)
-    }
+/** The alert's title: its rule's, a blocked new app's, or a match found in the history. */
+fun titleRes(alert: HistoryAlert): Int = when {
+    alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked() -> R.string.alert_first_network_use_blocked_title
+    alert.rule == AlertRule.KNOWN_INDICATOR && alert.past() -> R.string.alert_known_indicator_past_title
+    else -> titleRes(alert.rule)
+}
+
+/** The alert's explanation: its rule's, a blocked new app's, or a match found in the history. */
+fun explanationRes(alert: HistoryAlert): Int = when {
+    alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked() -> R.string.alert_first_network_use_blocked_text
+    alert.rule == AlertRule.KNOWN_INDICATOR && alert.past() -> R.string.alert_known_indicator_past_text
+    else -> explanationRes(alert.rule)
+}
 
 fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.MONITORING_INTERRUPTED -> R.string.alert_monitoring_interrupted_title
@@ -352,7 +353,9 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             stringResource(
                 when (evidence.sighting) {
                     IndicatorSighting.DNS_QUERY -> R.string.alert_evidence_indicator_dns
-                    IndicatorSighting.SERVER_NAME -> R.string.alert_evidence_indicator_tls
+                    IndicatorSighting.SERVER_NAME,
+                    IndicatorSighting.CONNECTION_NAME,
+                    -> R.string.alert_evidence_indicator_tls
                     IndicatorSighting.ADDRESS -> R.string.alert_evidence_indicator_address
                 },
                 isolate(evidence.seen),
@@ -375,7 +378,22 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
                 isolate(evidence.report),
             ),
         ).joinToString(" ")
+        is AlertEvidence.PastConnections -> pastConnections(evidence)
     }
+
+/** How many connections the history holds, and on which days (MS-02). */
+@Composable
+private fun pastConnections(evidence: AlertEvidence.PastConnections): String {
+    val format = DateFormat.getDateInstance(DateFormat.MEDIUM, LocalConfiguration.current.locales[0])
+    val first = format.format(Date(evidence.firstMs))
+    val last = format.format(Date(evidence.lastMs))
+    val count = evidence.connections.toInt()
+    return if (first == last) {
+        pluralStringResource(R.plurals.alert_evidence_past_on, count, count, first)
+    } else {
+        pluralStringResource(R.plurals.alert_evidence_past_between, count, count, first, last)
+    }
+}
 
 /** A report's date, `YYYY-MM-DD` in the indicator list, as the user's language writes it. */
 @Composable

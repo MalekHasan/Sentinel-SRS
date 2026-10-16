@@ -170,6 +170,8 @@ class SentinelVpnService : VpnService() {
                     }
                 }
             }
+            // Should a check of the history against this list have been cut short (MS-02).
+            History.hunt(this)
         }, "sentinel-feed-data").start()
     }
 

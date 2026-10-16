@@ -45,6 +45,9 @@ pub enum IndicatorSighting {
     ServerName,
     /// The app connected to the address.
     Address,
+    /// The history holds the app's connections to this name, learned from a DNS answer
+    /// or a TLS handshake.
+    ConnectionName,
 }
 
 /// The kind of threat an indicator belongs to.
@@ -104,6 +107,14 @@ pub enum AlertEvidence {
         source: String,
         date: String,
         report: String,
+    },
+    /// Found in the history after the fact (MS-02): `connections` connections, the
+    /// first made at `first_ms` and the last ended at `last_ms`. Rolled-up days count
+    /// from their midnight UTC.
+    PastConnections {
+        first_ms: i64,
+        last_ms: i64,
+        connections: u64,
     },
 }
 
@@ -283,6 +294,7 @@ impl From<StoredAlert> for HistoryAlert {
                             Sighting::DnsQuery => IndicatorSighting::DnsQuery,
                             Sighting::ServerName => IndicatorSighting::ServerName,
                             Sighting::Address => IndicatorSighting::Address,
+                            Sighting::ConnectionName => IndicatorSighting::ConnectionName,
                         },
                         family: matched.family,
                         threat: match matched.threat {
@@ -292,6 +304,15 @@ impl From<StoredAlert> for HistoryAlert {
                         source: matched.source,
                         date: matched.date,
                         report: matched.report,
+                    },
+                    Evidence::PastConnections {
+                        first,
+                        last,
+                        connections,
+                    } => AlertEvidence::PastConnections {
+                        first_ms: first,
+                        last_ms: last,
+                        connections,
                     },
                 })
                 .collect(),

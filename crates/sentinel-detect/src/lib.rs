@@ -24,7 +24,9 @@ pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,
     join_destinations, new_destinations,
 };
-pub use indicator::{IndicatorMatch, Sighting, Threat, known_indicator, same_sighting};
+pub use indicator::{
+    IndicatorMatch, Sighting, Threat, known_indicator, known_indicator_in_history, same_sighting,
+};
 pub use journal::{Change, Setting};
 pub use network::{NetworkState, network_changes};
 
@@ -184,6 +186,14 @@ pub enum Evidence {
     NewAppBlocked,
     /// A known indicator the app's traffic named, with its provenance (ID-13, MS-10).
     Indicator(IndicatorMatch),
+    /// The traffic was found in the history, after the fact (MS-02): `connections`
+    /// connections, the first made at `first` and the last ended at `last`, Unix
+    /// milliseconds. Rolled-up days count from their midnight UTC.
+    PastConnections {
+        first: i64,
+        last: i64,
+        connections: u64,
+    },
 }
 
 /// What the user can do from an alert (SRS §9). Actions that change the device come

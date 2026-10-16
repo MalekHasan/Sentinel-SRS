@@ -197,6 +197,22 @@
     <string name="alert_evidence_indicator_source">المصدر: %1$s، بتقرير من تاريخ %2$s: %3$s</string>
     <string name="alert_threat_spyware">برنامج تجسس</string>
     <string name="alert_threat_stalkerware">برنامج مراقبة خفية</string>
+    <plurals name="alert_evidence_past_on">
+        <item quantity="zero">ولا اتصال، بتاريخ %2$s.</item>
+        <item quantity="one">اتصال واحد، بتاريخ %2$s.</item>
+        <item quantity="two">اتصالين، بتاريخ %2$s.</item>
+        <item quantity="few">%1$d اتصالات، بتاريخ %2$s.</item>
+        <item quantity="many">%1$d اتصال، بتاريخ %2$s.</item>
+        <item quantity="other">%1$d اتصال، بتاريخ %2$s.</item>
+    </plurals>
+    <plurals name="alert_evidence_past_between">
+        <item quantity="zero">ولا اتصال، من %2$s لـ %3$s.</item>
+        <item quantity="one">اتصال واحد، من %2$s لـ %3$s.</item>
+        <item quantity="two">اتصالين، من %2$s لـ %3$s.</item>
+        <item quantity="few">%1$d اتصالات، من %2$s لـ %3$s.</item>
+        <item quantity="many">%1$d اتصال، من %2$s لـ %3$s.</item>
+        <item quantity="other">%1$d اتصال، من %2$s لـ %3$s.</item>
+    </plurals>
     <string name="alert_setting_none">ولا شي</string>
     <plurals name="alert_evidence_more_destinations">
         <item quantity="zero">وما في أماكن تانية.</item>
@@ -254,6 +270,8 @@
     <string name="alert_proxy_changed_text">ممكن ترافيك الويب تبعك صار يمرق من بروكسي تاني، وهاد البروكسي بيقدر يشوف أو يغيّر اللي بتبعته.</string>
     <string name="alert_known_indicator_title">لقينا آثار معروفة لبرامج تجسس</string>
     <string name="alert_known_indicator_text">تطبيق على هالتلفون وصل لخادم بتربطه تقارير منشورة ببرامج تجسس أو ببرامج مراقبة خفية.</string>
+    <string name="alert_known_indicator_past_title">لقينا آثار معروفة لبرامج تجسس بالاتصالات القديمة</string>
+    <string name="alert_known_indicator_past_text">قائمة جديدة لخوادم تجسس معروفة طابقت اتصالات عملها هالتلفون قبل ما توصل القائمة.</string>
 
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>

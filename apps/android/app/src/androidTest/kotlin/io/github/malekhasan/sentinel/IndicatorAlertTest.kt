@@ -34,6 +34,9 @@ private const val WITHIN_MILLIS = 5_000L
  * seen and the indicator's provenance. Nothing is blocked, and an app that keeps using
  * the server raises one alert, not one per lookup.
  *
+ * MS-02 (ADR-0021): a list that arrives later finds such traffic in the history, and
+ * says when it happened.
+ *
  * The lookups and connections are this app's own, through the tunnel. A connection to an
  * address on the list is checked in the core (`a_known_address_raises_an_alert_within_
  * five_seconds` runs the packet engine): the list refuses the private addresses a test
@@ -49,7 +52,7 @@ class IndicatorAlertTest {
         grantMonitoringPermissions()
         History.wipe(context)
         history = History.get(context)
-        TestFeed.install(1)
+        TestFeed.clear()
     }
 
     @After
@@ -106,8 +109,43 @@ class IndicatorAlertTest {
         assertEquals("one alert per app and indicator", 1, knownIndicatorAlerts().size)
     }
 
-    /** Starts monitoring and waits until the engine matches traffic against the list. */
+    @Test
+    fun aListThatArrivesLaterFindsAPastConnectionAndSaysWhen() {
+        // No list yet: nothing can be matched.
+        startMonitoring()
+        val (host, port) = testServer()
+        val before = System.currentTimeMillis()
+        assertNotNull(answer(host, port, clientHello("old.$PLANTED") + END))
+        val after = System.currentTimeMillis()
+        stopMonitoring()
+        waitFor("the connection in the history") {
+            history.recentFlows(100u).any { it.hostname == "old.$PLANTED" }
+        }
+        assertEquals(emptyList<HistoryAlert>(), knownIndicatorAlerts())
+
+        // The history is checked against a list as it comes into force.
+        TestFeed.install(1)
+        val alert = knownIndicatorAlerts().single()
+        assertEquals(AlertSeverity.CRITICAL, alert.severity)
+        assertEquals(AlertEvidence.App(app = context.packageName), alert.evidence.first())
+        val seen = alert.evidence.filterIsInstance<AlertEvidence.Indicator>().single()
+        assertEquals(PLANTED, seen.indicator)
+        assertEquals("old.$PLANTED", seen.seen)
+        assertEquals(IndicatorSighting.CONNECTION_NAME, seen.sighting)
+        val past = alert.evidence.filterIsInstance<AlertEvidence.PastConnections>().single()
+        assertEquals(1uL, past.connections)
+        assertTrue("first ${past.firstMs}, between $before and $after", past.firstMs in before..after)
+        assertTrue("last ${past.lastMs}", past.lastMs in past.firstMs..System.currentTimeMillis())
+
+        // A newer list that still names it reports nothing new.
+        TestFeed.install(2)
+        assertEquals(listOf(alert.id), knownIndicatorAlerts().map { it.id })
+    }
+
+    /** Puts the test list in force, starts monitoring, and waits until the engine matches
+     *  traffic against the list. */
     private fun startMatching() {
+        TestFeed.install(1)
         startMonitoring()
         waitFor("the engine to match against the list") { Monitor.matchesIndicators }
     }

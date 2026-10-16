@@ -178,6 +178,14 @@
     <string name="alert_evidence_indicator_source">Source: %1$s, in a report from %2$s: %3$s</string>
     <string name="alert_threat_spyware">spyware</string>
     <string name="alert_threat_stalkerware">stalkerware</string>
+    <plurals name="alert_evidence_past_on">
+        <item quantity="one">%1$d connection, on %2$s.</item>
+        <item quantity="other">%1$d connections, on %2$s.</item>
+    </plurals>
+    <plurals name="alert_evidence_past_between">
+        <item quantity="one">%1$d connection, from %2$s to %3$s.</item>
+        <item quantity="other">%1$d connections, from %2$s to %3$s.</item>
+    </plurals>
     <string name="alert_setting_none">none</string>
     <plurals name="alert_evidence_more_destinations">
         <item quantity="one">And %d more place.</item>
@@ -227,6 +235,8 @@
     <string name="alert_proxy_changed_text">Your web traffic may now pass through a different proxy, which can see or change what you send.</string>
     <string name="alert_known_indicator_title">Known traces of spyware found</string>
     <string name="alert_known_indicator_text">An app on this phone reached a server that public reports link to spyware or stalkerware.</string>
+    <string name="alert_known_indicator_past_title">Known traces of spyware found in past traffic</string>
+    <string name="alert_known_indicator_past_text">A new list of known spyware servers matches connections this phone made before the list arrived.</string>
 
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>

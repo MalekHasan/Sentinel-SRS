@@ -48,6 +48,23 @@ fn event(engine_id: u64, flow: FlowRow) -> FlowEvent {
     }
 }
 
+/// Connections from `app` to `name` and `address`: first, last and how many.
+fn destination(
+    app: Option<&str>,
+    name: Option<&str>,
+    address: Option<&str>,
+    (first, last, connections): (i64, i64, u64),
+) -> sentinel_store::PastDestination {
+    sentinel_store::PastDestination {
+        app: app.map(str::to_owned),
+        name: name.map(str::to_owned),
+        address: address.map(str::to_owned),
+        first,
+        last,
+        connections,
+    }
+}
+
 /// True if `needle` appears in the database file or its write-ahead log.
 fn file_contains(path: &Path, needle: &[u8]) -> bool {
     let mut bytes = std::fs::read(path).unwrap();
@@ -1065,10 +1082,73 @@ fn newer_destinations_join_an_open_alert() {
     );
 }
 
-/// ID-13: a known-indicator alert is found among the open alerts of its rule, so the
-/// same sighting is not raised twice while one is open.
+/// MS-02: every app, name and address the history holds connections to, with when and
+/// how many: flows still kept give the name and the address, rolled-up days the name, or
+/// the address of connections that had none. The list version last checked is kept.
 #[test]
-fn open_alerts_are_found_by_rule() {
+fn past_destinations_cover_kept_flows_and_rolled_up_days() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let old = NOW - 40 * DAY;
+    let mut named = flow("org.example.a", "spy.example", old);
+    named.ended = Some(old + 1_000);
+    let mut again = flow("org.example.a", "spy.example", old + 60_000);
+    again.ended = Some(old + 61_000);
+    let mut unnamed = flow("org.example.b", "unused", old);
+    unnamed.hostname = None;
+    unnamed.hostname_src = None;
+    unnamed.remote_ip = "198.51.100.7".to_owned();
+    let mut kept = flow("org.example.a", "spy.example", NOW - DAY);
+    kept.ended = Some(NOW - DAY + 5_000);
+    let mut unowned = flow("unused", "cdn.example", NOW - 2 * DAY);
+    unowned.app = None;
+    let events: Vec<_> = [named, again, unnamed, kept, unowned]
+        .into_iter()
+        .enumerate()
+        .map(|(i, row)| event(i as u64, row))
+        .collect();
+    store.record_flows(1, &events).unwrap();
+    assert_eq!(store.apply_retention(NOW, 30).unwrap(), 3);
+
+    let mut past = store.past_destinations().unwrap();
+    past.sort_by(|a, b| (a.first, &a.app).cmp(&(b.first, &b.app)));
+    let day = old / DAY * DAY;
+    let a = Some("org.example.a");
+    let spy = Some("spy.example");
+    let address = Some("93.184.215.14");
+    assert_eq!(
+        past,
+        [
+            destination(a, spy, None, (day, day, 2)),
+            destination(
+                Some("org.example.b"),
+                None,
+                Some("198.51.100.7"),
+                (day, day, 1)
+            ),
+            destination(
+                None,
+                Some("cdn.example"),
+                address,
+                (NOW - 2 * DAY, NOW - 2 * DAY, 1)
+            ),
+            destination(a, spy, address, (NOW - DAY, NOW - DAY + 5_000, 1)),
+        ]
+    );
+
+    assert_eq!(store.hunted().unwrap(), None);
+    store.set_hunted(3).unwrap();
+    store.set_hunted(2).unwrap();
+    assert_eq!(store.hunted().unwrap(), Some(2), "replaced, not kept apart");
+    drop(store);
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    assert_eq!(store.hunted().unwrap(), Some(2));
+}
+
+/// ID-13, MS-02: a known-indicator alert is found among the alerts of its rule, open or
+/// all, so that the same sighting is not raised twice.
+#[test]
+fn alerts_are_found_by_rule() {
     use sentinel_detect::{IndicatorMatch, Rule, Sighting, Threat, known_indicator};
 
     let dir = tempfile::tempdir().unwrap();
@@ -1093,7 +1173,7 @@ fn open_alerts_are_found_by_rule() {
         ))
         .unwrap();
 
-    let open = store.open_alerts_of(Rule::KnownIndicator).unwrap();
+    let open = store.alerts_of(Rule::KnownIndicator, true).unwrap();
     assert_eq!(
         open.iter().map(|a| a.id).collect::<Vec<_>>(),
         [second_id, first_id],
@@ -1103,16 +1183,22 @@ fn open_alerts_are_found_by_rule() {
     store
         .set_alert_state(second_id, AlertState::Dismissed)
         .unwrap();
-    assert_eq!(
+    let ids = |open_only| {
         store
-            .open_alerts_of(Rule::KnownIndicator)
+            .alerts_of(Rule::KnownIndicator, open_only)
             .unwrap()
             .iter()
             .map(|a| a.id)
-            .collect::<Vec<_>>(),
-        [first_id]
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(true), [first_id]);
+    assert_eq!(ids(false), [second_id, first_id], "dismissed ones too");
+    assert!(
+        store
+            .alerts_of(Rule::ProxyChanged, false)
+            .unwrap()
+            .is_empty()
     );
-    assert!(store.open_alerts_of(Rule::ProxyChanged).unwrap().is_empty());
 }
 
 /// CM-07: the network settings last seen are kept across reopening, so that a change

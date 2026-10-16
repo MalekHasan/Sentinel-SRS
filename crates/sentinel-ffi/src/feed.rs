@@ -277,6 +277,13 @@ impl Feed {
             .clone()
     }
 
+    /// The version of the bundle in force and its indicators, read together (MS-02).
+    pub(crate) fn in_force(&self) -> Option<(u64, Arc<Matcher>)> {
+        let in_force = self.lock();
+        let version = in_force.as_ref()?.status.version;
+        Some((version, self.matcher()?))
+    }
+
     fn set_matcher(&self, matcher: Option<Matcher>) {
         *self.matcher.write().unwrap_or_else(PoisonError::into_inner) = matcher.map(Arc::new);
     }

@@ -134,6 +134,22 @@ pub struct Gap {
     pub reason: String,
 }
 
+/// Connections the history holds from one app to one name or address (MS-02).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PastDestination {
+    /// Package name; `None` when the owner was unknown.
+    pub app: Option<String>,
+    /// The name the connections were known by, if any.
+    pub name: Option<String>,
+    /// Their remote address. `None` for rolled-up days of named connections, which keep
+    /// only the name.
+    pub address: Option<String>,
+    /// When the first was made and the last ended, Unix milliseconds.
+    pub first: i64,
+    pub last: i64,
+    pub connections: u64,
+}
+
 /// Daily totals that replace flows older than the retention period (SRS §13.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DailyTotal {
@@ -357,6 +373,82 @@ impl Store {
         self.began
     }
 
+    /// The version of the indicator list the history was last checked against (MS-02),
+    /// if any.
+    pub fn hunted(&self) -> Result<Option<u64>> {
+        let value: Option<i64> = lock(&self.conn)
+            .query_row("SELECT value FROM meta WHERE key = 'hunted'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(value.and_then(|v| u64::try_from(v).ok()))
+    }
+
+    /// Note that the history was checked against version `version` of the indicator list.
+    pub fn set_hunted(&self, version: u64) -> Result<()> {
+        lock(&self.conn).execute(
+            "INSERT INTO meta (key, value) VALUES ('hunted', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [i64::try_from(version).unwrap_or(i64::MAX)],
+        )?;
+        Ok(())
+    }
+
+    /// Every app, name and address the history holds connections to, with when they
+    /// were first and last made and how many: to check against indicators that arrived
+    /// later (MS-02). Flows still kept give both the name and the address. Older days,
+    /// rolled up, give the name, or the address of connections that had none (SRS
+    /// §13.2), and midnight UTC of their day.
+    pub fn past_destinations(&self) -> Result<Vec<PastDestination>> {
+        let conn = lock(&self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT a.identifier, g.hostname, g.address, g.daily, min(g.first), max(g.last),
+                    sum(g.n)
+             FROM (
+                 SELECT app_id, hostname, remote_ip AS address, 0 AS daily, started AS first,
+                        coalesce(ended, started) AS last, 1 AS n
+                 FROM flow
+                 UNION ALL
+                 SELECT nullif(app_id, 0), destination, NULL, 1, day * ?1, day * ?1, flows
+                 FROM flow_daily
+             ) g
+             LEFT JOIN app a ON a.id = g.app_id
+             GROUP BY g.app_id, g.hostname, g.address, g.daily
+             ORDER BY min(g.first)",
+        )?;
+        let rows = stmt
+            .query_map([DAY_MS], |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, bool>(3)?,
+                    r.get::<_, i64>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, i64>(6)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows
+            .into_iter()
+            .map(|(app, name, address, daily, first, last, n)| {
+                // A day's destination is its name, or its address when it had none.
+                let (name, address) = match name {
+                    Some(d) if daily && d.parse::<std::net::IpAddr>().is_ok() => (None, Some(d)),
+                    name => (name, address),
+                };
+                PastDestination {
+                    app,
+                    name,
+                    address,
+                    first,
+                    last,
+                    connections: u64::try_from(n).unwrap_or(0),
+                }
+            })
+            .collect())
+    }
+
     /// Record flows from engine session `session`. A flow arrives once when it starts
     /// and once when it ends; both are stored in one row. An end whose start was not
     /// seen is stored as a complete row.
@@ -527,14 +619,15 @@ impl Store {
         rows.into_iter().map(stored_alert).collect()
     }
 
-    /// The open alerts raised by `rule`, newest first.
-    pub fn open_alerts_of(&self, rule: Rule) -> Result<Vec<StoredAlert>> {
+    /// The alerts raised by `rule`, newest first: only the open ones, or all of them.
+    pub fn alerts_of(&self, rule: Rule, open_only: bool) -> Result<Vec<StoredAlert>> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(&format!(
-            "{ALERT_COLUMNS} WHERE rule_id = ?1 AND state = 'open' ORDER BY created DESC, id DESC"
+            "{ALERT_COLUMNS} WHERE rule_id = ?1 AND (?2 = 0 OR state = 'open')
+             ORDER BY created DESC, id DESC"
         ))?;
         let rows = stmt
-            .query_map([rule.id()], alert_row)?
+            .query_map(params![rule.id(), open_only], alert_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter().map(stored_alert).collect()
     }

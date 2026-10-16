@@ -4,6 +4,7 @@ package io.github.malekhasan.sentinel
 import android.content.Context
 import android.util.Log
 import io.github.malekhasan.sentinel.core.HistoryStore
+import io.github.malekhasan.sentinel.core.HuntReport
 import io.github.malekhasan.sentinel.core.wipeHistory
 import java.io.File
 
@@ -26,6 +27,23 @@ object History {
                 store = it
             }
         }
+
+    /**
+     * Check the history against the indicator list in force, once per list (MS-02,
+     * ADR-0021): connections made before the list arrived that it names raise alerts.
+     * Reads the whole history, so never on the main thread. Null when there is no list,
+     * the history was already checked against it, or the check failed.
+     */
+    fun hunt(context: Context): HuntReport? {
+        val feed = IndicatorFeed.get(context) ?: return null
+        return try {
+            get(context).hunt(feed)
+        } catch (e: Exception) {
+            // HistoryException, or the history could not be opened at all.
+            Log.w(TAG, "the history could not be checked against the indicator list", e)
+            null
+        }
+    }
 
     /**
      * One-tap wipe (SRS §13.2): delete the database and its key. Only while monitoring

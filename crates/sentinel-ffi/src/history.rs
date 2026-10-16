@@ -179,6 +179,8 @@ pub struct HistoryStore {
     /// Bumped whenever the rules or the mode change, so that running engines ask again
     /// about their open connections.
     firewall_changes: tokio::sync::watch::Sender<u64>,
+    /// Held while the history is checked against an indicator list (MS-02).
+    pub(crate) hunting: Mutex<()>,
 }
 
 #[uniffi::export]
@@ -200,6 +202,7 @@ impl HistoryStore {
             mode: RwLock::new(mode),
             isolation: RwLock::new(isolation),
             firewall_changes: tokio::sync::watch::Sender::new(0),
+            hunting: Mutex::new(()),
         };
         history.reload_rules()?;
         Ok(Arc::new(history))
@@ -653,7 +656,7 @@ impl HistoryStore {
         alert: &sentinel_detect::Alert,
         same: impl Fn(&sentinel_detect::Alert, &sentinel_detect::Alert) -> bool,
     ) -> Result<(), HistoryError> {
-        let open = self.store.open_alerts_of(alert.rule)?;
+        let open = self.store.alerts_of(alert.rule, true)?;
         if open.iter().any(|stored| same(alert, &stored.alert)) {
             return Ok(());
         }

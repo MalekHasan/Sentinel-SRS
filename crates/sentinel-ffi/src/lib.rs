@@ -11,6 +11,7 @@ mod feed;
 mod firewall;
 mod flows;
 mod history;
+mod hunt;
 mod journal;
 
 pub use alerts::{
@@ -32,6 +33,7 @@ pub use history::{
     HistoryApp, HistoryAway, HistoryCompany, HistoryDestination, HistoryError, HistoryFlow,
     HistoryGap, HistoryStore, wipe_history,
 };
+pub use hunt::HuntReport;
 pub use journal::{JournalEntry, JournalState, UndoResult};
 
 uniffi::setup_scaffolding!();

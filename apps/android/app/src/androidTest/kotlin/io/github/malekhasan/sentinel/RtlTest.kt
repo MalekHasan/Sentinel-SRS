@@ -478,6 +478,49 @@ class RtlTest {
         compose.onNodeWithText(arabic.getString(R.string.alert_feedback_allow)).assertDoesNotExist()
     }
 
+    /** MS-02: a match found in the history says how many connections, and on which days,
+     *  right to left. */
+    @Test
+    fun pastIndicatorAlert() {
+        val day = 24 * 60 * 60 * 1000L
+        val alert = HistoryAlert(
+            id = 6,
+            rule = AlertRule.KNOWN_INDICATOR,
+            severity = AlertSeverity.CRITICAL,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.Indicator(
+                    indicator = "spy.example",
+                    seen = "cdn.spy.example",
+                    sighting = IndicatorSighting.CONNECTION_NAME,
+                    family = "Pegasus",
+                    threat = IndicatorThreat.SPYWARE,
+                    source = "Amnesty International Security Lab",
+                    date = "2021-07-18",
+                    report = "https://example.org/report",
+                ),
+                AlertEvidence.PastConnections(firstMs = now - 3 * day, lastMs = now - day, connections = 12uL),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_past_title)).assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_known_indicator_past_text)))
+        val dates = DateFormat.getDateInstance(DateFormat.MEDIUM, arabic.resources.configuration.locales[0])
+        val line = arabic.resources.getQuantityString(
+            R.plurals.alert_evidence_past_between,
+            12,
+            12,
+            dates.format(Date(now - 3 * day)),
+            dates.format(Date(now - day)),
+        )
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
     /** CM-07: a changed setting's values, names written left to right, in a right-to-left line. */
     @Test
     fun networkSettingAlert() {

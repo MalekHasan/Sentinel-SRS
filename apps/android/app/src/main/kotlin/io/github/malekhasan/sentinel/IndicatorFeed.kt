@@ -145,17 +145,20 @@ object IndicatorFeed {
 
     /**
      * Fetch the list [source] offers and install it, if it is newer than the one in force
-     * and passes every check.
+     * and passes every check. A list installed is then checked against the history
+     * (MS-02), before this returns.
      */
     fun update(context: Context, source: BundleSource): Outcome {
         val feed = get(context) ?: return Outcome.FAILED
-        synchronized(updating) {
+        val outcome = synchronized(updating) {
             state.value = state.value.copy(busy = true)
-            val outcome = fetch(feed, source, staging(context))
-            state.value = state.value.copy(busy = false, status = feed.status(), last = outcome)
-            if (outcome == Outcome.INSTALLED) listeners.forEach { it() }
-            return outcome
+            val fetched = fetch(feed, source, staging(context))
+            state.value = state.value.copy(busy = false, status = feed.status(), last = fetched)
+            if (fetched == Outcome.INSTALLED) listeners.forEach { it() }
+            fetched
         }
+        if (outcome == Outcome.INSTALLED) History.hunt(context)
+        return outcome
     }
 
     private fun recheck(feed: Feed) {
