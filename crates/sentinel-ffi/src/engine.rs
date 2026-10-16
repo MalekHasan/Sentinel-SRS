@@ -39,6 +39,10 @@ pub struct EngineSnapshot {
     pub flows_total: u64,
     pub flows_active: u64,
     pub flows_blocked: u64,
+    /// Flows refused because as many as the engine allows were already open
+    /// (THREAT-MODEL-A D2).
+    #[uniffi(default = 0)]
+    pub flows_refused: u64,
     pub upstream_failures: u64,
     /// Flow batches that could not be written to the history.
     pub history_failures: u64,
@@ -245,6 +249,7 @@ impl Engine {
             flows_total: self.stats.flows_total(),
             flows_active: self.stats.flows_active(),
             flows_blocked: self.stats.flows_blocked(),
+            flows_refused: self.stats.flows_refused(),
             upstream_failures: self.stats.upstream_failures(),
             history_failures: self.events.history_failures(),
             away: self.away.load(Ordering::Relaxed),

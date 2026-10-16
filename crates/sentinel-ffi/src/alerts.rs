@@ -43,6 +43,9 @@ pub enum AlertRule {
     NewRootCertificate,
     /// The microphone or camera was in use while the screen was off or locked (SE-04).
     SensorWhileAway,
+    /// An app had as many connections open as it may; more were refused
+    /// (THREAT-MODEL-A D2).
+    FlowLimit,
 }
 
 /// A sensor whose use is recorded (SE-01).
@@ -200,6 +203,9 @@ pub enum AlertEvidence {
     /// A certificate authority the user added to the trusted ones (ID-10): its SHA-256
     /// in lower-case hex, and who it was issued to.
     Certificate { sha256: String, subject: String },
+    /// The app had `limit` connections open at once, as many as it may; more were
+    /// refused.
+    FlowLimit { limit: u32 },
     /// A sensor in use since `started_ms` (SE-01). `guess` is the app that was on screen
     /// when the use began, if known: a guess, not the app's identity.
     Sensor {
@@ -315,6 +321,7 @@ impl From<Rule> for AlertRule {
             Rule::RemoteAccessExposed => AlertRule::RemoteAccessExposed,
             Rule::NewRootCertificate => AlertRule::NewRootCertificate,
             Rule::SensorWhileAway => AlertRule::SensorWhileAway,
+            Rule::FlowLimit => AlertRule::FlowLimit,
         }
     }
 }
@@ -442,6 +449,7 @@ impl From<StoredAlert> for HistoryAlert {
                     Evidence::Certificate { sha256, subject } => {
                         AlertEvidence::Certificate { sha256, subject }
                     }
+                    Evidence::FlowLimit { limit } => AlertEvidence::FlowLimit { limit },
                     Evidence::Sensor {
                         sensor,
                         started,

@@ -97,6 +97,9 @@ pub enum Rule {
     NewRootCertificate,
     /// The microphone or camera was in use while the screen was off or locked (SE-04).
     SensorWhileAway,
+    /// An app had as many connections open as it may; Sentinel refused more
+    /// (THREAT-MODEL-A D2).
+    FlowLimit,
 }
 
 impl Rule {
@@ -113,6 +116,7 @@ impl Rule {
             Rule::RemoteAccessExposed => "remote-access-exposed",
             Rule::NewRootCertificate => "new-root-certificate",
             Rule::SensorWhileAway => "sensor-while-away",
+            Rule::FlowLimit => "flow-limit",
         }
     }
 
@@ -129,6 +133,7 @@ impl Rule {
             Rule::RemoteAccessExposed,
             Rule::NewRootCertificate,
             Rule::SensorWhileAway,
+            Rule::FlowLimit,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -138,7 +143,10 @@ impl Rule {
     pub fn actions(self, evidence: &[Evidence]) -> Vec<Action> {
         let mut actions = match self {
             Rule::MonitoringInterrupted => vec![Action::StartMonitoring],
-            Rule::FirstNetworkUse | Rule::NewDestination | Rule::KnownIndicator => Vec::new(),
+            Rule::FirstNetworkUse
+            | Rule::NewDestination
+            | Rule::KnownIndicator
+            | Rule::FlowLimit => Vec::new(),
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
@@ -168,6 +176,7 @@ impl Rule {
                 | Rule::NewDestination
                 | Rule::KnownIndicator
                 | Rule::SpecialAccess
+                | Rule::FlowLimit
         );
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } if blocked => Some(Action::AllowApp {
@@ -243,6 +252,9 @@ pub enum Evidence {
     /// A certificate authority the user added to the trusted ones (ID-10): its SHA-256
     /// in lower-case hex, and who it was issued to.
     Certificate { sha256: String, subject: String },
+    /// The app had `limit` connections open at once, as many as it may; more were
+    /// refused (THREAT-MODEL-A D2).
+    FlowLimit { limit: u32 },
     /// A sensor in use since `started` (Unix ms) (SE-01). `guess` is the app that was on
     /// screen when the use began, if known: a guess, not the app's identity (AM-15).
     Sensor {
@@ -378,6 +390,22 @@ pub fn evidence_from_json(json: &str) -> Result<Vec<Evidence>, serde_json::Error
     serde_json::from_str(json)
 }
 
+/// THREAT-MODEL-A D2: `app` had `limit` connections open at once, and Sentinel refused
+/// more. A Warning: the app may simply be busy, or may be flooding the network.
+pub fn flow_limit(now: i64, app: &str, limit: u32) -> Alert {
+    Alert {
+        rule: Rule::FlowLimit,
+        severity: Severity::Warning,
+        created: now,
+        evidence: vec![
+            Evidence::App {
+                package: app.to_owned(),
+            },
+            Evidence::FlowLimit { limit },
+        ],
+    }
+}
+
 /// SP-03: monitoring stopped while the user wanted it on, at `started` (if known), for
 /// `reason`. A stop the user asked for is not a gap and raises nothing.
 pub fn monitoring_interrupted(now: i64, started: Option<i64>, reason: &str) -> Alert {
@@ -432,6 +460,7 @@ mod tests {
             Rule::from_id("sensor-while-away"),
             Some(Rule::SensorWhileAway)
         );
+        assert_eq!(Rule::from_id("flow-limit"), Some(Rule::FlowLimit));
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {
             assert_eq!(AlertState::from_name(state.as_str()), Some(state));
@@ -478,6 +507,29 @@ mod tests {
         assert!(Feedback::NotUseful.allowed_for(Severity::Critical));
         assert!(!Feedback::Allowed.allowed_for(Severity::Critical));
         assert_eq!(Feedback::from_name("useful"), None);
+    }
+
+    /// THREAT-MODEL-A D2: a Warning about the app, which can be blocked or looked at,
+    /// stored with its limit.
+    #[test]
+    fn an_app_at_its_flow_limit_raises_a_warning() {
+        let alert = flow_limit(3, "org.example.flood", 256);
+        assert_eq!(alert.severity, Severity::Warning);
+        assert_eq!(alert.app(), Some("org.example.flood"));
+        let app = || "org.example.flood".to_owned();
+        assert_eq!(
+            alert.actions(),
+            [
+                Action::BlockApp { package: app() },
+                Action::OpenApp { package: app() }
+            ]
+        );
+        let json = evidence_to_json(&alert.evidence);
+        assert_eq!(
+            json,
+            r#"[{"type":"app","package":"org.example.flood"},{"type":"flow_limit","limit":256}]"#
+        );
+        assert_eq!(evidence_from_json(&json).unwrap(), alert.evidence);
     }
 
     #[test]

@@ -25,6 +25,11 @@ use crate::hunt::indicator_match;
 /// that every flow appears within a second (CM-01).
 const BATCH_DELAY: Duration = Duration::from_millis(250);
 
+/// The most flows one app may have open at once (THREAT-MODEL-A D2, ADR-0028): half the
+/// engine's own limit, so that one app cannot take every connection it allows, and above
+/// the 500 one app opens in the CM-03 acceptance test.
+pub(crate) const MAX_FLOWS_PER_APP: u32 = 512;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FlowProto {
     Tcp,
@@ -159,6 +164,13 @@ pub(crate) struct FlowEvents {
     /// Each app and indicator already sighted in this run, `None` for an app not known:
     /// an app that keeps using a known server raises one alert, not one per lookup.
     sighted: Mutex<HashSet<(Option<String>, String)>>,
+    /// How many flows each app has open (THREAT-MODEL-A D2).
+    open_per_app: Mutex<HashMap<String, u32>>,
+    /// Flows refused because their app had [`MAX_FLOWS_PER_APP`] open: neither their
+    /// start nor their end is recorded.
+    refused: Mutex<HashSet<u64>>,
+    /// The apps that reached [`MAX_FLOWS_PER_APP`] in this run, alerted once each.
+    limited: Mutex<HashSet<String>>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -180,6 +192,9 @@ impl FlowEvents {
             feed: RwLock::new(None),
             sightings: Mutex::new(Vec::new()),
             sighted: Mutex::new(HashSet::new()),
+            open_per_app: Mutex::new(HashMap::new()),
+            refused: Mutex::new(HashSet::new()),
+            limited: Mutex::new(HashSet::new()),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
@@ -250,7 +265,15 @@ impl FlowEvents {
         }
         if let Some(history) = &self.history {
             for alert in &sightings {
-                if let Err(e) = history.raise_unless_open(alert, sentinel_detect::same_sighting) {
+                // One open alert per app and indicator, or per app at its flow limit.
+                let same =
+                    |new: &sentinel_detect::Alert, open: &sentinel_detect::Alert| match new.rule {
+                        sentinel_detect::Rule::KnownIndicator => {
+                            sentinel_detect::same_sighting(new, open)
+                        }
+                        _ => new.rule == open.rule && new.app() == open.app(),
+                    };
+                if let Err(e) = history.raise_unless_open(alert, same) {
                     log::warn!("could not raise an alert: {e}");
                 }
             }
@@ -369,6 +392,31 @@ impl FlowEvents {
         }
     }
 
+    /// Whether `flow` may open: its app has fewer than [`MAX_FLOWS_PER_APP`] open
+    /// (THREAT-MODEL-A D2, ADR-0028). A refused flow is not recorded, so that an app
+    /// flooding the network cannot flood the history too; the first refusal in a run
+    /// raises a Warning about the app. Flows of no known app count only towards the
+    /// engine's own limit.
+    fn admit(&self, flow: &FlowInfo, owner: &FlowOwner) -> bool {
+        let Some(app) = &owner.app else {
+            return true;
+        };
+        let mut open = lock(&self.open_per_app);
+        let count = open.entry(app.clone()).or_default();
+        if *count < MAX_FLOWS_PER_APP {
+            *count += 1;
+            return true;
+        }
+        drop(open);
+        lock(&self.refused).insert(flow.id);
+        if self.history.is_some() && lock(&self.limited).insert(app.clone()) {
+            let alert = sentinel_detect::flow_limit(now_ms(), app, MAX_FLOWS_PER_APP);
+            lock(&self.sightings).push(alert);
+            self.ready.notify_one();
+        }
+        false
+    }
+
     /// The indicators in force, if alerts can be raised at all.
     fn matcher(&self) -> Option<Arc<sentinel_ioc::Matcher>> {
         self.history.as_ref()?;
@@ -449,6 +497,9 @@ impl Observer for FlowEvents {
         // The app and the address are known for sure; a name from an earlier DNS answer
         // is not, so it is not matched (ADR-0015).
         self.match_address(&owner, flow.dst.ip());
+        if !self.admit(flow, &owner) {
+            return Verdict::Block;
+        }
         let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), None);
         let blocked = verdict == Verdict::Block;
         self.push(record(flow, &owner, None, blocked, &self.databases()));
@@ -497,9 +548,17 @@ impl Observer for FlowEvents {
     }
 
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
+        if lock(&self.refused).remove(&flow.id) {
+            return;
+        }
         let owner = lock(&self.open)
             .remove(&flow.id)
             .map_or_else(FlowOwner::unknown, |(_, owner)| owner);
+        if let Some(app) = &owner.app
+            && let Some(open) = lock(&self.open_per_app).get_mut(app)
+        {
+            *open = open.saturating_sub(1);
+        }
         let mut ended = record(
             flow,
             &owner,
@@ -923,6 +982,85 @@ mod tests {
         });
         history.set_alert_listener(Some(observer.clone()));
         observer
+    }
+
+    /// THREAT-MODEL-A D2: an app may have `MAX_FLOWS_PER_APP` flows open; more are
+    /// refused and never recorded, the first refusal raises one Warning about the app,
+    /// and once a flow ends another may open. Flows of no known app are not counted.
+    #[test]
+    fn an_app_may_not_open_more_than_its_share_of_flows() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+
+        let (_dir, history) = history();
+        let observer = listen(
+            &history,
+            vec![
+                (443, installed("org.example.flood", None)),
+                (80, FlowOwner::unknown()),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let open: Vec<FlowInfo> = (1..=u64::from(MAX_FLOWS_PER_APP))
+            .map(|id| flow(id, "203.0.113.9:443", None))
+            .collect();
+        for flow in &open {
+            assert_eq!(events.flow_started(flow), Verdict::Allow);
+        }
+        let ended = |verdict| FlowTotals {
+            bytes_up: 0,
+            bytes_down: 0,
+            bytes_up_away: 0,
+            bytes_down_away: 0,
+            ended_ms: 5,
+            verdict,
+        };
+        for id in [10_000, 10_001] {
+            let refused = flow(id, "203.0.113.9:443", None);
+            assert_eq!(events.flow_started(&refused), Verdict::Block);
+            events.flow_ended(&refused, ended(Verdict::Block));
+        }
+        let unknown = flow(10_002, "203.0.113.10:80", None);
+        assert_eq!(events.flow_started(&unknown), Verdict::Allow);
+        events.flush();
+
+        let recorded = history.recent_flows(1_000).unwrap();
+        assert_eq!(
+            recorded.len(),
+            open.len() + 1,
+            "refused flows are not recorded"
+        );
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].rule, AlertRule::FlowLimit);
+        assert_eq!(alerts[0].severity, AlertSeverity::Warning);
+        assert_eq!(
+            alerts[0].evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.flood".to_owned()
+                },
+                AlertEvidence::FlowLimit {
+                    limit: MAX_FLOWS_PER_APP
+                }
+            ]
+        );
+
+        // One ends: another may open.
+        events.flow_ended(&open[0], ended(Verdict::Allow));
+        assert_eq!(
+            events.flow_started(&flow(10_003, "203.0.113.9:443", None)),
+            Verdict::Allow
+        );
+        assert_eq!(
+            events.flow_started(&flow(10_004, "203.0.113.9:443", None)),
+            Verdict::Block
+        );
+        events.flush();
+        assert_eq!(
+            history.alerts(true, 10).unwrap().len(),
+            1,
+            "one alert a run"
+        );
     }
 
     /// ID-13: a lookup, a TLS server name or a connection that names a known indicator

@@ -379,6 +379,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.REMOTE_ACCESS_EXPOSED -> R.string.alert_remote_access_exposed_title
     AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_title
     AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_title
+    AlertRule.FLOW_LIMIT -> R.string.alert_flow_limit_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -393,6 +394,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.REMOTE_ACCESS_EXPOSED -> R.string.alert_remote_access_exposed_text
     AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_text
     AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_text
+    AlertRule.FLOW_LIMIT -> R.string.alert_flow_limit_text
 }
 
 @Composable
@@ -481,6 +483,7 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
         is AlertEvidence.Certificate -> stringResource(
             R.string.alert_evidence_certificate, isolate(evidence.subject), isolate(evidence.sha256),
         )
+        is AlertEvidence.FlowLimit -> stringResource(R.string.alert_evidence_flow_limit, evidence.limit.toInt())
         is AlertEvidence.Sensor -> {
             val started = DateFormat.getDateTimeInstance(
                 DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],

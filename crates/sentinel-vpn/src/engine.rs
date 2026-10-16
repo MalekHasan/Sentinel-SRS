@@ -21,6 +21,11 @@ pub struct EngineConfig {
     /// How long to wait for the rest of a ClientHello split across TCP segments.
     pub sni_wait: Duration,
     pub dns_cache_capacity: usize,
+    /// The most flows open at once, TCP and UDP together (THREAT-MODEL-A D2, ADR-0028).
+    /// A flow beyond it is refused before it reaches the observer: a TCP connection is
+    /// reset, a datagram dropped. Each TCP flow holds about 96 KiB of buffers, so this
+    /// bounds the engine's memory however many connections an app opens.
+    pub max_flows: usize,
     /// Per-connection TCP buffer towards the app, in bytes, each direction. The window
     /// faces the app over a local tunnel with a tiny round-trip time, so small buffers
     /// keep throughput while bounding memory (ADR-0006). `None` keeps the stack default.
@@ -46,6 +51,7 @@ impl Default for EngineConfig {
             connect_timeout: Duration::from_secs(10),
             sni_wait: Duration::from_millis(500),
             dns_cache_capacity: 20_000,
+            max_flows: 1024,
             tcp_buffer: Some(32 * 1024),
             dns_forward: None,
             away: Arc::new(AtomicBool::new(false)),
@@ -62,6 +68,7 @@ pub struct EngineStats {
     pub(crate) flows_blocked: AtomicU64,
     pub(crate) upstream_failures: AtomicU64,
     pub(crate) unsupported_packets: AtomicU64,
+    pub(crate) flows_refused: AtomicU64,
 }
 
 impl EngineStats {
@@ -76,6 +83,10 @@ impl EngineStats {
     }
     pub fn upstream_failures(&self) -> u64 {
         self.upstream_failures.load(Ordering::Relaxed)
+    }
+    /// Flows refused because [`EngineConfig::max_flows`] were already open.
+    pub fn flows_refused(&self) -> u64 {
+        self.flows_refused.load(Ordering::Relaxed)
     }
     /// ICMP and other non-TCP/UDP packets, which this prototype does not forward.
     pub fn unsupported_packets(&self) -> u64 {

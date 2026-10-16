@@ -251,6 +251,7 @@
     <string name="alert_evidence_notification_access">إذن قراءة الإشعارات شغّال.</string>
     <string name="alert_evidence_wireless_debugging">تصحيح الأخطاء اللاسلكي (ADB عالواي فاي) شغّال.</string>
     <string name="alert_evidence_certificate">صادرة لـ %1$s. البصمة %2$s.</string>
+    <string name="alert_evidence_flow_limit">كان عنده %1$d اتصال مفتوح بنفس الوقت، وهاد أكتر عدد مسموح لتطبيق واحد.</string>
     <string name="alert_evidence_sensor">%1$s: بالاستعمال من %2$s.</string>
     <string name="alert_evidence_sensor_guess">اللي كان عالشاشة لما بلّش: %1$s. هاد بس تخمين.</string>
     <string name="alert_evidence_indicator_listed">%1$s موجود عالقائمة كعلامة على %2$s (%3$s).</string>
@@ -356,6 +357,8 @@
     <string name="alert_remote_access_exposed_text">أي كمبيوتر مربوط بهالتلفون عالواي فاي بيقدر ينزّل تطبيقات ويقرأ بياناته. إذا ما بتستعمله، طفّيه.</string>
     <string name="alert_new_root_certificate_title">انضافت شهادة موثوقة جديدة</string>
     <string name="alert_new_root_certificate_text">فيها ممكن حدا يقدر يقرأ ترافيك الويب تبعك. تلفونات الشغل أو المدرسة أحياناً بتحتاج وحدة. إذا ما ضفتها إنت، شيلها.</string>
+    <string name="alert_flow_limit_title">في تطبيق فتح اتصالات كتير</string>
+    <string name="alert_flow_limit_text">سمحله Sentinel يكمّل بالاتصالات المفتوحة ورفض الباقي. التطبيق المشغول ممكن يعمل هيك، وكمان التطبيق اللي عم يغرّق الشبكة.</string>
     <string name="alert_sensor_while_away_title">انستعمل المايك أو الكاميرا والشاشة مطفية</string>
     <string name="alert_sensor_while_away_text">في تطبيق استعمله وما حدا عم يتطلّع. بأندرويد 12 وطالع، لوحة الخصوصية بتبيّن أي تطبيق.</string>
     <string name="alert_microphone_while_away_title">انستعمل المايك والشاشة مطفية</string>

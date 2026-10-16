@@ -68,6 +68,17 @@ impl Ctx {
         Some(changes)
     }
 
+    /// Whether one flow too many is open (`active` counts this one): it is then refused
+    /// before it is a flow at all, so that no observer, history or upstream socket pays
+    /// for it (THREAT-MODEL-A D2).
+    fn refused(&self) -> bool {
+        let over = self.stats.flows_active.load(Ordering::Relaxed) > self.config.max_flows as u64;
+        if over {
+            self.stats.flows_refused.fetch_add(1, Ordering::Relaxed);
+        }
+        over
+    }
+
     fn finish(&self, flow: &FlowInfo, verdict: Verdict) {
         if verdict == Verdict::Block {
             self.stats.flows_blocked.fetch_add(1, Ordering::Relaxed);
@@ -109,6 +120,10 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let _active = ActiveGuard::new(&ctx.stats);
+    if ctx.refused() {
+        // Dropping the stream resets the app's connection.
+        return;
+    }
     let mut flow = ctx.new_flow(Proto::Tcp, src, dst);
     let changes = ctx.firewall_changes();
     if ctx.observer.flow_started(&flow) == Verdict::Block {
@@ -274,6 +289,10 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let _active = ActiveGuard::new(&ctx.stats);
+    if ctx.refused() {
+        // The datagram is dropped; UDP may lose packets.
+        return;
+    }
     let flow = ctx.new_flow(Proto::Udp, src, dst);
     let changes = ctx.firewall_changes();
     if ctx.observer.flow_started(&flow) == Verdict::Block {

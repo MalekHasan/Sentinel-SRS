@@ -664,6 +664,27 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(action, useUnmergedTree = true))
     }
 
+    /** THREAT-MODEL-A D2: an app at its flow limit, right to left, with the limit's number. */
+    @Test
+    fun flowLimitAlert() {
+        val alert = HistoryAlert(
+            id = 12,
+            rule = AlertRule.FLOW_LIMIT,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(AlertEvidence.App(app = PACKAGE), AlertEvidence.FlowLimit(limit = 512u)),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_flow_limit_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_flow_limit_text)))
+        val line = arabic.getString(R.string.alert_evidence_flow_limit, 512)
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
     /** MS-02: a match found in the history says how many connections, and on which days,
      *  right to left. */
     @Test
