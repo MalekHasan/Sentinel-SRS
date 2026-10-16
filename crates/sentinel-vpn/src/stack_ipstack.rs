@@ -11,6 +11,7 @@ use ipstack::{IpStack, IpStackConfig, IpStackStream, TcpConfig};
 use tokio::task::JoinSet;
 
 use crate::dns::DnsCache;
+use crate::engine::heartbeat;
 use crate::relay::{self, Ctx};
 use crate::{EngineConfig, EngineStats, Observer, Protect, TunDevice};
 
@@ -51,8 +52,10 @@ pub async fn run_ipstack(
     });
 
     // Relays belong to this future, so dropping it aborts them (`IpStack` aborts its
-    // own task on drop).
+    // own task on drop). So does the heartbeat (SP-03).
     let mut relays = JoinSet::new();
+    let mut beats = JoinSet::new();
+    beats.spawn(heartbeat(Arc::clone(&ctx.stats), ctx.config.heartbeat));
     let closed = closed.wait();
     tokio::pin!(closed);
     loop {

@@ -344,11 +344,14 @@
     <string name="notification_text">Tap to see what it found.</string>
 
     <string name="gaps_title">Gaps in monitoring</string>
+    <string name="gaps_text">Sentinel did not see your phone\'s traffic at these times.</string>
     <string name="gap_open">Since %1$s: %2$s</string>
     <string name="gap_closed">From %1$s to %2$s: %3$s</string>
+    <string name="gap_closed_length">From %1$s to %2$s (%3$s): %4$s</string>
     <string name="gap_time_unknown">an unknown time</string>
     <string name="gap_revoked">The VPN was switched off in Android settings, or another VPN app took over.</string>
     <string name="gap_engine_failed">The monitoring engine stopped: %1$s</string>
+    <string name="gap_engine_silent">The monitoring engine stopped answering.</string>
     <string name="gap_no_tunnel">Android did not open the tunnel. Another VPN app may be set to always on.</string>
     <string name="gap_start_failed">Monitoring could not start: %1$s</string>
     <string name="gap_service_stopped">Android stopped the monitoring service.</string>

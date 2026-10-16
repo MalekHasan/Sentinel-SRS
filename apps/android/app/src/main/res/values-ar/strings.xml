@@ -381,11 +381,14 @@
     <string name="notification_text">اضغط عشان تشوف شو لقى.</string>
 
     <string name="gaps_title">فترات ما كانت فيها المراقبة شغّالة</string>
+    <string name="gaps_text">ما شاف Sentinel اتصالات تلفونك بهالأوقات.</string>
     <string name="gap_open">من %1$s: %2$s</string>
     <string name="gap_closed">من %1$s لـ %2$s: %3$s</string>
+    <string name="gap_closed_length">من %1$s لـ %2$s (%3$s): %4$s</string>
     <string name="gap_time_unknown">وقت مش معروف</string>
     <string name="gap_revoked">انطفى الـVPN من إعدادات أندرويد، أو أخده تطبيق VPN تاني.</string>
     <string name="gap_engine_failed">محرّك المراقبة وقف: %1$s</string>
+    <string name="gap_engine_silent">محرّك المراقبة بطّل يرد.</string>
     <string name="gap_no_tunnel">أندرويد ما فتح النفق. ممكن يكون في تطبيق VPN تاني مضبوط إنه دايماً شغّال.</string>
     <string name="gap_start_failed">ما قدرت المراقبة تشتغل: %1$s</string>
     <string name="gap_service_stopped">أندرويد وقّف خدمة المراقبة.</string>

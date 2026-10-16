@@ -162,6 +162,17 @@ class RtlTest {
         )
         assertRightToLeft(compose.onNodeWithText(awayLine, useUnmergedTree = true))
 
+        // A gap in monitoring, how long it lasted, and what a gap means (SP-03).
+        compose.onNodeWithText(arabic.getString(R.string.gaps_text)).performScrollTo().assertAtTheRight()
+        val gapLine = arabic.getString(
+            R.string.gap_closed_length,
+            format.format(Date(now - 60_000)),
+            format.format(Date(now)),
+            duration(60_000, Locale.forLanguageTag("ar")),
+            "test",
+        )
+        assertRightToLeft(compose.onNodeWithText(gapLine))
+
         // The firewall's modes (CM-08).
         compose.onNodeWithText(arabic.getString(R.string.firewall_title)).performScrollTo().assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.firewall_mode_block_unknown), useUnmergedTree = true)

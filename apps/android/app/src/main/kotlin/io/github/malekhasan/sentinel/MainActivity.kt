@@ -2,6 +2,9 @@
 package io.github.malekhasan.sentinel
 
 import android.Manifest
+import android.icu.text.MeasureFormat
+import android.icu.util.Measure
+import android.icu.util.MeasureUnit
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -60,6 +63,7 @@ import io.github.malekhasan.sentinel.core.KnownTraces
 import io.github.malekhasan.sentinel.core.coreVersion
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -537,6 +541,7 @@ fun MonitorContent(
 
         if (gaps.isNotEmpty()) {
             Text(stringResource(R.string.gaps_title), style = MaterialTheme.typography.titleSmall)
+            Text(stringResource(R.string.gaps_text), style = MaterialTheme.typography.bodySmall)
             gaps.forEach { gap -> Text(describeGap(gap), style = MaterialTheme.typography.bodySmall) }
         }
 
@@ -619,13 +624,30 @@ private fun describeFlow(flow: HistoryFlow): String {
 
 @Composable
 private fun describeGap(gap: GapLog.Gap): String {
-    val format = DateFormat.getDateTimeInstance(
-        DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],
-    )
+    val locale = LocalConfiguration.current.locales[0]
+    val format = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, locale)
     val start = gap.startMillis?.let { format.format(Date(it)) }
         ?: stringResource(R.string.gap_time_unknown)
-    return when (val end = gap.endMillis) {
-        null -> stringResource(R.string.gap_open, start, gap.reason)
-        else -> stringResource(R.string.gap_closed, start, format.format(Date(end)), gap.reason)
+    val end = gap.endMillis
+    val length = gap.startMillis?.let { started -> end?.let { duration(it - started, locale) } }
+    return when {
+        end == null -> stringResource(R.string.gap_open, start, gap.reason)
+        length == null -> stringResource(R.string.gap_closed, start, format.format(Date(end)), gap.reason)
+        else -> stringResource(R.string.gap_closed_length, start, format.format(Date(end)), length, gap.reason)
     }
+}
+
+/** How long [millis] is, in its two largest units, in words of [locale]: "2 hr, 5 min". */
+fun duration(millis: Long, locale: Locale): String {
+    val seconds = (millis / 1_000).coerceAtLeast(0)
+    val minutes = seconds / 60
+    val hours = minutes / 60
+    val days = hours / 24
+    val parts = when {
+        days > 0 -> listOf(Measure(days, MeasureUnit.DAY), Measure(hours % 24, MeasureUnit.HOUR))
+        hours > 0 -> listOf(Measure(hours, MeasureUnit.HOUR), Measure(minutes % 60, MeasureUnit.MINUTE))
+        minutes > 0 -> listOf(Measure(minutes, MeasureUnit.MINUTE))
+        else -> listOf(Measure(seconds, MeasureUnit.SECOND))
+    }.filterIndexed { i, part -> i == 0 || part.number.toLong() > 0 }
+    return MeasureFormat.getInstance(locale, MeasureFormat.FormatWidth.SHORT).formatMeasures(*parts.toTypedArray())
 }

@@ -275,6 +275,28 @@ async fn flows_beyond_the_cap_are_refused() {
     h.engine.abort();
 }
 
+/// SP-03: the engine reports every `heartbeat` while it runs, and once it stops, the time
+/// since its last report grows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_engine_reports_while_it_runs() {
+    let period = Duration::from_millis(100);
+    let mut h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            heartbeat: period,
+            ..EngineConfig::default()
+        },
+    );
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let running = h.stats.since_heartbeat();
+    assert!(running < period * 5, "no report for {running:?}");
+    h.engine.abort();
+    let _ = (&mut h.engine).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let stopped = h.stats.since_heartbeat();
+    assert!(stopped >= Duration::from_millis(600), "{stopped:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn engine_ends_when_the_tunnel_closes() {
     let h = start(Recorder::default());

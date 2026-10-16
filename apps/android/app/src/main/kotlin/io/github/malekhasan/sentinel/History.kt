@@ -76,6 +76,7 @@ object History {
         store?.close()
         store = null
         deleteFiles(context.applicationContext)
+        Heartbeat.forget(context.applicationContext)
     }
 
     private fun open(context: Context): HistoryStore {

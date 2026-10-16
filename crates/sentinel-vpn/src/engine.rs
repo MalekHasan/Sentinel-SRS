@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
@@ -21,6 +21,9 @@ pub struct EngineConfig {
     /// How long to wait for the rest of a ClientHello split across TCP segments.
     pub sni_wait: Duration,
     pub dns_cache_capacity: usize,
+    /// How often the engine reports that it still runs (SP-03, ADR-0029): see
+    /// [`EngineStats::since_heartbeat`].
+    pub heartbeat: Duration,
     /// The most flows open at once, TCP and UDP together (THREAT-MODEL-A D2, ADR-0028).
     /// A flow beyond it is refused before it reaches the observer: a TCP connection is
     /// reset, a datagram dropped. Each TCP flow holds about 96 KiB of buffers, so this
@@ -51,6 +54,7 @@ impl Default for EngineConfig {
             connect_timeout: Duration::from_secs(10),
             sni_wait: Duration::from_millis(500),
             dns_cache_capacity: 20_000,
+            heartbeat: Duration::from_secs(10),
             max_flows: 1024,
             tcp_buffer: Some(32 * 1024),
             dns_forward: None,
@@ -61,7 +65,7 @@ impl Default for EngineConfig {
 }
 
 /// Engine-wide counters, for health checks and the spike measurements.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct EngineStats {
     pub(crate) flows_total: AtomicU64,
     pub(crate) flows_active: AtomicU64,
@@ -69,6 +73,25 @@ pub struct EngineStats {
     pub(crate) upstream_failures: AtomicU64,
     pub(crate) unsupported_packets: AtomicU64,
     pub(crate) flows_refused: AtomicU64,
+    /// When these counters were made: the origin of `last_beat_ms`.
+    origin: Instant,
+    /// The engine's last heartbeat, in milliseconds after `origin`.
+    last_beat_ms: AtomicU64,
+}
+
+impl Default for EngineStats {
+    fn default() -> Self {
+        EngineStats {
+            flows_total: AtomicU64::new(0),
+            flows_active: AtomicU64::new(0),
+            flows_blocked: AtomicU64::new(0),
+            upstream_failures: AtomicU64::new(0),
+            unsupported_packets: AtomicU64::new(0),
+            flows_refused: AtomicU64::new(0),
+            origin: Instant::now(),
+            last_beat_ms: AtomicU64::new(0),
+        }
+    }
 }
 
 impl EngineStats {
@@ -91,5 +114,30 @@ impl EngineStats {
     /// ICMP and other non-TCP/UDP packets, which this prototype does not forward.
     pub fn unsupported_packets(&self) -> u64 {
         self.unsupported_packets.load(Ordering::Relaxed)
+    }
+    /// How long ago the engine last reported that it runs (SP-03, ADR-0029): at most
+    /// [`EngineConfig::heartbeat`] while it can run its tasks. It grows once the engine
+    /// stops or hangs, for example with every worker thread stuck in a callback.
+    ///
+    /// Measured on the monotonic clock, which stands still while the device sleeps: a
+    /// phone asleep is not an engine gone silent.
+    pub fn since_heartbeat(&self) -> Duration {
+        let last = Duration::from_millis(self.last_beat_ms.load(Ordering::Relaxed));
+        self.origin.elapsed().saturating_sub(last)
+    }
+    fn beat(&self) {
+        let now = u64::try_from(self.origin.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.last_beat_ms.store(now, Ordering::Relaxed);
+    }
+}
+
+/// SP-03: report every `period`, for as long as the engine's runtime runs its tasks.
+/// Never returns; the engine drops it when it stops.
+pub(crate) async fn heartbeat(stats: Arc<EngineStats>, period: Duration) {
+    let mut every = tokio::time::interval(period);
+    every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        every.tick().await;
+        stats.beat();
     }
 }

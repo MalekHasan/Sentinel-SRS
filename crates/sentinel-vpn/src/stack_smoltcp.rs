@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use crate::dns::DnsCache;
+use crate::engine::heartbeat;
 use crate::relay::{self, Ctx};
 use crate::{EngineConfig, EngineStats, Observer, Protect, TunDevice};
 
@@ -76,6 +77,15 @@ pub async fn run(
         stats,
         next_id: AtomicU64::new(1),
     });
+    // SP-03: it reports on a worker thread, as the flows run, while the runtime can
+    // still run its tasks.
+    {
+        let (stats, period) = (Arc::clone(&ctx.stats), ctx.config.heartbeat);
+        tasks.spawn(async move {
+            heartbeat(stats, period).await;
+            "heartbeat"
+        });
+    }
 
     // Packets between the tunnel and the stack. A failed tunnel read or write marks
     // the device closed, which `closed` below reports.

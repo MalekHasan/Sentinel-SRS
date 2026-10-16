@@ -48,6 +48,10 @@ pub struct EngineSnapshot {
     pub history_failures: u64,
     /// What [`Engine::set_away`] last said.
     pub away: bool,
+    /// Milliseconds since the engine last reported that it runs (SP-03, ADR-0029). It
+    /// reports every 10 s; longer means it stopped or hangs. Time asleep does not count.
+    #[uniffi(default = 0)]
+    pub heartbeat_age_ms: u64,
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -253,6 +257,8 @@ impl Engine {
             upstream_failures: self.stats.upstream_failures(),
             history_failures: self.events.history_failures(),
             away: self.away.load(Ordering::Relaxed),
+            heartbeat_age_ms: u64::try_from(self.stats.since_heartbeat().as_millis())
+                .unwrap_or(u64::MAX),
         }
     }
 }
@@ -457,6 +463,7 @@ mod tests {
         let snap = engine.snapshot();
         assert!(snap.running);
         assert_eq!(snap.flows_total, 1);
+        assert!(snap.heartbeat_age_ms < 10_000, "the engine reports (SP-03)");
         assert_eq!(
             protector.0.load(Ordering::SeqCst),
             1,

@@ -39,6 +39,7 @@ class MonitoringTest {
     @Test
     fun relaysTrafficAndDnsThenStopsCleanly() {
         val gapsBefore = GapLog.recent(context, 1_000).size
+        val startedAt = System.currentTimeMillis()
         startMonitoring()
 
         // §15.3: monitoring is never hidden.
@@ -84,6 +85,10 @@ class MonitoringTest {
 
         val snapshot = checkNotNull(Monitor.snapshot()) { "no engine counters while on" }
         assertTrue("flows seen: ${snapshot.flowsTotal}", snapshot.flowsTotal >= 2uL)
+        // SP-03: the engine reports, and the service writes down when it heard from it.
+        assertTrue("last report ${snapshot.heartbeatAgeMs} ms ago", snapshot.heartbeatAgeMs < 10_000uL)
+        val heard = checkNotNull(Heartbeat.lastHeard(context)) { "no report written down" }
+        assertTrue("last heard at $heard, started at $startedAt", heard >= startedAt - 1_000)
 
         stopMonitoring()
         waitFor("the notification to go") {
