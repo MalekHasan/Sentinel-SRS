@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             var showLive by rememberSaveable { mutableStateOf(false) }
             var showJournal by rememberSaveable { mutableStateOf(false) }
+            var showHardening by rememberSaveable { mutableStateOf(false) }
             // The app whose detail is open, over whichever screen opened it.
             var openApp by rememberSaveable { mutableStateOf<String?>(null) }
             // The alert that is open; an app opened from it shows over it.
@@ -110,6 +111,7 @@ class MainActivity : ComponentActivity() {
                     openApp = null
                     showLive = false
                     showJournal = false
+                    showHardening = false
                     openAlert = it
                     requestedAlert.value = null
                 }
@@ -153,6 +155,10 @@ class MainActivity : ComponentActivity() {
                             BackHandler { showJournal = false }
                             JournalScreen(onBack = { showJournal = false })
                         }
+                        showHardening -> {
+                            BackHandler { showHardening = false }
+                            HardeningScreen(visible = visible.value, onBack = { showHardening = false })
+                        }
                         showLive -> {
                             BackHandler { showLive = false }
                             LiveConnectionsScreen(
@@ -168,6 +174,7 @@ class MainActivity : ComponentActivity() {
                             onStop = ::stopMonitoring,
                             onShowLive = { showLive = true },
                             onShowJournal = { showJournal = true },
+                            onShowHardening = { showHardening = true },
                             onImportFeed = { importFeed.launch(null) },
                             onOpenApp = { openApp = it },
                             onOpenAlert = { openAlert = it },
@@ -280,6 +287,7 @@ fun MonitorScreen(
     onOpenAlert: (Long) -> Unit,
     onShowJournal: () -> Unit,
     onImportFeed: () -> Unit,
+    onShowHardening: () -> Unit,
 ) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
@@ -374,6 +382,7 @@ fun MonitorScreen(
             }
         },
         onShowJournal = onShowJournal,
+        onShowHardening = onShowHardening,
         feed = feed,
         traces = traces,
         onCheckFeed = { scope.launch(Dispatchers.IO) { IndicatorFeed.checkPublished(context) } },
@@ -412,6 +421,7 @@ fun MonitorContent(
     onIsolate: () -> Unit = {},
     onEndIsolation: () -> Unit = {},
     onShowJournal: () -> Unit = {},
+    onShowHardening: () -> Unit = {},
     feed: IndicatorFeed.State? = null,
     onCheckFeed: () -> Unit = {},
     onImportFeed: () -> Unit = {},
@@ -474,6 +484,8 @@ fun MonitorContent(
         FirewallModeChoice(firewallMode, onFirewallMode)
         // Every change to the firewall, with Undo (SRS §9).
         OutlinedButton(onClick = onShowJournal) { Text(stringResource(R.string.journal_action)) }
+        // Steps that make the phone harder to spy on (MS-12).
+        OutlinedButton(onClick = onShowHardening) { Text(stringResource(R.string.hardening_action)) }
 
         // What known spyware and stalkerware is looked for, and from when (MS-10).
         feed?.let { IndicatorList(it, onCheckFeed, onImportFeed, traces) }

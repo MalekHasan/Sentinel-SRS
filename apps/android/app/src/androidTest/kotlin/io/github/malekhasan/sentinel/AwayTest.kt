@@ -96,6 +96,7 @@ class AwayTest {
                     onOpenAlert = {},
                     onShowJournal = {},
                     onImportFeed = {},
+                    onShowHardening = {},
                 )
             }
         }

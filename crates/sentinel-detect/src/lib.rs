@@ -12,6 +12,7 @@ mod access;
 mod delivery;
 mod firewall;
 mod first_seen;
+mod hardening;
 mod indicator;
 mod journal;
 mod network;
@@ -27,6 +28,7 @@ pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,
     join_destinations, new_destinations,
 };
+pub use hardening::{Facts, Item, Status, Step, UPDATE_MAX_AGE_DAYS, checklist};
 pub use indicator::{
     IndicatorMatch, Sighting, Threat, known_indicator, known_indicator_in_history, same_sighting,
 };

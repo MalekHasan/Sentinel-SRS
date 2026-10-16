@@ -47,6 +47,9 @@ import io.github.malekhasan.sentinel.core.HistoryApp
 import io.github.malekhasan.sentinel.core.HistoryAway
 import io.github.malekhasan.sentinel.core.HistoryCompany
 import io.github.malekhasan.sentinel.core.HistoryDestination
+import io.github.malekhasan.sentinel.core.HardeningItem
+import io.github.malekhasan.sentinel.core.HardeningStatus
+import io.github.malekhasan.sentinel.core.HardeningStep
 import io.github.malekhasan.sentinel.core.HistoryFlow
 import io.github.malekhasan.sentinel.core.IndicatorSighting
 import io.github.malekhasan.sentinel.core.IndicatorThreat
@@ -597,6 +600,27 @@ class RtlTest {
         val settings = arabic.getString(R.string.alert_action_open_certificate_settings)
         compose.onNodeWithText(settings).performScrollTo()
         assertRightToLeft(compose.onNodeWithText(settings, useUnmergedTree = true))
+    }
+
+    /** MS-12: the hardening checklist, its steps and where they stand, right to left, with
+     *  the security update's date written left to right. */
+    @Test
+    fun hardeningChecklist() {
+        val items = listOf(
+            HardeningItem(HardeningStep.ADVANCED_PROTECTION, HardeningStatus.NOT_AVAILABLE),
+            HardeningItem(HardeningStep.SECURITY_UPDATE, HardeningStatus.TO_DO),
+            HardeningItem(HardeningStep.MESSAGING_APPS, HardeningStatus.CHECK_YOURSELF),
+        )
+        compose.setContent {
+            InArabic { HardeningChecklist(items, "2023-02-05", onBack = {}, onOpen = {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_explainer)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_security_update_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_status_to_do)))
+        val patch = arabic.getString(R.string.hardening_security_patch, isolate("2023-02-05"))
+        assertRightToLeft(compose.onNodeWithText(patch).performScrollTo())
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_status_check)).performScrollTo())
     }
 
     /** MS-02: a match found in the history says how many connections, and on which days,

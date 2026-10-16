@@ -18,6 +18,9 @@
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- Whether Android Advanced Protection is on, for the hardening checklist (MS-12).
+         Granted at install; Android 16 and later only. -->
+    <uses-permission android:name="android.permission.QUERY_ADVANCED_PROTECTION_MODE" />
 
     <!-- allowBackup=false: the local database holds sensitive history and must not
          leave the phone through cloud backups (SRS NF-11, §15.2). -->
