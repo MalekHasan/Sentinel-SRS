@@ -1,0 +1,43 @@
+name: Fuzz
+
+# The parsers that read what apps and the network send (THREAT-MODEL-A D3, ADR-0036).
+# Weekly and on demand, not on every push: ten minutes a target is long for each push.
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [tls_client_hello, dns_query, dns_response, dns_names]
+    steps:
+      - uses: actions/checkout@v5
+      # cargo-fuzz needs nightly; the rest of the build stays on the pinned toolchain.
+      - run: rustup toolchain install nightly --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo +nightly install cargo-fuzz --locked --version 0.13.2
+      - name: Fuzz for ten minutes
+        working-directory: fuzz
+        run: |
+          mkdir -p corpus/${{ matrix.target }}
+          cargo +nightly fuzz run ${{ matrix.target }} corpus/${{ matrix.target }} seeds/${{ matrix.target }} \
+            -- -max_total_time=600 -rss_limit_mb=2048
+      - name: Keep the input that failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
