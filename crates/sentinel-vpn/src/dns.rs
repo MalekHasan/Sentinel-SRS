@@ -43,16 +43,30 @@ pub fn parse_dns_response(datagram: &[u8]) -> Option<DnsAnswer> {
     Some(DnsAnswer { qname, ips })
 }
 
-/// The name a DNS query asks for: lower-cased, without the trailing dot. `None` for
-/// responses, malformed packets and queries without a question.
-pub fn parse_dns_query(datagram: &[u8]) -> Option<String> {
+/// What a DNS query asks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DnsQuery {
+    /// Lower-cased, without the trailing dot.
+    pub name: String,
+    /// The record type asked for, as numbered in the DNS (RFC 1035): 1 for A, 16 for
+    /// TXT, 28 for AAAA.
+    pub qtype: u16,
+}
+
+/// What a DNS query asks, from its first question. `None` for responses, malformed
+/// packets and queries without a question.
+pub fn parse_dns_query(datagram: &[u8]) -> Option<DnsQuery> {
     let packet = Packet::parse(datagram).ok()?;
     if packet.has_flags(PacketFlag::RESPONSE) {
         return None;
     }
-    let qname = packet.questions.first()?.qname.to_string();
-    let qname = qname.trim_end_matches('.').to_ascii_lowercase();
-    (!qname.is_empty()).then_some(qname)
+    let question = packet.questions.first()?;
+    let name = question.qname.to_string();
+    let name = name.trim_end_matches('.').to_ascii_lowercase();
+    (!name.is_empty()).then(|| DnsQuery {
+        name,
+        qtype: u16::from(question.qtype),
+    })
 }
 
 /// An answer to `query` saying that the name does not exist (NXDOMAIN): what a blocked
@@ -175,8 +189,12 @@ pub(crate) mod tests {
     #[test]
     fn reads_the_name_a_query_asks_for() {
         assert_eq!(
-            parse_dns_query(&query(1, "Ads.Example.")).as_deref(),
-            Some("ads.example")
+            parse_dns_query(&query(1, "Ads.Example.")),
+            Some(DnsQuery {
+                name: "ads.example".to_owned(),
+                qtype: 1,
+            }),
+            "an A query"
         );
         assert_eq!(
             parse_dns_query(&response("ads.example", &[Ipv4Addr::LOCALHOST], &[])),

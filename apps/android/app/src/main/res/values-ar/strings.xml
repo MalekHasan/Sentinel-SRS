@@ -274,6 +274,9 @@
     <string name="alert_evidence_certificate">صادرة لـ %1$s. البصمة %2$s.</string>
     <string name="alert_evidence_flow_limit">كان عنده %1$d اتصال مفتوح بنفس الوقت، وهاد أكتر عدد مسموح لتطبيق واحد.</string>
     <string name="alert_evidence_beacon">اتصل بـ%1$s %2$d مرات ورا بعض، تقريباً كل %3$s، وبكل مرة %4$s كحد أقصى.</string>
+    <string name="alert_evidence_dns_names">دوّر على %1$d اسم تحت %2$s خلال كم دقيقة، متل %3$s</string>
+    <string name="alert_evidence_dns_txt">عمل %1$d طلب TXT خلال كم دقيقة. أغلب التطبيقات ما بتعمل ولا واحد.</string>
+    <string name="alert_evidence_encrypted_dns">وصل لـ%1$s، وهي خدمة بتجاوب على DNS مشفّر.</string>
     <string name="alert_evidence_sensor">%1$s: بالاستعمال من %2$s.</string>
     <string name="alert_evidence_sensor_guess">اللي كان عالشاشة لما بلّش: %1$s. هاد بس تخمين.</string>
     <string name="alert_evidence_indicator_listed">%1$s موجود عالقائمة كعلامة على %2$s (%3$s).</string>
@@ -383,6 +386,10 @@
     <string name="alert_flow_limit_text">سمحله Sentinel يكمّل بالاتصالات المفتوحة ورفض الباقي. التطبيق المشغول ممكن يعمل هيك، وكمان التطبيق اللي عم يغرّق الشبكة.</string>
     <string name="alert_beacon_like_title">في تطبيق بيتواصل مع سيرفر بأوقات ثابتة</string>
     <string name="alert_beacon_like_text">بيتصل بنفس المكان مرة ورا مرة، بنفس الوتيرة، وبكل مرة بيانات قليلة. برامج التجسس ممكن تتواصل هيك، وكمان تطبيقات كتير عادية بتشيّك إذا في أخبار جديدة.</string>
+    <string name="alert_dns_tunnel_title">ممكن في تطبيق عم يخبّي بيانات بطلبات الـDNS</string>
+    <string name="alert_dns_tunnel_text">طلباته شكلها بيانات مرمّزة مش أسامي. برامج التجسس ممكن تبعت بيانات لبرّا بهالطريقة، وفي كم تطبيق حماية بيدوّروا على أشيا بنفس الطريقة كمان.</string>
+    <string name="alert_own_encrypted_dns_title">في تطبيق عم يستعمل DNS مشفّر خاص فيه</string>
+    <string name="alert_own_encrypted_dns_text">بيدوّر على الأسامي من خلال خدمة تبعه، مش خدمة التلفون، فما بيقدر Sentinel يشوف هالطلبات. المتصفحات وتطبيقات الخصوصية كتير بتعمل هيك.</string>
     <string name="alert_sensor_while_away_title">انستعمل المايك أو الكاميرا والشاشة مطفية</string>
     <string name="alert_sensor_while_away_text">في تطبيق استعمله وما حدا عم يتطلّع. بأندرويد 12 وطالع، لوحة الخصوصية بتبيّن أي تطبيق.</string>
     <string name="alert_microphone_while_away_title">انستعمل المايك والشاشة مطفية</string>

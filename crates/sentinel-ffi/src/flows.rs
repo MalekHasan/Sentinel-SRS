@@ -178,6 +178,10 @@ pub(crate) struct FlowEvents {
     limited: Mutex<HashSet<String>>,
     /// Each app's connections to each place, for check-ins at a fixed interval (DL-04).
     beacons: Mutex<sentinel_detect::Beacons>,
+    /// Each app's lookups, for data hidden in DNS (DL-05).
+    dns_watch: Mutex<sentinel_detect::DnsWatch>,
+    /// The apps seen reaching an encrypted DNS service themselves in this run (DL-05).
+    own_dns: Mutex<HashSet<String>>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -203,6 +207,8 @@ impl FlowEvents {
             refused: Mutex::new(HashSet::new()),
             limited: Mutex::new(HashSet::new()),
             beacons: Mutex::new(sentinel_detect::Beacons::new()),
+            dns_watch: Mutex::new(sentinel_detect::DnsWatch::new()),
+            own_dns: Mutex::new(HashSet::new()),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
@@ -429,14 +435,10 @@ impl FlowEvents {
     /// each time, raise an Info alert, once per app and place in a run. Not for system
     /// apps, nor for DNS (DL-05), nor for blocked connections, which carried nothing.
     fn watch_check_ins(&self, flow: &FlowInfo, owner: &FlowOwner, totals: &FlowTotals) {
-        let Some(app) = &owner.app else {
+        let Some(app) = self.watched(owner) else {
             return;
         };
-        if owner.system
-            || self.history.is_none()
-            || totals.verdict == Verdict::Block
-            || flow.dst.port() == 53
-        {
+        if totals.verdict == Verdict::Block || flow.dst.port() == 53 {
             return;
         }
         let destination = flow
@@ -448,6 +450,45 @@ impl FlowEvents {
         let found = lock(&self.beacons).connection(app, &destination, started, bytes);
         if let Some(beacon) = found {
             lock(&self.sightings).push(sentinel_detect::beacon_like(now_ms(), app, beacon));
+            self.ready.notify_one();
+        }
+    }
+
+    /// The app the unusual-DNS and beacon rules watch: one known, not part of the
+    /// system, while alerts can be raised.
+    fn watched<'a>(&self, owner: &'a FlowOwner) -> Option<&'a str> {
+        let app = owner.app.as_deref()?;
+        (!owner.system && self.history.is_some()).then_some(app)
+    }
+
+    /// DL-05: lookups that look like data hidden in DNS raise a Warning, once per app
+    /// and domain (or app, for TXT lookups) in a run.
+    fn watch_lookup(&self, owner: &FlowOwner, qname: &str, qtype: u16) {
+        let Some(app) = self.watched(owner) else {
+            return;
+        };
+        let now = now_ms();
+        let found = lock(&self.dns_watch).lookup(now, app, qname, qtype);
+        if let Some(tunnel) = found {
+            lock(&self.sightings).push(sentinel_detect::dns_tunnel(now, app, tunnel));
+            self.ready.notify_one();
+        }
+    }
+
+    /// DL-05: an app that reaches an encrypted DNS service itself raises an Info alert,
+    /// once per app in a run. `server_name` is the name it used, if known.
+    fn watch_encrypted_dns(&self, owner: &FlowOwner, flow: &FlowInfo, server_name: Option<&str>) {
+        let Some(app) = self.watched(owner) else {
+            return;
+        };
+        let Some(server) =
+            sentinel_detect::encrypted_dns(flow.dst.ip(), flow.dst.port(), server_name)
+        else {
+            return;
+        };
+        if lock(&self.own_dns).insert(app.to_owned()) {
+            let alert = sentinel_detect::own_encrypted_dns(now_ms(), app, &server);
+            lock(&self.sightings).push(alert);
             self.ready.notify_one();
         }
     }
@@ -537,6 +578,9 @@ impl Observer for FlowEvents {
         }
         let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), None);
         let blocked = verdict == Verdict::Block;
+        if !blocked {
+            self.watch_encrypted_dns(&owner, flow, flow.hostname.as_deref());
+        }
         self.push(record(flow, &owner, None, blocked, &self.databases()));
         lock(&self.open).insert(flow.id, (flow.clone(), owner));
         verdict
@@ -552,16 +596,24 @@ impl Observer for FlowEvents {
             None => FlowOwner::unknown(),
         };
         self.match_name(&owner, hostname, Sighting::ServerName);
-        self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), Some(hostname))
+        let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), Some(hostname));
+        if verdict == Verdict::Allow {
+            self.watch_encrypted_dns(&owner, flow, Some(hostname));
+        }
+        verdict
     }
 
-    fn dns_query(&self, flow: &FlowInfo, qname: &str) -> Verdict {
+    fn dns_query(&self, flow: &FlowInfo, qname: &str, qtype: u16) -> Verdict {
         let owner = lock(&self.open)
             .get(&flow.id)
             .map_or_else(FlowOwner::unknown, |(_, owner)| owner.clone());
         // The address is the resolver's, not the destination's: only names count here.
         self.match_name(&owner, qname, Sighting::DnsQuery);
-        self.verdict(&owner, None, flow.dst.port(), Some(qname))
+        let verdict = self.verdict(&owner, None, flow.dst.port(), Some(qname));
+        if verdict == Verdict::Allow {
+            self.watch_lookup(&owner, qname, qtype);
+        }
+        verdict
     }
 
     fn recheck(&self, flow: &FlowInfo) -> Verdict {
@@ -1098,6 +1150,103 @@ mod tests {
         );
     }
 
+    /// DL-05, the DNS-tunnel simulation: an app looking up a different encoded name
+    /// every second under one domain raises one Warning naming the domain. The same
+    /// lookups by a system app raise nothing. Apps that reach an encrypted DNS service
+    /// themselves, by address, by name or on its own port, raise one Info alert each.
+    #[test]
+    fn unusual_dns_use_raises_its_alerts() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+
+        // Bits enough for names that look like encoded data.
+        fn mix(mut x: u64) -> u64 {
+            x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            x ^ (x >> 31)
+        }
+        let (_dir, history) = history();
+        let system = FlowOwner {
+            system: true,
+            ..installed("com.android.example", None)
+        };
+        let observer = listen(
+            &history,
+            vec![
+                (53, installed("org.example.tunnel", None)),
+                (5353, system),
+                (443, installed("org.example.browser", None)),
+                (8443, installed("org.example.reader", None)),
+                (853, installed("org.example.private", None)),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let tunnel = flow(1, "10.111.222.3:53", None);
+        let quiet = flow(2, "10.111.222.3:5353", None);
+        for lookups in [&tunnel, &quiet] {
+            assert_eq!(events.flow_started(lookups), Verdict::Allow);
+        }
+        for i in 0..30 {
+            let name = format!(
+                "{:016x}{:016x}.{:016x}{:016x}.t.tunnel.example",
+                mix(4 * i),
+                mix(4 * i + 1),
+                mix(4 * i + 2),
+                mix(4 * i + 3)
+            );
+            assert_eq!(events.dns_query(&tunnel, &name, 1), Verdict::Allow);
+            assert_eq!(events.dns_query(&quiet, &name, 1), Verdict::Allow);
+        }
+        let by_address = flow(3, "8.8.8.8:443", None);
+        let by_name = flow(4, "203.0.113.7:8443", None);
+        let dot = flow(5, "203.0.113.8:853", None);
+        for connection in [&by_address, &by_name, &dot] {
+            assert_eq!(events.flow_started(connection), Verdict::Allow);
+        }
+        assert_eq!(
+            events.hostname_seen(&by_name, "cloudflare-dns.com"),
+            Verdict::Allow
+        );
+        events.flush();
+
+        let alerts = history.alerts(true, 20).unwrap();
+        let of = |rule| -> Vec<_> { alerts.iter().filter(|a| a.rule == rule).collect() };
+        let tunnels = of(AlertRule::DnsTunnel);
+        assert_eq!(tunnels.len(), 1, "{alerts:?}");
+        assert_eq!(tunnels[0].severity, AlertSeverity::Warning);
+        assert_eq!(
+            tunnels[0].evidence[0],
+            AlertEvidence::App {
+                app: "org.example.tunnel".to_owned()
+            }
+        );
+        assert!(matches!(
+            &tunnels[0].evidence[1],
+            AlertEvidence::DnsNames { domain, names: 20, .. } if domain == "tunnel.example"
+        ));
+        let own: Vec<_> = of(AlertRule::OwnEncryptedDns)
+            .into_iter()
+            .map(|alert| (alert.severity, alert.evidence.clone()))
+            .collect();
+        let alert = |app: &str, server: &str| {
+            (
+                AlertSeverity::Info,
+                vec![
+                    AlertEvidence::App {
+                        app: app.to_owned(),
+                    },
+                    AlertEvidence::EncryptedDns {
+                        server: server.to_owned(),
+                    },
+                ],
+            )
+        };
+        assert_eq!(own.len(), 3, "one for each app: {own:?}");
+        assert!(own.contains(&alert("org.example.browser", "8.8.8.8")));
+        assert!(own.contains(&alert("org.example.reader", "cloudflare-dns.com")));
+        assert!(own.contains(&alert("org.example.private", "203.0.113.8")));
+    }
+
     /// THREAT-MODEL-A D2: an app may have `MAX_FLOWS_PER_APP` flows open; more are
     /// refused and never recorded, the first refusal raises one Warning about the app,
     /// and once a flow ends another may open. Flows of no known app are not counted.
@@ -1203,11 +1352,11 @@ mod tests {
         let events = run(1);
         let dns = flow(1, "10.111.222.3:53", None);
         assert_eq!(events.flow_started(&dns), Verdict::Allow);
-        events.dns_query(&dns, "cdn.spy.example");
+        events.dns_query(&dns, "cdn.spy.example", 1);
         events.flush();
         let feed = open(&dir.path().join("feed"));
         events.set_feed(Some(Arc::clone(&feed)));
-        events.dns_query(&dns, "cdn.spy.example");
+        events.dns_query(&dns, "cdn.spy.example", 1);
         events.flush();
         assert!(
             observer.heard.lock().unwrap().is_empty(),
@@ -1227,12 +1376,12 @@ mod tests {
         );
         feed.install(path(&staged)).unwrap();
         assert_eq!(
-            events.dns_query(&dns, "cdn.spy.example"),
+            events.dns_query(&dns, "cdn.spy.example", 1),
             Verdict::Allow,
             "nothing is blocked without the user"
         );
-        events.dns_query(&dns, "spy.example");
-        events.dns_query(&dns, "other.example");
+        events.dns_query(&dns, "spy.example", 1);
+        events.dns_query(&dns, "other.example", 1);
         let tls = flow(2, "203.0.113.5:443", None);
         events.flow_started(&tls);
         assert_eq!(events.hostname_seen(&tls, "spy.example"), Verdict::Allow);
@@ -1307,14 +1456,14 @@ mod tests {
         events.set_feed(Some(Arc::clone(&feed)));
         let dns = flow(1, "10.111.222.3:53", None);
         events.flow_started(&dns);
-        events.dns_query(&dns, "spy.example");
+        events.dns_query(&dns, "spy.example", 1);
         events.flush();
         assert_eq!(observer.heard.lock().unwrap().len(), 3);
         history.dismiss_alert(heard[0].id).unwrap();
         let events = run(3);
         events.set_feed(Some(Arc::clone(&feed)));
         events.flow_started(&dns);
-        events.dns_query(&dns, "spy.example");
+        events.dns_query(&dns, "spy.example", 1);
         events.flush();
         assert_eq!(
             observer.heard.lock().unwrap().len(),
@@ -1539,25 +1688,31 @@ mod tests {
         // resolver's address.
         let unowned = at(7, "198.51.100.53:2");
         assert_eq!(
-            events.dns_query(&unowned, "x.ads.example"),
+            events.dns_query(&unowned, "x.ads.example", 1),
             Verdict::Block,
             "a domain rule for every app, whoever asks"
         );
         assert_eq!(
-            events.dns_query(&unowned, "ok.ads.example"),
+            events.dns_query(&unowned, "ok.ads.example", 1),
             Verdict::Block,
             "the chat app's exception needs the chat app"
         );
         assert_eq!(
-            events.dns_query(&unowned, "chat.example"),
+            events.dns_query(&unowned, "chat.example", 1),
             Verdict::Allow,
             "the range rule needs an address, and a lookup has none"
         );
         let lookup = at(8, "203.0.113.53:2");
         events.flow_started(&lookup);
-        assert_eq!(events.dns_query(&lookup, "x.ads.example"), Verdict::Block);
-        assert_eq!(events.dns_query(&lookup, "ok.ads.example"), Verdict::Allow);
-        assert_eq!(events.dns_query(&lookup, "chat.example"), Verdict::Allow);
+        assert_eq!(
+            events.dns_query(&lookup, "x.ads.example", 1),
+            Verdict::Block
+        );
+        assert_eq!(
+            events.dns_query(&lookup, "ok.ads.example", 1),
+            Verdict::Allow
+        );
+        assert_eq!(events.dns_query(&lookup, "chat.example", 1), Verdict::Allow);
 
         // Taking a rule back applies to the next connection.
         assert!(history.remove_firewall_rule(maps).unwrap());
@@ -1631,7 +1786,7 @@ mod tests {
         );
         let dns = at(3, 53);
         assert_eq!(events.flow_started(&dns), Verdict::Allow, "DNS");
-        assert_eq!(events.dns_query(&dns, "chat.example"), Verdict::Allow);
+        assert_eq!(events.dns_query(&dns, "chat.example", 1), Verdict::Allow);
         let rule = |destination, action| FirewallRule {
             app: Some("org.example.chat".into()),
             destination,
@@ -1649,7 +1804,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            events.dns_query(&dns, "ads.example"),
+            events.dns_query(&dns, "ads.example", 1),
             Verdict::Block,
             "rules still apply"
         );
@@ -1744,7 +1899,7 @@ mod tests {
             events.hostname_seen(&chat, "pixel.ads.example"),
             Verdict::Block
         );
-        assert_eq!(events.dns_query(&chat, "ads.example"), Verdict::Block);
+        assert_eq!(events.dns_query(&chat, "ads.example", 1), Verdict::Block);
         assert_eq!(events.hostname_seen(&chat, "chat.example"), Verdict::Allow);
         assert_eq!(
             events.hostname_seen(&maps, "pixel.ads.example"),
@@ -1923,7 +2078,10 @@ mod tests {
             events.hostname_seen(&first, "api.new.example"),
             Verdict::Block
         );
-        assert_eq!(events.dns_query(&first, "api.new.example"), Verdict::Block);
+        assert_eq!(
+            events.dns_query(&first, "api.new.example", 1),
+            Verdict::Block
+        );
         end(&first, Verdict::Block);
         assert_eq!(
             events.flow_started(&at(3, 2)),

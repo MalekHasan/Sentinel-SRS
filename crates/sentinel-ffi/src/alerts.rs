@@ -49,6 +49,10 @@ pub enum AlertRule {
     /// An app connects to the same place at a fixed interval with little data each time
     /// (DL-04).
     BeaconLike,
+    /// An app's DNS lookups look like data hidden in them (DL-05).
+    DnsTunnel,
+    /// An app reached an encrypted DNS service itself (DL-05).
+    OwnEncryptedDns,
 }
 
 /// A sensor whose use is recorded (SE-01).
@@ -218,6 +222,17 @@ pub enum AlertEvidence {
         check_ins: u32,
         max_bytes: u64,
     },
+    /// The app looked up `names` different random-looking names under `domain` within a
+    /// few minutes, such as `example` (DL-05).
+    DnsNames {
+        domain: String,
+        names: u32,
+        example: String,
+    },
+    /// The app made `lookups` TXT lookups within a few minutes (DL-05).
+    DnsTxtLookups { lookups: u32 },
+    /// The app reached `server`, an encrypted DNS service, itself (DL-05).
+    EncryptedDns { server: String },
     /// A sensor in use since `started_ms` (SE-01). `guess` is the app that was on screen
     /// when the use began, if known: a guess, not the app's identity.
     Sensor {
@@ -335,6 +350,8 @@ impl From<Rule> for AlertRule {
             Rule::SensorWhileAway => AlertRule::SensorWhileAway,
             Rule::FlowLimit => AlertRule::FlowLimit,
             Rule::BeaconLike => AlertRule::BeaconLike,
+            Rule::DnsTunnel => AlertRule::DnsTunnel,
+            Rule::OwnEncryptedDns => AlertRule::OwnEncryptedDns,
         }
     }
 }
@@ -474,6 +491,17 @@ impl From<StoredAlert> for HistoryAlert {
                         check_ins,
                         max_bytes,
                     },
+                    Evidence::DnsNames {
+                        domain,
+                        names,
+                        example,
+                    } => AlertEvidence::DnsNames {
+                        domain,
+                        names,
+                        example,
+                    },
+                    Evidence::DnsTxtLookups { lookups } => AlertEvidence::DnsTxtLookups { lookups },
+                    Evidence::EncryptedDns { server } => AlertEvidence::EncryptedDns { server },
                     Evidence::Sensor {
                         sensor,
                         started,

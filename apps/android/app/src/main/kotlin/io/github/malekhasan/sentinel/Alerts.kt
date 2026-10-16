@@ -382,6 +382,8 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_title
     AlertRule.FLOW_LIMIT -> R.string.alert_flow_limit_title
     AlertRule.BEACON_LIKE -> R.string.alert_beacon_like_title
+    AlertRule.DNS_TUNNEL -> R.string.alert_dns_tunnel_title
+    AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -398,6 +400,8 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_text
     AlertRule.FLOW_LIMIT -> R.string.alert_flow_limit_text
     AlertRule.BEACON_LIKE -> R.string.alert_beacon_like_text
+    AlertRule.DNS_TUNNEL -> R.string.alert_dns_tunnel_text
+    AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_text
 }
 
 @Composable
@@ -494,6 +498,14 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             duration(evidence.intervalMs, LocalConfiguration.current.locales[0]),
             Formatter.formatShortFileSize(LocalContext.current, evidence.maxBytes.toLong()),
         )
+        is AlertEvidence.DnsNames -> stringResource(
+            R.string.alert_evidence_dns_names,
+            evidence.names.toInt(),
+            isolate(evidence.domain),
+            isolate(evidence.example),
+        )
+        is AlertEvidence.DnsTxtLookups -> stringResource(R.string.alert_evidence_dns_txt, evidence.lookups.toInt())
+        is AlertEvidence.EncryptedDns -> stringResource(R.string.alert_evidence_encrypted_dns, isolate(evidence.server))
         is AlertEvidence.Sensor -> {
             val started = DateFormat.getDateTimeInstance(
                 DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],

@@ -54,7 +54,7 @@ impl Observer for Recorder {
         }
     }
 
-    fn dns_query(&self, _flow: &FlowInfo, qname: &str) -> Verdict {
+    fn dns_query(&self, _flow: &FlowInfo, qname: &str, _qtype: u16) -> Verdict {
         if Some(qname) == self.block_name {
             Verdict::Block
         } else {

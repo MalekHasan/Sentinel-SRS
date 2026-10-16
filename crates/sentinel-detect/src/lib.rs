@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 mod access;
 mod beacon;
 mod delivery;
+mod dns_use;
 mod firewall;
 mod first_seen;
 mod hardening;
@@ -26,6 +27,10 @@ pub use beacon::{
     Beacons, beacon_like,
 };
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
+pub use dns_use::{
+    DNS_WINDOW_MS, DnsTunnel, DnsWatch, QTYPE_TXT, TUNNEL_NAMES, TUNNEL_TXT_LOOKUPS, dns_tunnel,
+    encrypted_dns, own_encrypted_dns,
+};
 pub use firewall::{
     Destination, FirewallMode, FirewallRule, Isolation, Network, Place, RuleAction, RuleError,
     RuleSet,
@@ -108,6 +113,12 @@ pub enum Rule {
     /// An app connects to the same place at a fixed interval with little data each time,
     /// as spyware checking in does (DL-04).
     BeaconLike,
+    /// An app's DNS lookups look like data hidden in them, as DNS tunnels carry it
+    /// (DL-05).
+    DnsTunnel,
+    /// An app reached an encrypted DNS service itself, by-passing the phone's resolver
+    /// (DL-05).
+    OwnEncryptedDns,
 }
 
 impl Rule {
@@ -126,6 +137,8 @@ impl Rule {
             Rule::SensorWhileAway => "sensor-while-away",
             Rule::FlowLimit => "flow-limit",
             Rule::BeaconLike => "beacon-like",
+            Rule::DnsTunnel => "dns-tunnel",
+            Rule::OwnEncryptedDns => "own-encrypted-dns",
         }
     }
 
@@ -144,6 +157,8 @@ impl Rule {
             Rule::SensorWhileAway,
             Rule::FlowLimit,
             Rule::BeaconLike,
+            Rule::DnsTunnel,
+            Rule::OwnEncryptedDns,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -157,7 +172,9 @@ impl Rule {
             | Rule::NewDestination
             | Rule::KnownIndicator
             | Rule::FlowLimit
-            | Rule::BeaconLike => Vec::new(),
+            | Rule::BeaconLike
+            | Rule::DnsTunnel
+            | Rule::OwnEncryptedDns => Vec::new(),
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
@@ -189,6 +206,8 @@ impl Rule {
                 | Rule::SpecialAccess
                 | Rule::FlowLimit
                 | Rule::BeaconLike
+                | Rule::DnsTunnel
+                | Rule::OwnEncryptedDns
         );
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } if blocked => Some(Action::AllowApp {
@@ -276,6 +295,17 @@ pub enum Evidence {
         check_ins: u32,
         max_bytes: u64,
     },
+    /// The app looked up `names` different random-looking names under `domain` within
+    /// a few minutes, such as `example` (DL-05).
+    DnsNames {
+        domain: String,
+        names: u32,
+        example: String,
+    },
+    /// The app made `lookups` TXT lookups within a few minutes (DL-05).
+    DnsTxtLookups { lookups: u32 },
+    /// The app reached `server`, an encrypted DNS service, itself (DL-05).
+    EncryptedDns { server: String },
     /// A sensor in use since `started` (Unix ms) (SE-01). `guess` is the app that was on
     /// screen when the use began, if known: a guess, not the app's identity (AM-15).
     Sensor {
@@ -483,6 +513,11 @@ mod tests {
         );
         assert_eq!(Rule::from_id("flow-limit"), Some(Rule::FlowLimit));
         assert_eq!(Rule::from_id("beacon-like"), Some(Rule::BeaconLike));
+        assert_eq!(Rule::from_id("dns-tunnel"), Some(Rule::DnsTunnel));
+        assert_eq!(
+            Rule::from_id("own-encrypted-dns"),
+            Some(Rule::OwnEncryptedDns)
+        );
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {
             assert_eq!(AlertState::from_name(state.as_str()), Some(state));

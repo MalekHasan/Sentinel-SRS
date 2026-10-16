@@ -362,10 +362,15 @@ impl Lookups<'_> {
     /// True if the query was blocked: it was answered "no such name" and must not be
     /// sent.
     fn blocked(&self, query: &[u8]) -> bool {
-        let Some(qname) = parse_dns_query(query) else {
+        let Some(asked) = parse_dns_query(query) else {
             return false;
         };
-        if self.ctx.observer.dns_query(self.flow, &qname) != Verdict::Block {
+        if self
+            .ctx
+            .observer
+            .dns_query(self.flow, &asked.name, asked.qtype)
+            != Verdict::Block
+        {
             return false;
         }
         if let Some(reply) = name_error_reply(query) {

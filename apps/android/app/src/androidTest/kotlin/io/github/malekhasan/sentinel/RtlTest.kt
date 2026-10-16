@@ -756,6 +756,53 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
     }
 
+    /** DL-05: lookups that look like data hidden in DNS, right to left, with the domain
+     *  and an example written left to right. */
+    @Test
+    fun dnsTunnelAlert() {
+        val example = "6f1d0a9c3b2e4d5f8a7b.t.tunnel.example"
+        val alert = HistoryAlert(
+            id = 14,
+            rule = AlertRule.DNS_TUNNEL,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.DnsNames(domain = "tunnel.example", names = 20u, example = example),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_dns_tunnel_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_dns_tunnel_text)))
+        val line = arabic.getString(R.string.alert_evidence_dns_names, 20, isolate("tunnel.example"), isolate(example))
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
+    /** DL-05: an app's own encrypted DNS, right to left, with the service's name. */
+    @Test
+    fun ownEncryptedDnsAlert() {
+        val alert = HistoryAlert(
+            id = 15,
+            rule = AlertRule.OWN_ENCRYPTED_DNS,
+            severity = AlertSeverity.INFO,
+            createdMs = now,
+            evidence = listOf(AlertEvidence.App(app = PACKAGE), AlertEvidence.EncryptedDns(server = "dns.google")),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_own_encrypted_dns_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_own_encrypted_dns_text)))
+        val line = arabic.getString(R.string.alert_evidence_encrypted_dns, isolate("dns.google"))
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
     /** MS-02: a match found in the history says how many connections, and on which days,
      *  right to left. */
     @Test
