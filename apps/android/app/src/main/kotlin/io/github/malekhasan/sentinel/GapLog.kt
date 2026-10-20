@@ -32,6 +32,10 @@ object GapLog {
             .apply()
     }
 
+    /** Whether the user wants monitoring on: started it, and has not stopped it since. */
+    fun monitoringWanted(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(WANTED, false)
+
     /**
      * Call once when the process starts. If monitoring was wanted, the previous process
      * ended while monitoring (killed, crashed or updated): record that as a gap.

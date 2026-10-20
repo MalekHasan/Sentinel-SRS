@@ -90,16 +90,25 @@ class SentinelVpnService : VpnService() {
             // one (THREAT-MODEL-A T5). From Android 12 the action asks to unlock first.
             if (engine != null && getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true) {
                 Log.w(TAG, "not stopping: the phone is locked")
-                return START_NOT_STICKY
+                return START_STICKY
             }
             GapLog.setMonitoringWanted(this, false)
             teardown()
             stopSelf()
-        } else {
-            // ACTION_START from the app, or Android starting an always-on VPN.
-            startMonitoring()
+            return START_NOT_STICKY
         }
-        return START_NOT_STICKY
+        // No intent: Android starts the service again after its process died (SP-02).
+        // Only if the user still wants monitoring; their own Stop ends that.
+        if (intent == null && !GapLog.monitoringWanted(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // ACTION_START from the app, Android starting an always-on VPN, or that restart.
+        startMonitoring()
+        // While monitoring runs, Android starts the service again if its process dies, by
+        // a crash or to free memory (SP-02, ADR-0038). The gap is recorded when it starts,
+        // and closed once monitoring runs again.
+        return if (engine != null) START_STICKY else START_NOT_STICKY
     }
 
     private fun startMonitoring() {

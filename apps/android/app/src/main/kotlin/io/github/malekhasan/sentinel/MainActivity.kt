@@ -155,6 +155,10 @@ class MainActivity : ComponentActivity() {
                                             Posture.openCertificates(this@MainActivity)
                                         is AlertAction.OpenPrivacySettings ->
                                             startActivity(Intent(Settings.ACTION_PRIVACY_SETTINGS))
+                                        is AlertAction.OpenKeepRunning -> {
+                                            openAlert = null
+                                            showKeepRunning = true
+                                        }
                                     }
                                 },
                             )

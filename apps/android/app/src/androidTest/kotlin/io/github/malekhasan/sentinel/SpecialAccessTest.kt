@@ -40,13 +40,15 @@ class SpecialAccessTest {
         Probe(history).install()
         // What the phone's apps hold is known before the probe gains anything.
         checkNotNull(AccessGrants.check(context))
-        assertEquals(emptyList<HistoryAlert>(), accessAlerts())
+        assertEquals("listeners: ${listeners()}", emptyList<HistoryAlert>(), accessAlerts())
     }
 
     @After
     fun tearDown() {
         stopMonitoring()
         shell("cmd notification disallow_listener $LISTENER")
+        // Android writes the setting a moment later; the next test's first check reads it.
+        waitFor("the probe's notification access to be gone") { Probe.PACKAGE !in listeners() }
         if (accessibilityBefore.isNullOrEmpty()) {
             shell("settings delete secure ${Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES}")
         } else {
@@ -110,6 +112,9 @@ class SpecialAccessTest {
     private fun accessAlerts(): List<HistoryAlert> = history.alerts(false, 100u).filter {
         it.rule == AlertRule.SPECIAL_ACCESS && it.evidence.first() == AlertEvidence.App(app = Probe.PACKAGE)
     }
+
+    private fun listeners(): String =
+        Settings.Secure.getString(context.contentResolver, AccessGrants.NOTIFICATION_LISTENERS).orEmpty()
 
     private companion object {
         const val LISTENER = "${Probe.PACKAGE}/${Probe.PACKAGE}.Listener"

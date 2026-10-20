@@ -60,6 +60,8 @@ pub enum AlertRule {
     SharingSiteUpload,
     /// The history could not be opened, so a new one was started (THREAT-MODEL-A T6).
     HistoryStartedAnew,
+    /// Monitoring stopped again and again although the user wanted it on (SP-02).
+    MonitoringKeepsStopping,
 }
 
 /// A sensor whose use is recorded (SE-01).
@@ -240,6 +242,9 @@ pub enum AlertEvidence {
     /// The app had `limit` connections open at once, as many as it may; more were
     /// refused.
     FlowLimit { limit: u32 },
+    /// Monitoring stopped `count` times in the last `hours` hours, though the user
+    /// wanted it on (SP-02).
+    RepeatedGaps { count: u32, hours: u32 },
     /// The app connected to `destination` (a name, or an address when no name is known)
     /// `check_ins` times in a row, typically every `interval_ms`, each time with at most
     /// `max_bytes` both ways (DL-04).
@@ -315,6 +320,8 @@ pub enum AlertAction {
     /// Open Android's privacy settings, whose dashboard names the apps that used a
     /// sensor (SE-01 basic).
     OpenPrivacySettings,
+    /// Open Sentinel's "Keep monitoring running" steps (SP-02, SP-03).
+    OpenKeepRunning,
 }
 
 /// One alert from the history.
@@ -396,6 +403,7 @@ impl From<Rule> for AlertRule {
             Rule::UploadSurge => AlertRule::UploadSurge,
             Rule::SharingSiteUpload => AlertRule::SharingSiteUpload,
             Rule::HistoryStartedAnew => AlertRule::HistoryStartedAnew,
+            Rule::MonitoringKeepsStopping => AlertRule::MonitoringKeepsStopping,
         }
     }
 }
@@ -459,6 +467,7 @@ impl From<StoredAlert> for HistoryAlert {
                     Action::OpenDeveloperSettings => AlertAction::OpenDeveloperSettings,
                     Action::OpenCertificateSettings => AlertAction::OpenCertificateSettings,
                     Action::OpenPrivacySettings => AlertAction::OpenPrivacySettings,
+                    Action::OpenKeepRunning => AlertAction::OpenKeepRunning,
                 })
                 .collect(),
             evidence: alert
@@ -524,6 +533,9 @@ impl From<StoredAlert> for HistoryAlert {
                         AlertEvidence::Certificate { sha256, subject }
                     }
                     Evidence::FlowLimit { limit } => AlertEvidence::FlowLimit { limit },
+                    Evidence::RepeatedGaps { count, hours } => {
+                        AlertEvidence::RepeatedGaps { count, hours }
+                    }
                     Evidence::Beacon {
                         destination,
                         interval_ms,

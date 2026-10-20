@@ -892,6 +892,29 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
     }
 
+    /** SP-02: the alert that monitoring keeps stopping, right to left, with its count and
+     *  hours in Arabic and the way to the steps that keep monitoring running. */
+    @Test
+    fun monitoringKeepsStoppingAlert() {
+        val alert = HistoryAlert(
+            id = 19,
+            rule = AlertRule.MONITORING_KEEPS_STOPPING,
+            severity = AlertSeverity.CRITICAL,
+            createdMs = now,
+            evidence = listOf(AlertEvidence.RepeatedGaps(count = 3u, hours = 24u)),
+            actions = listOf(AlertAction.OpenKeepRunning),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf()), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_monitoring_keeps_stopping_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_monitoring_keeps_stopping_text)))
+        val line = arabic.resources.getQuantityString(R.plurals.alert_evidence_repeated_gaps, 3, 3, 24)
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+        compose.onNodeWithText(arabic.getString(R.string.keep_running_action)).performScrollTo().assertIsDisplayed()
+    }
+
     /** THREAT-MODEL-A T6: the alert that the history was started anew, right to left,
      *  with no empty "what Sentinel saw" section. */
     @Test

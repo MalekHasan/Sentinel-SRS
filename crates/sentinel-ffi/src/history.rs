@@ -473,8 +473,15 @@ impl HistoryStore {
     /// the start is unknown. A new gap raises an alert (SP-03).
     pub fn open_gap(&self, started_ms: Option<i64>, reason: String) -> Result<(), HistoryError> {
         if self.store.open_gap(started_ms, &reason)? {
-            let alert = sentinel_detect::monitoring_interrupted(now_ms(), started_ms, &reason);
+            let now = now_ms();
+            let alert = sentinel_detect::monitoring_interrupted(now, started_ms, &reason);
             self.raise(&alert)?;
+            // SP-02: again and again, a Critical alert, once while it is open.
+            let window = i64::from(sentinel_detect::REPEATED_GAPS_HOURS) * 60 * 60 * 1000;
+            let gaps = self.store.gaps_since(now - window, now)?;
+            if let Some(alert) = sentinel_detect::monitoring_keeps_stopping(now, gaps) {
+                self.raise_unless_open(&alert, |_, _| true)?;
+            }
         }
         Ok(())
     }
@@ -939,6 +946,52 @@ mod tests {
     }
 
     /// SP-03: each new monitoring gap raises one alert, which the user can dismiss.
+    #[test]
+    fn monitoring_that_keeps_stopping_raises_one_critical_alert() {
+        use crate::alerts::{AlertAction, AlertEvidence, AlertRule, AlertSeverity};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        let keeps_stopping = |history: &HistoryStore| {
+            history
+                .alerts(true, 100)
+                .unwrap()
+                .into_iter()
+                .filter(|alert| alert.rule == AlertRule::MonitoringKeepsStopping)
+                .collect::<Vec<_>>()
+        };
+        // Two gaps a day ago, out of the window, and two now: not yet.
+        let day = 24 * 60 * 60 * 1000;
+        for started in [
+            now_ms() - day - 5_000,
+            now_ms() - day - 1_000,
+            now_ms(),
+            now_ms(),
+        ] {
+            history.open_gap(Some(started), "killed".into()).unwrap();
+            history.close_gap(started + 500).unwrap();
+        }
+        assert!(keeps_stopping(&history).is_empty());
+        // The third within a day.
+        history.open_gap(None, "killed".into()).unwrap();
+        history.close_gap(now_ms()).unwrap();
+        let alerts = keeps_stopping(&history);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].severity, AlertSeverity::Critical);
+        assert_eq!(
+            alerts[0].evidence,
+            [AlertEvidence::RepeatedGaps {
+                count: 3,
+                hours: 24
+            }]
+        );
+        assert_eq!(alerts[0].actions, [AlertAction::OpenKeepRunning]);
+        // A fourth while it is open: no second one.
+        history.open_gap(None, "killed".into()).unwrap();
+        assert_eq!(keeps_stopping(&history).len(), 1);
+    }
+
     #[test]
     fn a_history_started_anew_says_so() {
         use crate::alerts::{AlertRule, AlertSeverity};
