@@ -23,6 +23,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.text.TextLayoutResult
@@ -37,6 +38,8 @@ import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.CategoryFact
 import io.github.malekhasan.sentinel.core.CompanyFact
+import io.github.malekhasan.sentinel.core.ExportFormat
+import io.github.malekhasan.sentinel.core.ExportKind
 import io.github.malekhasan.sentinel.core.FeedSource
 import io.github.malekhasan.sentinel.core.FeedStatus
 import io.github.malekhasan.sentinel.core.FirewallMode
@@ -664,6 +667,28 @@ class RtlTest {
         assertRightToLeft(
             compose.onNodeWithText(arabic.getString(R.string.keep_running_maker_samsung)).performScrollTo(),
         )
+    }
+
+    /** SRS §12.3: the export screen, how the last export went, and the warning before the
+     *  file is chosen, right to left. */
+    @Test
+    fun export() {
+        val choice = HistoryExport.Choice(ExportKind.FLOWS, ExportFormat.CSV, HistoryExport.Range.ALL)
+        compose.setContent {
+            InArabic {
+                ExportContent(choice, HistoryExport.State.Saved(12_345), onChoice = {}, onBack = {}, onSave = {})
+            }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.export_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.export_explainer)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.export_kind_flows)).performScrollTo())
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.export_range_note)).performScrollTo())
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.export_format_csv)).performScrollTo())
+        val saved = arabic.getString(R.string.export_saved, isolate(Formatter.formatShortFileSize(arabic, 12_345)))
+        assertRightToLeft(compose.onNodeWithText(saved).performScrollTo())
+        compose.onNodeWithText(arabic.getString(R.string.export_action)).performScrollTo().performClick()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.export_warning_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.export_warning_text)))
     }
 
     /** SE-01: the main screen's record of microphone and camera use, right to left, with

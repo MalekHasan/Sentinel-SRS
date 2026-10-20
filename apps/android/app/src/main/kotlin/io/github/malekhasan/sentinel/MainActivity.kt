@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
             var showJournal by rememberSaveable { mutableStateOf(false) }
             var showHardening by rememberSaveable { mutableStateOf(false) }
             var showKeepRunning by rememberSaveable { mutableStateOf(false) }
+            var showExport by rememberSaveable { mutableStateOf(false) }
             // The app whose detail is open, over whichever screen opened it.
             var openApp by rememberSaveable { mutableStateOf<String?>(null) }
             // The alert that is open; an app opened from it shows over it.
@@ -119,6 +120,7 @@ class MainActivity : ComponentActivity() {
                     showJournal = false
                     showHardening = false
                     showKeepRunning = false
+                    showExport = false
                     openAlert = it
                     requestedAlert.value = null
                 }
@@ -172,6 +174,10 @@ class MainActivity : ComponentActivity() {
                             BackHandler { showKeepRunning = false }
                             KeepRunningScreen(visible = visible.value, onBack = { showKeepRunning = false })
                         }
+                        showExport -> {
+                            BackHandler { showExport = false }
+                            ExportScreen(onBack = { showExport = false })
+                        }
                         showLive -> {
                             BackHandler { showLive = false }
                             LiveConnectionsScreen(
@@ -189,6 +195,7 @@ class MainActivity : ComponentActivity() {
                             onShowJournal = { showJournal = true },
                             onShowHardening = { showHardening = true },
                             onShowKeepRunning = { showKeepRunning = true },
+                            onShowExport = { showExport = true },
                             onImportFeed = { importFeed.launch(null) },
                             onOpenApp = { openApp = it },
                             onOpenAlert = { openAlert = it },
@@ -303,6 +310,7 @@ fun MonitorScreen(
     onImportFeed: () -> Unit,
     onShowHardening: () -> Unit,
     onShowKeepRunning: () -> Unit,
+    onShowExport: () -> Unit,
 ) {
     val context = LocalContext.current
     val status by Monitor.status.collectAsState()
@@ -406,6 +414,7 @@ fun MonitorScreen(
         onShowJournal = onShowJournal,
         onShowHardening = onShowHardening,
         onShowKeepRunning = onShowKeepRunning,
+        onShowExport = onShowExport,
         feed = feed,
         traces = traces,
         onCheckFeed = { scope.launch(Dispatchers.IO) { IndicatorFeed.checkPublished(context) } },
@@ -446,6 +455,7 @@ fun MonitorContent(
     onShowJournal: () -> Unit = {},
     onShowHardening: () -> Unit = {},
     onShowKeepRunning: () -> Unit = {},
+    onShowExport: () -> Unit = {},
     sensorUses: List<SensorUse> = emptyList(),
     usageAccess: Boolean = true,
     onUsageAccess: () -> Unit = {},
@@ -516,6 +526,8 @@ fun MonitorContent(
         OutlinedButton(onClick = onShowHardening) { Text(stringResource(R.string.hardening_action)) }
         // Battery settings that keep monitoring running, by phone maker (SP-03).
         OutlinedButton(onClick = onShowKeepRunning) { Text(stringResource(R.string.keep_running_action)) }
+        // A copy of the history as a file, only when the user asks (SRS §12.3, §15.2).
+        OutlinedButton(onClick = onShowExport) { Text(stringResource(R.string.export_open)) }
         // Microphone and camera use (SE-01 basic).
         SensorUses(sensorUses, usageAccess, labelFor = names::labelFor, onUsageAccess = onUsageAccess)
 

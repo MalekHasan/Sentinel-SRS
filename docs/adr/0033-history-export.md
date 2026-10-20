@@ -1,6 +1,6 @@
 # ADR-0033: Export of the history to JSON and CSV
 
-- Status: **Accepted** (Sprint 9; `crates/sentinel-store`, `crates/sentinel-ffi`). The Android screen that uses it is still to come.
+- Status: **Accepted** (Sprint 9; `crates/sentinel-store`, `crates/sentinel-ffi`, `apps/android`)
 - Date: 2026-10-16
 - Implements SRS §12.3, "Export of flows, alerts and actions to JSON and CSV", through the core interface's `Export(range, format)` (§14.2).
 - Follows §15.2, "Exports are user-initiated only, with a warning that they contain sensitive data", and NF-11, "no user data leaves the device except what the user exports".
@@ -31,7 +31,14 @@ A phone keeps up to 30 days of connections, possibly hundreds of thousands, so a
    - Each alert also gets its app, as a column.
 4. **CSV follows RFC 4180:** cells with commas, quotes or line breaks are quoted, quotes are doubled, and lines end with CRLF.
    - **CSV injection:** a text cell starting with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`, so that a spreadsheet shows it as text and does not run it. Host names come from the network and could be made to start like a formula.
-5. **Nothing is sent.** The export is a document the user saves where they choose. The app will ask first, saying that it holds sensitive data: which apps went where, and when.
+5. **Nothing is sent.** The export is a document the user saves where they choose.
+6. **The Android screen** ("Export your history", from the main screen):
+   - The user chooses what (connections, alerts or their actions), from when (the last 24 hours, the last 7 days, or everything kept) and the format (CSV for spreadsheets, JSON for programs).
+   - The screen says that connections are kept one by one for 30 days, and that older days, kept only as totals, are not exported.
+   - **Before the file is chosen, a warning:** the history is encrypted on the phone and the file is not; anyone who opens it can read which apps connected where and when, and what Sentinel found. Nothing happens unless the user goes on.
+   - **Android's document picker** creates the file where the user chooses (`ACTION_CREATE_DOCUMENT`), so Sentinel needs no storage permission. The suggested name says what and when: `sentinel-connections-2026-10-20.csv`.
+   - The pages, 500 records each, are written straight into that document on a thread of its own, which goes on if the user leaves the screen. Sentinel writes no copy anywhere else.
+   - The screen says when the file is saved, with its size. A document left unfinished, for example because the place chosen ran out of space, is deleted, and the screen says the file could not be written.
 
 ## Verification
 
@@ -44,14 +51,21 @@ A phone keeps up to 30 days of connections, possibly hundreds of thousands, so a
   - The CSV has its header and one line per flow, and a host name like a formula is text.
   - An empty range gives `[]`, or a header alone.
 - `sentinel-ffi`: two alerts export through the app's interface in pages of one and parse as one JSON array.
+- On the Android 14 emulator (`ExportTest`):
+  - five journalled actions, in pages of 1, 2 and 3, write exactly the document one page writes, in JSON and in CSV; the JSON has five records, the CSV a header and five lines;
+  - an alert is in the last day's export now, not in it two days later, and still in the last week's and in everything;
+  - saving writes the document and reports its size; a document that cannot be opened is reported as not written;
+  - the file name;
+  - the warning comes before the picker: cancelling it saves nothing, and going on saves what was chosen;
+  - while an export is being written, another cannot start;
+  - the main screen opens the screen.
+- `RtlTest.export`: the screen, a saved export with its size, and the warning, in Arabic right to left.
+
+The document picker itself is Android's and is not driven by the tests; the tests write to a file the same way.
 
 ## Consequences
 
-- **The Android screen is not built yet.** It is to:
-  - choose what and which format;
-  - warn that the file holds sensitive data;
-  - let the user choose where to save it (Android's document picker, so Sentinel needs no storage permission);
-  - write the pages there.
+- **Spreadsheets may misread non-Latin text in the CSV.** It is UTF-8 without a byte-order mark, as RFC 4180 tools expect; some spreadsheets assume another encoding unless told. Host names and package names are Latin; alert evidence and the journal may not be.
 - **Rolled-up days are not in a flow export.** A user who wants more than the days kept in full has only the app's totals.
 - **Gaps and sensor uses are not exported.** §12.3 names flows, alerts and actions; the others can be added as kinds later.
 - **An export is plain text** wherever the user saves it. The warning says so; protecting it is then up to the user.

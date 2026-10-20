@@ -98,6 +98,7 @@ class AwayTest {
                     onImportFeed = {},
                     onShowHardening = {},
                     onShowKeepRunning = {},
+                    onShowExport = {},
                 )
             }
         }
