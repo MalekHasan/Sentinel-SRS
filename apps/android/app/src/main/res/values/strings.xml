@@ -387,6 +387,8 @@
     <string name="alert_upload_surge_text">In the last day it sent at least ten times what it sends on a usual day. A backup or a big upload can do this. So can spyware that sends files out.</string>
     <string name="alert_sharing_site_upload_title">An app uploaded to a sharing site</string>
     <string name="alert_sharing_site_upload_text">It sent data to a place where anyone with the link can pick it up. Spyware can hand over what it took this way. It is not that site\'s own app.</string>
+    <string name="alert_history_started_anew_title">Sentinel\'s history was started anew</string>
+    <string name="alert_history_started_anew_text">Sentinel could not read its history on this phone, so it started a new one. The connections and alerts it held before are gone. Android can lose the key that opens the history, for example after some system updates. It also happens when someone changes the history file.</string>
     <string name="alert_sensor_while_away_title">The microphone or a camera was used while the screen was off</string>
     <string name="alert_sensor_while_away_text">An app used it while nobody was looking. On Android 12 and later, the privacy dashboard shows which app.</string>
     <string name="alert_microphone_while_away_title">The microphone was used while the screen was off</string>

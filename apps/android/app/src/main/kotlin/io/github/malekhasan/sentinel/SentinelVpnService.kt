@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -84,6 +85,13 @@ class SentinelVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // Someone holding a locked phone must not turn monitoring off from the
+            // notification: it would leave no gap, as a stop the user asked for is not
+            // one (THREAT-MODEL-A T5). From Android 12 the action asks to unlock first.
+            if (engine != null && getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true) {
+                Log.w(TAG, "not stopping: the phone is locked")
+                return START_NOT_STICKY
+            }
             GapLog.setMonitoringWanted(this, false)
             teardown()
             stopSelf()
@@ -311,7 +319,9 @@ class SentinelVpnService : VpnService() {
                     Icon.createWithResource(this, R.drawable.ic_monitoring),
                     getString(R.string.action_stop),
                     stop,
-                ).build(),
+                ).apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) setAuthenticationRequired(true)
+                }.build(),
             )
             .apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

@@ -58,6 +58,8 @@ pub enum AlertRule {
     /// An app uploaded to a file-sharing, paste or anonymous drop service not its own
     /// (DL-06).
     SharingSiteUpload,
+    /// The history could not be opened, so a new one was started (THREAT-MODEL-A T6).
+    HistoryStartedAnew,
 }
 
 /// A sensor whose use is recorded (SE-01).
@@ -393,6 +395,7 @@ impl From<Rule> for AlertRule {
             Rule::OwnEncryptedDns => AlertRule::OwnEncryptedDns,
             Rule::UploadSurge => AlertRule::UploadSurge,
             Rule::SharingSiteUpload => AlertRule::SharingSiteUpload,
+            Rule::HistoryStartedAnew => AlertRule::HistoryStartedAnew,
         }
     }
 }

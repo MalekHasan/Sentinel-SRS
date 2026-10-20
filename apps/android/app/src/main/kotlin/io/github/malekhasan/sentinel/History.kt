@@ -35,10 +35,19 @@ object History {
 
     fun get(context: Context): HistoryStore =
         store ?: synchronized(this) {
-            store ?: open(context.applicationContext).also {
+            store ?: open(context.applicationContext).let { (opened, anew) ->
                 // Every new alert may become a notification (AL-06).
-                it.setAlertListener(AlertNotifier.Listener(context.applicationContext))
-                store = it
+                opened.setAlertListener(AlertNotifier.Listener(context.applicationContext))
+                store = opened
+                // The old history is gone: say so in the new one (THREAT-MODEL-A T6).
+                if (anew) {
+                    try {
+                        opened.startedAnew()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "could not say that the history was started anew", e)
+                    }
+                }
+                opened
             }
         }
 
@@ -79,16 +88,17 @@ object History {
         Heartbeat.forget(context.applicationContext)
     }
 
-    private fun open(context: Context): HistoryStore {
+    /** The history, and whether it had to be started anew because the old one cannot be read. */
+    private fun open(context: Context): Pair<HistoryStore, Boolean> {
         val path = path(context)
         return try {
-            openWith(path, HistoryKey.load(context))
+            openWith(path, HistoryKey.load(context)) to false
         } catch (e: Exception) {
             // The key is gone (for example, the Keystore was reset) or the file is
             // damaged: the old history can never be read. Start a new one.
             Log.w(TAG, "the history cannot be opened; starting a new one", e)
             deleteFiles(context)
-            openWith(path, HistoryKey.load(context))
+            openWith(path, HistoryKey.load(context)) to true
         }
     }
 
