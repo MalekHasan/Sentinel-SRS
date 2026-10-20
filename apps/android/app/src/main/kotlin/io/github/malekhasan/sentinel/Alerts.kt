@@ -158,11 +158,14 @@ fun AlertDetail(
         Text(alertExplanation(alert), style = MaterialTheme.typography.bodyLarge)
         Text(raisedWhen(alert), style = MaterialTheme.typography.bodySmall)
 
-        Text(
-            stringResource(R.string.alert_evidence_title),
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.asHeading(),
-        )
+        // An alert about Sentinel itself may have nothing more to show.
+        if (alert.evidence.isNotEmpty()) {
+            Text(
+                stringResource(R.string.alert_evidence_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.asHeading(),
+            )
+        }
         alert.evidence.forEach { evidence ->
             Text(describeEvidence(evidence, label), style = MaterialTheme.typography.bodyMedium)
         }
@@ -402,6 +405,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_title
     AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_title
     AlertRule.SHARING_SITE_UPLOAD -> R.string.alert_sharing_site_upload_title
+    AlertRule.HISTORY_STARTED_ANEW -> R.string.alert_history_started_anew_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -422,6 +426,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_text
     AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_text
     AlertRule.SHARING_SITE_UPLOAD -> R.string.alert_sharing_site_upload_text
+    AlertRule.HISTORY_STARTED_ANEW -> R.string.alert_history_started_anew_text
 }
 
 @Composable

@@ -479,6 +479,13 @@ impl HistoryStore {
         Ok(())
     }
 
+    /// Say that this history was started in place of one that could not be opened (its
+    /// key is gone, or the file was changed), with an alert in it, so that the loss is not
+    /// silent (THREAT-MODEL-A T6). The app calls it once, after opening the new history.
+    pub fn started_anew(&self) -> Result<(), HistoryError> {
+        self.raise(&sentinel_detect::history_started_anew(now_ms()))
+    }
+
     /// The network settings last seen (CM-07), if any.
     pub fn last_network_state(&self) -> Result<Option<NetworkState>, HistoryError> {
         Ok(self.store.network_state()?.map(|state| NetworkState {
@@ -932,6 +939,23 @@ mod tests {
     }
 
     /// SP-03: each new monitoring gap raises one alert, which the user can dismiss.
+    #[test]
+    fn a_history_started_anew_says_so() {
+        use crate::alerts::{AlertRule, AlertSeverity};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        assert!(history.alerts(true, 10).unwrap().is_empty());
+        history.started_anew().unwrap();
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].rule, AlertRule::HistoryStartedAnew);
+        assert_eq!(alerts[0].severity, AlertSeverity::Warning);
+        assert!(alerts[0].evidence.is_empty());
+        assert!(alerts[0].actions.is_empty());
+    }
+
     #[test]
     fn a_new_gap_raises_one_alert() {
         use crate::alerts::{AlertAction, AlertEvidence, AlertRule, AlertSeverity};

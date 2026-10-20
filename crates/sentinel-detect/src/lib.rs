@@ -131,6 +131,9 @@ pub enum Rule {
     /// An app uploaded to a file-sharing, paste or anonymous drop service not its own
     /// (DL-06).
     SharingSiteUpload,
+    /// The history could not be opened, so a new one was started: what the old one held
+    /// is gone (THREAT-MODEL-A T6).
+    HistoryStartedAnew,
 }
 
 impl Rule {
@@ -153,6 +156,7 @@ impl Rule {
             Rule::OwnEncryptedDns => "own-encrypted-dns",
             Rule::UploadSurge => "upload-surge",
             Rule::SharingSiteUpload => "sharing-site-upload",
+            Rule::HistoryStartedAnew => "history-started-anew",
         }
     }
 
@@ -175,6 +179,7 @@ impl Rule {
             Rule::OwnEncryptedDns,
             Rule::UploadSurge,
             Rule::SharingSiteUpload,
+            Rule::HistoryStartedAnew,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -192,7 +197,8 @@ impl Rule {
             | Rule::DnsTunnel
             | Rule::OwnEncryptedDns
             | Rule::UploadSurge
-            | Rule::SharingSiteUpload => Vec::new(),
+            | Rule::SharingSiteUpload
+            | Rule::HistoryStartedAnew => Vec::new(),
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
@@ -491,6 +497,18 @@ pub fn flow_limit(now: i64, app: &str, limit: u32) -> Alert {
     }
 }
 
+/// THREAT-MODEL-A T6: the history could not be opened (its key is gone, or the file was
+/// changed), so a new one was started. Raised in the new history, so that the loss of
+/// the old one is not silent.
+pub fn history_started_anew(now: i64) -> Alert {
+    Alert {
+        rule: Rule::HistoryStartedAnew,
+        severity: Severity::Warning,
+        created: now,
+        evidence: Vec::new(),
+    }
+}
+
 /// SP-03: monitoring stopped while the user wanted it on, at `started` (if known), for
 /// `reason`. A stop the user asked for is not a gap and raises nothing.
 pub fn monitoring_interrupted(now: i64, started: Option<i64>, reason: &str) -> Alert {
@@ -556,6 +574,10 @@ mod tests {
         assert_eq!(
             Rule::from_id("own-encrypted-dns"),
             Some(Rule::OwnEncryptedDns)
+        );
+        assert_eq!(
+            Rule::from_id("history-started-anew"),
+            Some(Rule::HistoryStartedAnew)
         );
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {
@@ -642,6 +664,18 @@ mod tests {
             }]
         );
         assert_eq!(alert.actions(), [Action::StartMonitoring]);
+    }
+
+    #[test]
+    fn a_history_started_anew_is_a_warning_about_no_app() {
+        let alert = history_started_anew(5_000);
+        assert_eq!(alert.rule, Rule::HistoryStartedAnew);
+        assert_eq!(alert.severity, Severity::Warning);
+        assert_eq!(alert.created, 5_000);
+        assert_eq!(alert.app(), None);
+        assert!(alert.evidence.is_empty());
+        assert!(alert.actions().is_empty());
+        assert_eq!(evidence_to_json(&alert.evidence), "[]");
     }
 
     #[test]

@@ -424,6 +424,8 @@
     <string name="alert_upload_surge_text">باليوم الأخير بعت عشر أضعاف اللي بيبعته بيوم عادي أو أكتر. النسخ الاحتياطي أو رفع ملف كبير ممكن يعمل هيك، وكمان برامج التجسس لما تبعت ملفات لبرّا.</string>
     <string name="alert_sharing_site_upload_title">في تطبيق رفع بيانات لموقع مشاركة</string>
     <string name="alert_sharing_site_upload_text">بعت بيانات لمكان أي حدا معه الرابط بيقدر ياخدها. برامج التجسس ممكن تسلّم اللي أخدته بهالطريقة. وهاد التطبيق مش تطبيق الموقع نفسه.</string>
+    <string name="alert_history_started_anew_title">سجل Sentinel انبدأ من جديد</string>
+    <string name="alert_history_started_anew_text">ما قدر Sentinel يقرا سجلّه على هالموبايل، فبلّش سجل جديد. الاتصالات والتنبيهات اللي كانت فيه راحت. أندرويد ممكن يضيّع المفتاح اللي بيفتح السجل، مثلاً بعد بعض تحديثات النظام. وبيصير كمان إذا حدا غيّر ملف السجل.</string>
     <string name="alert_sensor_while_away_title">انستعمل المايك أو الكاميرا والشاشة مطفية</string>
     <string name="alert_sensor_while_away_text">في تطبيق استعمله وما حدا عم يتطلّع. بأندرويد 12 وطالع، لوحة الخصوصية بتبيّن أي تطبيق.</string>
     <string name="alert_microphone_while_away_title">انستعمل المايك والشاشة مطفية</string>

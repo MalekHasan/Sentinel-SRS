@@ -892,6 +892,27 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
     }
 
+    /** THREAT-MODEL-A T6: the alert that the history was started anew, right to left,
+     *  with no empty "what Sentinel saw" section. */
+    @Test
+    fun historyStartedAnewAlert() {
+        val alert = HistoryAlert(
+            id = 18,
+            rule = AlertRule.HISTORY_STARTED_ANEW,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = emptyList(),
+            actions = emptyList(),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf()), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_history_started_anew_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_history_started_anew_text)))
+        compose.onAllNodesWithText(arabic.getString(R.string.alert_evidence_title)).assertCountEquals(0)
+    }
+
     /** MS-02: a match found in the history says how many connections, and on which days,
      *  right to left. */
     @Test

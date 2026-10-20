@@ -63,9 +63,9 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 | T1 | Rollback to an older feed that lacks new indicators | Strictly increasing versions; installed version stored; an older list is refused (ADR-0019) | Done |
 | T2 | A frozen feed: the attacker blocks updates | Expiry: an expired list is still used, but the main screen says since when it is out of date (MS-15, ADR-0019) | Done |
 | T3 | A path-traversal bundle writes outside its folder | Only plain relative ASCII paths; symbolic links rejected | Done |
-| T4 | Editing the local database to hide history | Database encrypted with a Keystore-wrapped key; SQLCipher authenticates every page, so a changed file fails to open and the app starts a new history (ADR-0009) | Done; telling the user is open (T6) |
+| T4 | Editing the local database to hide history | Database encrypted with a Keystore-wrapped key; SQLCipher authenticates every page, so a changed file fails to open and the app starts a new history (ADR-0009) | Done; the user is told (T6) |
 | T5 | Someone holding the locked phone (B6) turns monitoring off from its notification. A stop the user asked for is not a gap, so nothing would show it | A stop is refused while the phone is locked; from Android 12 the Stop action asks to unlock first | Done: the action's unlock request is tested on Android 14; the refusal is not tested on a device (the CI emulator has no PIN) |
-| T6 | The history cannot be opened (the key is gone, or the file was changed) and a new one is started without a word: earlier connections and alerts are gone unnoticed | Raise an alert in the new history saying the old one could not be read | Open (review finding F2) |
+| T6 | The history cannot be opened (the key is gone, or the file was changed) and a new one is started without a word: earlier connections and alerts are gone unnoticed | The new history opens with a Warning alert, "Sentinel's history was started anew", saying what is gone and why that happens | Done (tested on Android 14 with a history file overwritten) |
 
 ### Repudiation
 
@@ -136,7 +136,7 @@ Every row was checked against the code and its tests as of PR #11, and the data 
 | # | Finding | Action |
 | --- | --- | --- |
 | F1 | Monitoring could be stopped from the notification on a locked phone, leaving no gap (T5) | Fixed in this review |
-| F2 | A history that cannot be opened is replaced without telling the user (T6). A0 planned the notice for Sprint 5 | Fix next: an alert in the new history |
+| F2 | A history that cannot be opened is replaced without telling the user (T6). A0 planned the notice for Sprint 5 | Fixed in this review: an alert in the new history |
 | F3 | The service is not restarted after a crash or kill, and repeated stops raise no Critical alert (D7, SP-02) | Fix next: restart after a crash and alert on repeated stops, tested by killing the process on the emulator |
 | F4 | The optional app lock (SRS §15.2, I4) was planned for Sprint 10 in A0 but is not in Phase A's plan | For the owner: schedule it, or accept it for Phase A |
 
