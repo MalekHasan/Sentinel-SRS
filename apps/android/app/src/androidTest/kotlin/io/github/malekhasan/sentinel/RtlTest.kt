@@ -61,6 +61,7 @@ import io.github.malekhasan.sentinel.core.NameSource
 import io.github.malekhasan.sentinel.core.RuleAction
 import io.github.malekhasan.sentinel.core.RuleDestination
 import io.github.malekhasan.sentinel.core.SensorKind
+import io.github.malekhasan.sentinel.core.SharingSiteKind
 import io.github.malekhasan.sentinel.core.SensorUse
 import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
@@ -161,6 +162,17 @@ class RtlTest {
             Formatter.formatShortFileSize(arabic, 100),
         )
         assertRightToLeft(compose.onNodeWithText(awayLine, useUnmergedTree = true))
+
+        // A gap in monitoring, how long it lasted, and what a gap means (SP-03).
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.gaps_text)).performScrollTo())
+        val gapLine = arabic.getString(
+            R.string.gap_closed_length,
+            format.format(Date(now - 60_000)),
+            format.format(Date(now)),
+            duration(60_000, Locale.forLanguageTag("ar")),
+            "test",
+        )
+        assertRightToLeft(compose.onNodeWithText(gapLine))
 
         // The firewall's modes (CM-08).
         compose.onNodeWithText(arabic.getString(R.string.firewall_title)).performScrollTo().assertAtTheRight()
@@ -625,6 +637,35 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_status_check)).performScrollTo())
     }
 
+    /** SP-03: the steps that keep monitoring running, and a maker's own, right to left
+     *  although they name Sentinel and the maker's settings. */
+    @Test
+    fun keepRunning() {
+        val items = listOf(
+            KeepRunning.Item(KeepRunning.Step.BATTERY, done = false),
+            KeepRunning.Item(KeepRunning.Step.ALWAYS_ON, done = null),
+        )
+        compose.setContent {
+            InArabic {
+                KeepRunningContent(
+                    items, KeepRunning.Maker.SAMSUNG, onBack = {}, onOpen = {}, onOpenAppSettings = {},
+                )
+            }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.keep_running_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.keep_running_explainer)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.keep_running_battery_title)))
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.keep_running_always_on_text)).performScrollTo(),
+        )
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.keep_running_status_while_monitoring)).performScrollTo(),
+        )
+        assertRightToLeft(
+            compose.onNodeWithText(arabic.getString(R.string.keep_running_maker_samsung)).performScrollTo(),
+        )
+    }
+
     /** SE-01: the main screen's record of microphone and camera use, right to left, with
      *  the guessed app's name written left to right. */
     @Test
@@ -662,6 +703,168 @@ class RtlTest {
         val action = arabic.getString(R.string.alert_action_open_privacy_settings)
         compose.onNodeWithText(action).performScrollTo()
         assertRightToLeft(compose.onNodeWithText(action, useUnmergedTree = true))
+    }
+
+    /** THREAT-MODEL-A D2: an app at its flow limit, right to left, with the limit's number. */
+    @Test
+    fun flowLimitAlert() {
+        val alert = HistoryAlert(
+            id = 12,
+            rule = AlertRule.FLOW_LIMIT,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(AlertEvidence.App(app = PACKAGE), AlertEvidence.FlowLimit(limit = 512u)),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_flow_limit_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_flow_limit_text)))
+        val line = arabic.getString(R.string.alert_evidence_flow_limit, 512)
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
+    /** DL-04: check-ins at set times, right to left, with the server's name, the interval
+     *  and the size in Arabic. */
+    @Test
+    fun beaconAlert() {
+        val alert = HistoryAlert(
+            id = 13,
+            rule = AlertRule.BEACON_LIKE,
+            severity = AlertSeverity.INFO,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.Beacon(destination = HOST, intervalMs = 60_000, checkIns = 8u, maxBytes = 1_200uL),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_beacon_like_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_beacon_like_text)))
+        val line = arabic.getString(
+            R.string.alert_evidence_beacon,
+            isolate(HOST),
+            8,
+            duration(60_000, Locale.forLanguageTag("ar")),
+            Formatter.formatShortFileSize(arabic, 1_200),
+        )
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
+    /** DL-05: lookups that look like data hidden in DNS, right to left, with the domain
+     *  and an example written left to right. */
+    @Test
+    fun dnsTunnelAlert() {
+        val example = "6f1d0a9c3b2e4d5f8a7b.t.tunnel.example"
+        val alert = HistoryAlert(
+            id = 14,
+            rule = AlertRule.DNS_TUNNEL,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.DnsNames(domain = "tunnel.example", names = 20u, example = example),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_dns_tunnel_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_dns_tunnel_text)))
+        val line = arabic.getString(R.string.alert_evidence_dns_names, 20, isolate("tunnel.example"), isolate(example))
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
+    /** DL-05: an app's own encrypted DNS, right to left, with the service's name. */
+    @Test
+    fun ownEncryptedDnsAlert() {
+        val alert = HistoryAlert(
+            id = 15,
+            rule = AlertRule.OWN_ENCRYPTED_DNS,
+            severity = AlertSeverity.INFO,
+            createdMs = now,
+            evidence = listOf(AlertEvidence.App(app = PACKAGE), AlertEvidence.EncryptedDns(server = "dns.google")),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_own_encrypted_dns_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_own_encrypted_dns_text)))
+        val line = arabic.getString(R.string.alert_evidence_encrypted_dns, isolate("dns.google"))
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
+    /** DL-02: an upload surge, right to left, with the sizes in Arabic. */
+    @Test
+    fun uploadSurgeAlert() {
+        val alert = HistoryAlert(
+            id = 16,
+            rule = AlertRule.UPLOAD_SURGE,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.UploadSurge(lastDay = 52_428_800uL, usualDay = 2_097_152uL, days = 14u),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_upload_surge_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_upload_surge_text)))
+        val line = arabic.getString(
+            R.string.alert_evidence_upload_surge,
+            Formatter.formatShortFileSize(arabic, 52_428_800),
+            14,
+            Formatter.formatShortFileSize(arabic, 2_097_152),
+        )
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
+    }
+
+    /** DL-06: an upload to a sharing site, right to left, with the site's name written
+     *  left to right and what the site is for in Arabic. */
+    @Test
+    fun sharingSiteAlert() {
+        val alert = HistoryAlert(
+            id = 17,
+            rule = AlertRule.SHARING_SITE_UPLOAD,
+            severity = AlertSeverity.WARNING,
+            createdMs = now,
+            evidence = listOf(
+                AlertEvidence.App(app = PACKAGE),
+                AlertEvidence.SharingSite(
+                    destination = "pastebin.com",
+                    site = SharingSiteKind.PASTE,
+                    bytesUp = 40_000uL,
+                ),
+            ),
+            actions = listOf(AlertAction.BlockApp(app = PACKAGE), AlertAction.OpenApp(app = PACKAGE)),
+            open = true,
+        )
+        compose.setContent {
+            InArabic { AlertDetail(AlertDetails(alert, mapOf(PACKAGE to LABEL)), {}, {}, {}) }
+        }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_sharing_site_upload_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_sharing_site_upload_text)))
+        val line = arabic.getString(
+            R.string.alert_evidence_sharing_site,
+            Formatter.formatShortFileSize(arabic, 40_000),
+            isolate("pastebin.com"),
+            arabic.getString(R.string.sharing_site_paste),
+        )
+        assertRightToLeft(compose.onNodeWithText(line).performScrollTo())
     }
 
     /** MS-02: a match found in the history says how many connections, and on which days,

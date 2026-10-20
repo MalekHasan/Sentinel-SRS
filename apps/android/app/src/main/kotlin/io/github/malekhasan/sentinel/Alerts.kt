@@ -4,6 +4,7 @@ package io.github.malekhasan.sentinel
 import android.content.Context
 import android.icu.text.ListFormatter
 import android.text.format.DateUtils
+import android.text.format.Formatter
 import android.util.Log
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +47,7 @@ import io.github.malekhasan.sentinel.core.IndicatorSighting
 import io.github.malekhasan.sentinel.core.IndicatorThreat
 import io.github.malekhasan.sentinel.core.RemoteAccessService
 import io.github.malekhasan.sentinel.core.SensorKind
+import io.github.malekhasan.sentinel.core.SharingSiteKind
 import io.github.malekhasan.sentinel.core.SpecialAccess
 import java.text.DateFormat
 import java.time.LocalDate
@@ -379,6 +381,12 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.REMOTE_ACCESS_EXPOSED -> R.string.alert_remote_access_exposed_title
     AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_title
     AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_title
+    AlertRule.FLOW_LIMIT -> R.string.alert_flow_limit_title
+    AlertRule.BEACON_LIKE -> R.string.alert_beacon_like_title
+    AlertRule.DNS_TUNNEL -> R.string.alert_dns_tunnel_title
+    AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_title
+    AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_title
+    AlertRule.SHARING_SITE_UPLOAD -> R.string.alert_sharing_site_upload_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -393,6 +401,12 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.REMOTE_ACCESS_EXPOSED -> R.string.alert_remote_access_exposed_text
     AlertRule.NEW_ROOT_CERTIFICATE -> R.string.alert_new_root_certificate_text
     AlertRule.SENSOR_WHILE_AWAY -> R.string.alert_sensor_while_away_text
+    AlertRule.FLOW_LIMIT -> R.string.alert_flow_limit_text
+    AlertRule.BEACON_LIKE -> R.string.alert_beacon_like_text
+    AlertRule.DNS_TUNNEL -> R.string.alert_dns_tunnel_text
+    AlertRule.OWN_ENCRYPTED_DNS -> R.string.alert_own_encrypted_dns_text
+    AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_text
+    AlertRule.SHARING_SITE_UPLOAD -> R.string.alert_sharing_site_upload_text
 }
 
 @Composable
@@ -481,6 +495,34 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
         is AlertEvidence.Certificate -> stringResource(
             R.string.alert_evidence_certificate, isolate(evidence.subject), isolate(evidence.sha256),
         )
+        is AlertEvidence.FlowLimit -> stringResource(R.string.alert_evidence_flow_limit, evidence.limit.toInt())
+        is AlertEvidence.Beacon -> stringResource(
+            R.string.alert_evidence_beacon,
+            isolate(evidence.destination),
+            evidence.checkIns.toInt(),
+            duration(evidence.intervalMs, LocalConfiguration.current.locales[0]),
+            Formatter.formatShortFileSize(LocalContext.current, evidence.maxBytes.toLong()),
+        )
+        is AlertEvidence.DnsNames -> stringResource(
+            R.string.alert_evidence_dns_names,
+            evidence.names.toInt(),
+            isolate(evidence.domain),
+            isolate(evidence.example),
+        )
+        is AlertEvidence.DnsTxtLookups -> stringResource(R.string.alert_evidence_dns_txt, evidence.lookups.toInt())
+        is AlertEvidence.EncryptedDns -> stringResource(R.string.alert_evidence_encrypted_dns, isolate(evidence.server))
+        is AlertEvidence.UploadSurge -> stringResource(
+            R.string.alert_evidence_upload_surge,
+            Formatter.formatShortFileSize(LocalContext.current, evidence.lastDay.toLong()),
+            evidence.days.toInt(),
+            Formatter.formatShortFileSize(LocalContext.current, evidence.usualDay.toLong()),
+        )
+        is AlertEvidence.SharingSite -> stringResource(
+            R.string.alert_evidence_sharing_site,
+            Formatter.formatShortFileSize(LocalContext.current, evidence.bytesUp.toLong()),
+            isolate(evidence.destination),
+            stringResource(sharingSiteName(evidence.site)),
+        )
         is AlertEvidence.Sensor -> {
             val started = DateFormat.getDateTimeInstance(
                 DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],
@@ -491,6 +533,13 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             ).joinToString(" ")
         }
     }
+
+/** What a sharing service is for (DL-06). */
+fun sharingSiteName(site: SharingSiteKind): Int = when (site) {
+    SharingSiteKind.PASTE -> R.string.sharing_site_paste
+    SharingSiteKind.FILE_SHARING -> R.string.sharing_site_file_sharing
+    SharingSiteKind.ANONYMOUS_DROP -> R.string.sharing_site_anonymous_drop
+}
 
 /** How many connections the history holds, and on which days (MS-02). */
 @Composable

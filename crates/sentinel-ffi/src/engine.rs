@@ -39,11 +39,19 @@ pub struct EngineSnapshot {
     pub flows_total: u64,
     pub flows_active: u64,
     pub flows_blocked: u64,
+    /// Flows refused because as many as the engine allows were already open
+    /// (THREAT-MODEL-A D2).
+    #[uniffi(default = 0)]
+    pub flows_refused: u64,
     pub upstream_failures: u64,
     /// Flow batches that could not be written to the history.
     pub history_failures: u64,
     /// What [`Engine::set_away`] last said.
     pub away: bool,
+    /// Milliseconds since the engine last reported that it runs (SP-03, ADR-0029). It
+    /// reports every 10 s; longer means it stopped or hangs. Time asleep does not count.
+    #[uniffi(default = 0)]
+    pub heartbeat_age_ms: u64,
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -245,9 +253,12 @@ impl Engine {
             flows_total: self.stats.flows_total(),
             flows_active: self.stats.flows_active(),
             flows_blocked: self.stats.flows_blocked(),
+            flows_refused: self.stats.flows_refused(),
             upstream_failures: self.stats.upstream_failures(),
             history_failures: self.events.history_failures(),
             away: self.away.load(Ordering::Relaxed),
+            heartbeat_age_ms: u64::try_from(self.stats.since_heartbeat().as_millis())
+                .unwrap_or(u64::MAX),
         }
     }
 }
@@ -345,6 +356,7 @@ mod tests {
                 uid: OWNER,
                 app: Some(OWNER_APP.to_owned()),
                 installed_ms: self.installed_ms,
+                system: false,
             }
         }
         fn flows(&self, records: Vec<FlowRecord>) {
@@ -452,6 +464,7 @@ mod tests {
         let snap = engine.snapshot();
         assert!(snap.running);
         assert_eq!(snap.flows_total, 1);
+        assert!(snap.heartbeat_age_ms < 10_000, "the engine reports (SP-03)");
         assert_eq!(
             protector.0.load(Ordering::SeqCst),
             1,
@@ -1267,6 +1280,7 @@ mod tests {
                 uid: OWNER,
                 app: Some(OWNER_APP.to_owned()),
                 installed_ms: None,
+                system: false,
             }
         }
         fn flows(&self, records: Vec<FlowRecord>) {

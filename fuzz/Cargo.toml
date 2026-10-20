@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Fuzzing the parsers that read what apps and the network send (THREAT-MODEL-A D3,
+# ADR-0036). Its own workspace: it needs a nightly toolchain and cargo-fuzz, which the
+# rest of the build does not. Run: cargo +nightly fuzz run <target> (see README.md).
+[package]
+name = "sentinel-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sentinel-detect = { path = "../crates/sentinel-detect" }
+sentinel-vpn = { path = "../crates/sentinel-vpn" }
+
+[workspace]
+members = ["."]
+
+[patch.crates-io]
+# The patched stack the main workspace builds with (see the root Cargo.toml).
+netstack-smoltcp = { path = "../third_party/netstack-smoltcp" }
+
+[[bin]]
+name = "tls_client_hello"
+path = "fuzz_targets/tls_client_hello.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_query"
+path = "fuzz_targets/dns_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_response"
+path = "fuzz_targets/dns_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dns_names"
+path = "fuzz_targets/dns_names.rs"
+test = false
+doc = false
+bench = false

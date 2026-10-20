@@ -9,7 +9,9 @@
 use serde::{Deserialize, Serialize};
 
 mod access;
+mod beacon;
 mod delivery;
+mod dns_use;
 mod firewall;
 mod first_seen;
 mod hardening;
@@ -18,9 +20,19 @@ mod journal;
 mod network;
 mod posture;
 mod sensor;
+mod sharing;
+mod upload;
 
 pub use access::{Access, special_access};
+pub use beacon::{
+    BEACON_CHECK_INS, BEACON_MAX_BYTES, BEACON_MAX_INTERVAL_MS, BEACON_MIN_INTERVAL_MS, Beacon,
+    Beacons, beacon_like,
+};
 pub use delivery::{Delivery, RATE_LIMIT, RATE_WINDOW_MS, Sent, delivery};
+pub use dns_use::{
+    DNS_WINDOW_MS, DnsTunnel, DnsWatch, QTYPE_TXT, TUNNEL_NAMES, TUNNEL_TXT_LOOKUPS, dns_tunnel,
+    encrypted_dns, own_encrypted_dns,
+};
 pub use firewall::{
     Destination, FirewallMode, FirewallRule, Isolation, Network, Place, RuleAction, RuleError,
     RuleSet,
@@ -37,6 +49,11 @@ pub use journal::{Change, Setting};
 pub use network::{NetworkState, network_changes};
 pub use posture::{Certificate, Posture, RemoteAccess, posture_changes};
 pub use sensor::{Attribution, Sensor, sensor_while_away};
+pub use sharing::{SHARING_UPLOAD_BYTES, SharingSite, sharing_site, sharing_site_upload};
+pub use upload::{
+    BASELINE_DAYS, MIN_SURGE_BYTES, MIN_USUAL_DAY_BYTES, SURGE_FACTOR, Uploads, upload_surge,
+    upload_windows,
+};
 
 /// How urgent an alert is (AL-01). Ordered from least to most urgent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -97,6 +114,23 @@ pub enum Rule {
     NewRootCertificate,
     /// The microphone or camera was in use while the screen was off or locked (SE-04).
     SensorWhileAway,
+    /// An app had as many connections open as it may; Sentinel refused more
+    /// (THREAT-MODEL-A D2).
+    FlowLimit,
+    /// An app connects to the same place at a fixed interval with little data each time,
+    /// as spyware checking in does (DL-04).
+    BeaconLike,
+    /// An app's DNS lookups look like data hidden in them, as DNS tunnels carry it
+    /// (DL-05).
+    DnsTunnel,
+    /// An app reached an encrypted DNS service itself, by-passing the phone's resolver
+    /// (DL-05).
+    OwnEncryptedDns,
+    /// An app sent far more in a day than it usually does (DL-02).
+    UploadSurge,
+    /// An app uploaded to a file-sharing, paste or anonymous drop service not its own
+    /// (DL-06).
+    SharingSiteUpload,
 }
 
 impl Rule {
@@ -113,6 +147,12 @@ impl Rule {
             Rule::RemoteAccessExposed => "remote-access-exposed",
             Rule::NewRootCertificate => "new-root-certificate",
             Rule::SensorWhileAway => "sensor-while-away",
+            Rule::FlowLimit => "flow-limit",
+            Rule::BeaconLike => "beacon-like",
+            Rule::DnsTunnel => "dns-tunnel",
+            Rule::OwnEncryptedDns => "own-encrypted-dns",
+            Rule::UploadSurge => "upload-surge",
+            Rule::SharingSiteUpload => "sharing-site-upload",
         }
     }
 
@@ -129,6 +169,12 @@ impl Rule {
             Rule::RemoteAccessExposed,
             Rule::NewRootCertificate,
             Rule::SensorWhileAway,
+            Rule::FlowLimit,
+            Rule::BeaconLike,
+            Rule::DnsTunnel,
+            Rule::OwnEncryptedDns,
+            Rule::UploadSurge,
+            Rule::SharingSiteUpload,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -138,7 +184,15 @@ impl Rule {
     pub fn actions(self, evidence: &[Evidence]) -> Vec<Action> {
         let mut actions = match self {
             Rule::MonitoringInterrupted => vec![Action::StartMonitoring],
-            Rule::FirstNetworkUse | Rule::NewDestination | Rule::KnownIndicator => Vec::new(),
+            Rule::FirstNetworkUse
+            | Rule::NewDestination
+            | Rule::KnownIndicator
+            | Rule::FlowLimit
+            | Rule::BeaconLike
+            | Rule::DnsTunnel
+            | Rule::OwnEncryptedDns
+            | Rule::UploadSurge
+            | Rule::SharingSiteUpload => Vec::new(),
             Rule::DnsServersChanged | Rule::PrivateDnsChanged | Rule::ProxyChanged => {
                 vec![Action::OpenNetworkSettings]
             }
@@ -168,6 +222,12 @@ impl Rule {
                 | Rule::NewDestination
                 | Rule::KnownIndicator
                 | Rule::SpecialAccess
+                | Rule::FlowLimit
+                | Rule::BeaconLike
+                | Rule::DnsTunnel
+                | Rule::OwnEncryptedDns
+                | Rule::UploadSurge
+                | Rule::SharingSiteUpload
         );
         actions.extend(evidence.iter().filter_map(|e| match e {
             Evidence::App { package } if blocked => Some(Action::AllowApp {
@@ -243,6 +303,43 @@ pub enum Evidence {
     /// A certificate authority the user added to the trusted ones (ID-10): its SHA-256
     /// in lower-case hex, and who it was issued to.
     Certificate { sha256: String, subject: String },
+    /// The app had `limit` connections open at once, as many as it may; more were
+    /// refused (THREAT-MODEL-A D2).
+    FlowLimit { limit: u32 },
+    /// The app connected to `destination` (a name, or an address when no name is known)
+    /// `check_ins` times in a row, typically every `interval_ms` milliseconds, each time
+    /// with at most `max_bytes` both ways (DL-04).
+    Beacon {
+        destination: String,
+        interval_ms: i64,
+        check_ins: u32,
+        max_bytes: u64,
+    },
+    /// The app looked up `names` different random-looking names under `domain` within
+    /// a few minutes, such as `example` (DL-05).
+    DnsNames {
+        domain: String,
+        names: u32,
+        example: String,
+    },
+    /// The app made `lookups` TXT lookups within a few minutes (DL-05).
+    DnsTxtLookups { lookups: u32 },
+    /// The app reached `server`, an encrypted DNS service, itself (DL-05).
+    EncryptedDns { server: String },
+    /// The app sent `last_day` bytes in the last day, where it usually sends `usual_day`
+    /// a day, over the `days` before (DL-02).
+    UploadSurge {
+        last_day: u64,
+        usual_day: u64,
+        days: u32,
+    },
+    /// The app sent `bytes_up` in one connection to `destination`, a sharing service of
+    /// the kind `site` (DL-06).
+    SharingSite {
+        destination: String,
+        site: SharingSite,
+        bytes_up: u64,
+    },
     /// A sensor in use since `started` (Unix ms) (SE-01). `guess` is the app that was on
     /// screen when the use began, if known: a guess, not the app's identity (AM-15).
     Sensor {
@@ -378,6 +475,22 @@ pub fn evidence_from_json(json: &str) -> Result<Vec<Evidence>, serde_json::Error
     serde_json::from_str(json)
 }
 
+/// THREAT-MODEL-A D2: `app` had `limit` connections open at once, and Sentinel refused
+/// more. A Warning: the app may simply be busy, or may be flooding the network.
+pub fn flow_limit(now: i64, app: &str, limit: u32) -> Alert {
+    Alert {
+        rule: Rule::FlowLimit,
+        severity: Severity::Warning,
+        created: now,
+        evidence: vec![
+            Evidence::App {
+                package: app.to_owned(),
+            },
+            Evidence::FlowLimit { limit },
+        ],
+    }
+}
+
 /// SP-03: monitoring stopped while the user wanted it on, at `started` (if known), for
 /// `reason`. A stop the user asked for is not a gap and raises nothing.
 pub fn monitoring_interrupted(now: i64, started: Option<i64>, reason: &str) -> Alert {
@@ -432,6 +545,18 @@ mod tests {
             Rule::from_id("sensor-while-away"),
             Some(Rule::SensorWhileAway)
         );
+        assert_eq!(Rule::from_id("flow-limit"), Some(Rule::FlowLimit));
+        assert_eq!(Rule::from_id("beacon-like"), Some(Rule::BeaconLike));
+        assert_eq!(Rule::from_id("dns-tunnel"), Some(Rule::DnsTunnel));
+        assert_eq!(Rule::from_id("upload-surge"), Some(Rule::UploadSurge));
+        assert_eq!(
+            Rule::from_id("sharing-site-upload"),
+            Some(Rule::SharingSiteUpload)
+        );
+        assert_eq!(
+            Rule::from_id("own-encrypted-dns"),
+            Some(Rule::OwnEncryptedDns)
+        );
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {
             assert_eq!(AlertState::from_name(state.as_str()), Some(state));
@@ -478,6 +603,29 @@ mod tests {
         assert!(Feedback::NotUseful.allowed_for(Severity::Critical));
         assert!(!Feedback::Allowed.allowed_for(Severity::Critical));
         assert_eq!(Feedback::from_name("useful"), None);
+    }
+
+    /// THREAT-MODEL-A D2: a Warning about the app, which can be blocked or looked at,
+    /// stored with its limit.
+    #[test]
+    fn an_app_at_its_flow_limit_raises_a_warning() {
+        let alert = flow_limit(3, "org.example.flood", 256);
+        assert_eq!(alert.severity, Severity::Warning);
+        assert_eq!(alert.app(), Some("org.example.flood"));
+        let app = || "org.example.flood".to_owned();
+        assert_eq!(
+            alert.actions(),
+            [
+                Action::BlockApp { package: app() },
+                Action::OpenApp { package: app() }
+            ]
+        );
+        let json = evidence_to_json(&alert.evidence);
+        assert_eq!(
+            json,
+            r#"[{"type":"app","package":"org.example.flood"},{"type":"flow_limit","limit":256}]"#
+        );
+        assert_eq!(evidence_from_json(&json).unwrap(), alert.evidence);
     }
 
     #[test]

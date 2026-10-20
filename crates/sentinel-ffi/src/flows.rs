@@ -25,6 +25,14 @@ use crate::hunt::indicator_match;
 /// that every flow appears within a second (CM-01).
 const BATCH_DELAY: Duration = Duration::from_millis(250);
 
+/// How often the history is asked which apps sent far more than usual (DL-02).
+const UPLOAD_CHECK: Duration = Duration::from_secs(15 * 60);
+
+/// The most flows one app may have open at once (THREAT-MODEL-A D2, ADR-0028): half the
+/// engine's own limit, so that one app cannot take every connection it allows, and above
+/// the 500 one app opens in the CM-03 acceptance test.
+pub(crate) const MAX_FLOWS_PER_APP: u32 = 512;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FlowProto {
     Tcp,
@@ -89,6 +97,10 @@ pub struct FlowOwner {
     /// to the network when the history first sees it (CM-04).
     #[uniffi(default = None)]
     pub installed_ms: Option<i64>,
+    /// Whether the app is part of the system: on Android, `ApplicationInfo.FLAG_SYSTEM`
+    /// or a system UID. Its check-ins are not flagged (DL-04).
+    #[uniffi(default = false)]
+    pub system: bool,
 }
 
 impl FlowOwner {
@@ -98,6 +110,7 @@ impl FlowOwner {
             uid: -1,
             app: None,
             installed_ms: None,
+            system: false,
         }
     }
 }
@@ -159,6 +172,23 @@ pub(crate) struct FlowEvents {
     /// Each app and indicator already sighted in this run, `None` for an app not known:
     /// an app that keeps using a known server raises one alert, not one per lookup.
     sighted: Mutex<HashSet<(Option<String>, String)>>,
+    /// How many flows each app has open (THREAT-MODEL-A D2).
+    open_per_app: Mutex<HashMap<String, u32>>,
+    /// Flows refused because their app had [`MAX_FLOWS_PER_APP`] open: neither their
+    /// start nor their end is recorded.
+    refused: Mutex<HashSet<u64>>,
+    /// The apps that reached [`MAX_FLOWS_PER_APP`] in this run, alerted once each.
+    limited: Mutex<HashSet<String>>,
+    /// Each app's connections to each place, for check-ins at a fixed interval (DL-04).
+    beacons: Mutex<sentinel_detect::Beacons>,
+    /// Each app's lookups, for data hidden in DNS (DL-05).
+    dns_watch: Mutex<sentinel_detect::DnsWatch>,
+    /// The apps seen reaching an encrypted DNS service themselves in this run (DL-05).
+    own_dns: Mutex<HashSet<String>>,
+    /// When the history was last asked about upload surges, Unix ms (DL-02).
+    uploads_checked: Mutex<i64>,
+    /// Each app and sharing service an upload was seen to in this run (DL-06).
+    shared: Mutex<HashSet<(String, &'static str)>>,
     ready: Notify,
     history_failures: AtomicU64,
 }
@@ -180,6 +210,14 @@ impl FlowEvents {
             feed: RwLock::new(None),
             sightings: Mutex::new(Vec::new()),
             sighted: Mutex::new(HashSet::new()),
+            open_per_app: Mutex::new(HashMap::new()),
+            refused: Mutex::new(HashSet::new()),
+            limited: Mutex::new(HashSet::new()),
+            beacons: Mutex::new(sentinel_detect::Beacons::new()),
+            dns_watch: Mutex::new(sentinel_detect::DnsWatch::new()),
+            own_dns: Mutex::new(HashSet::new()),
+            uploads_checked: Mutex::new(i64::MIN),
+            shared: Mutex::new(HashSet::new()),
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
@@ -250,13 +288,39 @@ impl FlowEvents {
         }
         if let Some(history) = &self.history {
             for alert in &sightings {
-                if let Err(e) = history.raise_unless_open(alert, sentinel_detect::same_sighting) {
+                // One open alert per app and indicator, or per app at its flow limit.
+                let same =
+                    |new: &sentinel_detect::Alert, open: &sentinel_detect::Alert| match new.rule {
+                        sentinel_detect::Rule::KnownIndicator => {
+                            sentinel_detect::same_sighting(new, open)
+                        }
+                        _ => new.rule == open.rule && new.app() == open.app(),
+                    };
+                if let Err(e) = history.raise_unless_open(alert, same) {
                     log::warn!("could not raise an alert: {e}");
                 }
             }
+            self.check_uploads(history);
         }
         if !batch.is_empty() {
             self.foreign.flows(batch);
+        }
+    }
+
+    /// DL-02: asks the history which apps sent far more than usual, at most every
+    /// [`UPLOAD_CHECK`]. The first batch of a run asks at once.
+    fn check_uploads(&self, history: &HistoryStore) {
+        let now = now_ms();
+        let interval = i64::try_from(UPLOAD_CHECK.as_millis()).unwrap_or(i64::MAX);
+        {
+            let mut checked = lock(&self.uploads_checked);
+            if now.saturating_sub(*checked) < interval {
+                return;
+            }
+            *checked = now;
+        }
+        if let Err(e) = history.raise_upload_surges(now) {
+            log::warn!("could not check uploads: {e}");
         }
     }
 
@@ -369,6 +433,119 @@ impl FlowEvents {
         }
     }
 
+    /// Whether `flow` may open: its app has fewer than [`MAX_FLOWS_PER_APP`] open
+    /// (THREAT-MODEL-A D2, ADR-0028). A refused flow is not recorded, so that an app
+    /// flooding the network cannot flood the history too; the first refusal in a run
+    /// raises a Warning about the app. Flows of no known app count only towards the
+    /// engine's own limit.
+    fn admit(&self, flow: &FlowInfo, owner: &FlowOwner) -> bool {
+        let Some(app) = &owner.app else {
+            return true;
+        };
+        let mut open = lock(&self.open_per_app);
+        let count = open.entry(app.clone()).or_default();
+        if *count < MAX_FLOWS_PER_APP {
+            *count += 1;
+            return true;
+        }
+        drop(open);
+        lock(&self.refused).insert(flow.id);
+        if self.history.is_some() && lock(&self.limited).insert(app.clone()) {
+            let alert = sentinel_detect::flow_limit(now_ms(), app, MAX_FLOWS_PER_APP);
+            lock(&self.sightings).push(alert);
+            self.ready.notify_one();
+        }
+        false
+    }
+
+    /// DL-04: an app's check-ins with one place at a fixed interval, with little data
+    /// each time, raise an Info alert, once per app and place in a run. Not for system
+    /// apps, nor for DNS (DL-05), nor for blocked connections, which carried nothing.
+    fn watch_check_ins(&self, flow: &FlowInfo, owner: &FlowOwner, totals: &FlowTotals) {
+        let Some(app) = self.watched(owner) else {
+            return;
+        };
+        if totals.verdict == Verdict::Block || flow.dst.port() == 53 {
+            return;
+        }
+        let destination = flow
+            .hostname
+            .clone()
+            .unwrap_or_else(|| flow.dst.ip().to_string());
+        let started = i64::try_from(flow.started_ms).unwrap_or(i64::MAX);
+        let bytes = totals.bytes_up.saturating_add(totals.bytes_down);
+        let found = lock(&self.beacons).connection(app, &destination, started, bytes);
+        if let Some(beacon) = found {
+            lock(&self.sightings).push(sentinel_detect::beacon_like(now_ms(), app, beacon));
+            self.ready.notify_one();
+        }
+    }
+
+    /// The app the unusual-DNS and beacon rules watch: one known, not part of the
+    /// system, while alerts can be raised.
+    fn watched<'a>(&self, owner: &'a FlowOwner) -> Option<&'a str> {
+        let app = owner.app.as_deref()?;
+        (!owner.system && self.history.is_some()).then_some(app)
+    }
+
+    /// DL-05: lookups that look like data hidden in DNS raise a Warning, once per app
+    /// and domain (or app, for TXT lookups) in a run.
+    fn watch_lookup(&self, owner: &FlowOwner, qname: &str, qtype: u16) {
+        let Some(app) = self.watched(owner) else {
+            return;
+        };
+        let now = now_ms();
+        let found = lock(&self.dns_watch).lookup(now, app, qname, qtype);
+        if let Some(tunnel) = found {
+            lock(&self.sightings).push(sentinel_detect::dns_tunnel(now, app, tunnel));
+            self.ready.notify_one();
+        }
+    }
+
+    /// DL-05: an app that reaches an encrypted DNS service itself raises an Info alert,
+    /// once per app in a run. `server_name` is the name it used, if known.
+    fn watch_encrypted_dns(&self, owner: &FlowOwner, flow: &FlowInfo, server_name: Option<&str>) {
+        let Some(app) = self.watched(owner) else {
+            return;
+        };
+        let Some(server) =
+            sentinel_detect::encrypted_dns(flow.dst.ip(), flow.dst.port(), server_name)
+        else {
+            return;
+        };
+        if lock(&self.own_dns).insert(app.to_owned()) {
+            let alert = sentinel_detect::own_encrypted_dns(now_ms(), app, &server);
+            lock(&self.sightings).push(alert);
+            self.ready.notify_one();
+        }
+    }
+
+    /// DL-06: an upload to a file-sharing, paste or anonymous drop service that is not
+    /// the app's own raises a Warning, once per app and service in a run.
+    fn watch_sharing(&self, flow: &FlowInfo, owner: &FlowOwner, totals: &FlowTotals) {
+        let Some(app) = self.watched(owner) else {
+            return;
+        };
+        let Some(hostname) = flow.hostname.as_deref() else {
+            return;
+        };
+        if totals.verdict == Verdict::Block {
+            return;
+        }
+        let Some(alert) =
+            sentinel_detect::sharing_site_upload(now_ms(), app, hostname, totals.bytes_up)
+        else {
+            return;
+        };
+        let Some((domain, _)) = sentinel_detect::sharing_site(hostname) else {
+            return;
+        };
+        if lock(&self.shared).insert((app.to_owned(), domain)) {
+            lock(&self.sightings).push(alert);
+            self.ready.notify_one();
+        }
+    }
+
     /// The indicators in force, if alerts can be raised at all.
     fn matcher(&self) -> Option<Arc<sentinel_ioc::Matcher>> {
         self.history.as_ref()?;
@@ -449,8 +626,14 @@ impl Observer for FlowEvents {
         // The app and the address are known for sure; a name from an earlier DNS answer
         // is not, so it is not matched (ADR-0015).
         self.match_address(&owner, flow.dst.ip());
+        if !self.admit(flow, &owner) {
+            return Verdict::Block;
+        }
         let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), None);
         let blocked = verdict == Verdict::Block;
+        if !blocked {
+            self.watch_encrypted_dns(&owner, flow, flow.hostname.as_deref());
+        }
         self.push(record(flow, &owner, None, blocked, &self.databases()));
         lock(&self.open).insert(flow.id, (flow.clone(), owner));
         verdict
@@ -466,16 +649,24 @@ impl Observer for FlowEvents {
             None => FlowOwner::unknown(),
         };
         self.match_name(&owner, hostname, Sighting::ServerName);
-        self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), Some(hostname))
+        let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), Some(hostname));
+        if verdict == Verdict::Allow {
+            self.watch_encrypted_dns(&owner, flow, Some(hostname));
+        }
+        verdict
     }
 
-    fn dns_query(&self, flow: &FlowInfo, qname: &str) -> Verdict {
+    fn dns_query(&self, flow: &FlowInfo, qname: &str, qtype: u16) -> Verdict {
         let owner = lock(&self.open)
             .get(&flow.id)
             .map_or_else(FlowOwner::unknown, |(_, owner)| owner.clone());
         // The address is the resolver's, not the destination's: only names count here.
         self.match_name(&owner, qname, Sighting::DnsQuery);
-        self.verdict(&owner, None, flow.dst.port(), Some(qname))
+        let verdict = self.verdict(&owner, None, flow.dst.port(), Some(qname));
+        if verdict == Verdict::Allow {
+            self.watch_lookup(&owner, qname, qtype);
+        }
+        verdict
     }
 
     fn recheck(&self, flow: &FlowInfo) -> Verdict {
@@ -497,9 +688,17 @@ impl Observer for FlowEvents {
     }
 
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
+        if lock(&self.refused).remove(&flow.id) {
+            return;
+        }
         let owner = lock(&self.open)
             .remove(&flow.id)
             .map_or_else(FlowOwner::unknown, |(_, owner)| owner);
+        if let Some(app) = &owner.app
+            && let Some(open) = lock(&self.open_per_app).get_mut(app)
+        {
+            *open = open.saturating_sub(1);
+        }
         let mut ended = record(
             flow,
             &owner,
@@ -512,6 +711,8 @@ impl Observer for FlowEvents {
         ended.bytes_up_away = totals.bytes_up_away;
         ended.bytes_down_away = totals.bytes_down_away;
         self.push(ended);
+        self.watch_check_ins(flow, &owner, &totals);
+        self.watch_sharing(flow, &owner, &totals);
     }
 }
 
@@ -704,6 +905,7 @@ mod tests {
             uid,
             app: Some(app.to_owned()),
             installed_ms: None,
+            system: false,
         }
     }
 
@@ -913,6 +1115,7 @@ mod tests {
             uid: 10_100,
             app: Some(app.to_owned()),
             installed_ms,
+            system: false,
         }
     }
 
@@ -923,6 +1126,322 @@ mod tests {
         });
         history.set_alert_listener(Some(observer.clone()));
         observer
+    }
+
+    /// DL-04, the beacon simulation: an app that checks in with one server every minute,
+    /// a little data each time, raises one Info alert naming it, the server and the
+    /// interval. The same pattern from a system app, or over DNS, raises nothing.
+    #[test]
+    fn an_app_checking_in_every_minute_raises_one_info_alert() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+
+        let (_dir, history) = history();
+        let system = FlowOwner {
+            system: true,
+            ..installed("com.android.example", None)
+        };
+        let observer = listen(
+            &history,
+            vec![
+                (443, installed("org.example.beacon", None)),
+                (8443, system),
+                (53, installed("org.example.lookups", None)),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let mut id = 0;
+        for minute in 0..10u64 {
+            for (dst, hostname) in [
+                ("203.0.113.9:443", Some("c2.example.net")),
+                ("203.0.113.10:8443", Some("time.example.com")),
+                ("10.215.173.53:53", None),
+            ] {
+                id += 1;
+                let check_in = FlowInfo {
+                    // A second or so late, now and then.
+                    started_ms: 1_000_000 + minute * 60_000 + (minute % 3) * 700,
+                    ..flow(id, dst, hostname)
+                };
+                assert_eq!(events.flow_started(&check_in), Verdict::Allow);
+                events.flow_ended(
+                    &check_in,
+                    FlowTotals {
+                        bytes_up: 300,
+                        bytes_down: 900,
+                        bytes_up_away: 0,
+                        bytes_down_away: 0,
+                        ended_ms: check_in.started_ms + 400,
+                        verdict: Verdict::Allow,
+                    },
+                );
+            }
+        }
+        events.flush();
+
+        // Each app's first destinations raise their own alerts (CM-04).
+        let alerts: Vec<_> = history
+            .alerts(true, 10)
+            .unwrap()
+            .into_iter()
+            .filter(|alert| alert.rule == AlertRule::BeaconLike)
+            .collect();
+        assert_eq!(alerts.len(), 1, "{alerts:?}");
+        assert_eq!(alerts[0].severity, AlertSeverity::Info);
+        assert_eq!(
+            alerts[0].evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.beacon".to_owned()
+                },
+                AlertEvidence::Beacon {
+                    destination: "c2.example.net".to_owned(),
+                    // The median of its seven intervals.
+                    interval_ms: 60_700,
+                    check_ins: 8,
+                    max_bytes: 1_200,
+                }
+            ]
+        );
+    }
+
+    /// DL-05, the DNS-tunnel simulation: an app looking up a different encoded name
+    /// every second under one domain raises one Warning naming the domain. The same
+    /// lookups by a system app raise nothing. Apps that reach an encrypted DNS service
+    /// themselves, by address, by name or on its own port, raise one Info alert each.
+    #[test]
+    fn unusual_dns_use_raises_its_alerts() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+
+        // Bits enough for names that look like encoded data.
+        fn mix(mut x: u64) -> u64 {
+            x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            x ^ (x >> 31)
+        }
+        let (_dir, history) = history();
+        let system = FlowOwner {
+            system: true,
+            ..installed("com.android.example", None)
+        };
+        let observer = listen(
+            &history,
+            vec![
+                (53, installed("org.example.tunnel", None)),
+                (5353, system),
+                (443, installed("org.example.browser", None)),
+                (8443, installed("org.example.reader", None)),
+                (853, installed("org.example.private", None)),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let tunnel = flow(1, "10.111.222.3:53", None);
+        let quiet = flow(2, "10.111.222.3:5353", None);
+        for lookups in [&tunnel, &quiet] {
+            assert_eq!(events.flow_started(lookups), Verdict::Allow);
+        }
+        for i in 0..30 {
+            let name = format!(
+                "{:016x}{:016x}.{:016x}{:016x}.t.tunnel.example",
+                mix(4 * i),
+                mix(4 * i + 1),
+                mix(4 * i + 2),
+                mix(4 * i + 3)
+            );
+            assert_eq!(events.dns_query(&tunnel, &name, 1), Verdict::Allow);
+            assert_eq!(events.dns_query(&quiet, &name, 1), Verdict::Allow);
+        }
+        let by_address = flow(3, "8.8.8.8:443", None);
+        let by_name = flow(4, "203.0.113.7:8443", None);
+        let dot = flow(5, "203.0.113.8:853", None);
+        for connection in [&by_address, &by_name, &dot] {
+            assert_eq!(events.flow_started(connection), Verdict::Allow);
+        }
+        assert_eq!(
+            events.hostname_seen(&by_name, "cloudflare-dns.com"),
+            Verdict::Allow
+        );
+        events.flush();
+
+        let alerts = history.alerts(true, 20).unwrap();
+        let of = |rule| -> Vec<_> { alerts.iter().filter(|a| a.rule == rule).collect() };
+        let tunnels = of(AlertRule::DnsTunnel);
+        assert_eq!(tunnels.len(), 1, "{alerts:?}");
+        assert_eq!(tunnels[0].severity, AlertSeverity::Warning);
+        assert_eq!(
+            tunnels[0].evidence[0],
+            AlertEvidence::App {
+                app: "org.example.tunnel".to_owned()
+            }
+        );
+        assert!(matches!(
+            &tunnels[0].evidence[1],
+            AlertEvidence::DnsNames { domain, names: 20, .. } if domain == "tunnel.example"
+        ));
+        let own: Vec<_> = of(AlertRule::OwnEncryptedDns)
+            .into_iter()
+            .map(|alert| (alert.severity, alert.evidence.clone()))
+            .collect();
+        let alert = |app: &str, server: &str| {
+            (
+                AlertSeverity::Info,
+                vec![
+                    AlertEvidence::App {
+                        app: app.to_owned(),
+                    },
+                    AlertEvidence::EncryptedDns {
+                        server: server.to_owned(),
+                    },
+                ],
+            )
+        };
+        assert_eq!(own.len(), 3, "one for each app: {own:?}");
+        assert!(own.contains(&alert("org.example.browser", "8.8.8.8")));
+        assert!(own.contains(&alert("org.example.reader", "cloudflare-dns.com")));
+        assert!(own.contains(&alert("org.example.private", "203.0.113.8")));
+    }
+
+    /// DL-06: an app that uploads to a paste site raises one Warning naming the site.
+    /// A second upload, a visit, a site's own app and a system app raise nothing.
+    #[test]
+    fn uploads_to_sharing_sites_by_unrelated_apps_are_flagged() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity, SharingSiteKind};
+
+        let (_dir, history) = history();
+        let system = FlowOwner {
+            system: true,
+            ..installed("com.android.example", None)
+        };
+        let observer = listen(
+            &history,
+            vec![
+                (443, installed("org.example.flashlight", None)),
+                (8443, installed("nz.mega.android", None)),
+                (9443, system),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let ended = |bytes_up| FlowTotals {
+            bytes_up,
+            bytes_down: 1_000,
+            bytes_up_away: 0,
+            bytes_down_away: 0,
+            ended_ms: 5,
+            verdict: Verdict::Allow,
+        };
+        for (id, dst, host, bytes_up) in [
+            (1, "203.0.113.9:443", "pastebin.com", 2_000),
+            (2, "203.0.113.9:443", "pastebin.com", 40_000),
+            (3, "203.0.113.9:443", "pastebin.com", 80_000),
+            (4, "203.0.113.10:8443", "g.api.mega.nz", 5_000_000),
+            (5, "203.0.113.11:9443", "pastebin.com", 40_000),
+        ] {
+            let upload = flow(id, dst, Some(host));
+            assert_eq!(events.flow_started(&upload), Verdict::Allow);
+            events.flow_ended(&upload, ended(bytes_up));
+        }
+        events.flush();
+
+        let alerts: Vec<_> = history
+            .alerts(true, 20)
+            .unwrap()
+            .into_iter()
+            .filter(|alert| alert.rule == AlertRule::SharingSiteUpload)
+            .collect();
+        assert_eq!(alerts.len(), 1, "{alerts:?}");
+        assert_eq!(alerts[0].severity, AlertSeverity::Warning);
+        assert_eq!(
+            alerts[0].evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.flashlight".to_owned()
+                },
+                AlertEvidence::SharingSite {
+                    destination: "pastebin.com".to_owned(),
+                    site: SharingSiteKind::Paste,
+                    bytes_up: 40_000,
+                }
+            ]
+        );
+    }
+
+    /// THREAT-MODEL-A D2: an app may have `MAX_FLOWS_PER_APP` flows open; more are
+    /// refused and never recorded, the first refusal raises one Warning about the app,
+    /// and once a flow ends another may open. Flows of no known app are not counted.
+    #[test]
+    fn an_app_may_not_open_more_than_its_share_of_flows() {
+        use crate::alerts::{AlertEvidence, AlertRule, AlertSeverity};
+
+        let (_dir, history) = history();
+        let observer = listen(
+            &history,
+            vec![
+                (443, installed("org.example.flood", None)),
+                (80, FlowOwner::unknown()),
+            ],
+        );
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let open: Vec<FlowInfo> = (1..=u64::from(MAX_FLOWS_PER_APP))
+            .map(|id| flow(id, "203.0.113.9:443", None))
+            .collect();
+        for flow in &open {
+            assert_eq!(events.flow_started(flow), Verdict::Allow);
+        }
+        let ended = |verdict| FlowTotals {
+            bytes_up: 0,
+            bytes_down: 0,
+            bytes_up_away: 0,
+            bytes_down_away: 0,
+            ended_ms: 5,
+            verdict,
+        };
+        for id in [10_000, 10_001] {
+            let refused = flow(id, "203.0.113.9:443", None);
+            assert_eq!(events.flow_started(&refused), Verdict::Block);
+            events.flow_ended(&refused, ended(Verdict::Block));
+        }
+        let unknown = flow(10_002, "203.0.113.10:80", None);
+        assert_eq!(events.flow_started(&unknown), Verdict::Allow);
+        events.flush();
+
+        let recorded = history.recent_flows(1_000).unwrap();
+        assert_eq!(
+            recorded.len(),
+            open.len() + 1,
+            "refused flows are not recorded"
+        );
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].rule, AlertRule::FlowLimit);
+        assert_eq!(alerts[0].severity, AlertSeverity::Warning);
+        assert_eq!(
+            alerts[0].evidence,
+            [
+                AlertEvidence::App {
+                    app: "org.example.flood".to_owned()
+                },
+                AlertEvidence::FlowLimit {
+                    limit: MAX_FLOWS_PER_APP
+                }
+            ]
+        );
+
+        // One ends: another may open.
+        events.flow_ended(&open[0], ended(Verdict::Allow));
+        assert_eq!(
+            events.flow_started(&flow(10_003, "203.0.113.9:443", None)),
+            Verdict::Allow
+        );
+        assert_eq!(
+            events.flow_started(&flow(10_004, "203.0.113.9:443", None)),
+            Verdict::Block
+        );
+        events.flush();
+        assert_eq!(
+            history.alerts(true, 10).unwrap().len(),
+            1,
+            "one alert a run"
+        );
     }
 
     /// ID-13: a lookup, a TLS server name or a connection that names a known indicator
@@ -951,11 +1470,11 @@ mod tests {
         let events = run(1);
         let dns = flow(1, "10.111.222.3:53", None);
         assert_eq!(events.flow_started(&dns), Verdict::Allow);
-        events.dns_query(&dns, "cdn.spy.example");
+        events.dns_query(&dns, "cdn.spy.example", 1);
         events.flush();
         let feed = open(&dir.path().join("feed"));
         events.set_feed(Some(Arc::clone(&feed)));
-        events.dns_query(&dns, "cdn.spy.example");
+        events.dns_query(&dns, "cdn.spy.example", 1);
         events.flush();
         assert!(
             observer.heard.lock().unwrap().is_empty(),
@@ -975,12 +1494,12 @@ mod tests {
         );
         feed.install(path(&staged)).unwrap();
         assert_eq!(
-            events.dns_query(&dns, "cdn.spy.example"),
+            events.dns_query(&dns, "cdn.spy.example", 1),
             Verdict::Allow,
             "nothing is blocked without the user"
         );
-        events.dns_query(&dns, "spy.example");
-        events.dns_query(&dns, "other.example");
+        events.dns_query(&dns, "spy.example", 1);
+        events.dns_query(&dns, "other.example", 1);
         let tls = flow(2, "203.0.113.5:443", None);
         events.flow_started(&tls);
         assert_eq!(events.hostname_seen(&tls, "spy.example"), Verdict::Allow);
@@ -1055,14 +1574,14 @@ mod tests {
         events.set_feed(Some(Arc::clone(&feed)));
         let dns = flow(1, "10.111.222.3:53", None);
         events.flow_started(&dns);
-        events.dns_query(&dns, "spy.example");
+        events.dns_query(&dns, "spy.example", 1);
         events.flush();
         assert_eq!(observer.heard.lock().unwrap().len(), 3);
         history.dismiss_alert(heard[0].id).unwrap();
         let events = run(3);
         events.set_feed(Some(Arc::clone(&feed)));
         events.flow_started(&dns);
-        events.dns_query(&dns, "spy.example");
+        events.dns_query(&dns, "spy.example", 1);
         events.flush();
         assert_eq!(
             observer.heard.lock().unwrap().len(),
@@ -1287,25 +1806,31 @@ mod tests {
         // resolver's address.
         let unowned = at(7, "198.51.100.53:2");
         assert_eq!(
-            events.dns_query(&unowned, "x.ads.example"),
+            events.dns_query(&unowned, "x.ads.example", 1),
             Verdict::Block,
             "a domain rule for every app, whoever asks"
         );
         assert_eq!(
-            events.dns_query(&unowned, "ok.ads.example"),
+            events.dns_query(&unowned, "ok.ads.example", 1),
             Verdict::Block,
             "the chat app's exception needs the chat app"
         );
         assert_eq!(
-            events.dns_query(&unowned, "chat.example"),
+            events.dns_query(&unowned, "chat.example", 1),
             Verdict::Allow,
             "the range rule needs an address, and a lookup has none"
         );
         let lookup = at(8, "203.0.113.53:2");
         events.flow_started(&lookup);
-        assert_eq!(events.dns_query(&lookup, "x.ads.example"), Verdict::Block);
-        assert_eq!(events.dns_query(&lookup, "ok.ads.example"), Verdict::Allow);
-        assert_eq!(events.dns_query(&lookup, "chat.example"), Verdict::Allow);
+        assert_eq!(
+            events.dns_query(&lookup, "x.ads.example", 1),
+            Verdict::Block
+        );
+        assert_eq!(
+            events.dns_query(&lookup, "ok.ads.example", 1),
+            Verdict::Allow
+        );
+        assert_eq!(events.dns_query(&lookup, "chat.example", 1), Verdict::Allow);
 
         // Taking a rule back applies to the next connection.
         assert!(history.remove_firewall_rule(maps).unwrap());
@@ -1379,7 +1904,7 @@ mod tests {
         );
         let dns = at(3, 53);
         assert_eq!(events.flow_started(&dns), Verdict::Allow, "DNS");
-        assert_eq!(events.dns_query(&dns, "chat.example"), Verdict::Allow);
+        assert_eq!(events.dns_query(&dns, "chat.example", 1), Verdict::Allow);
         let rule = |destination, action| FirewallRule {
             app: Some("org.example.chat".into()),
             destination,
@@ -1397,7 +1922,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            events.dns_query(&dns, "ads.example"),
+            events.dns_query(&dns, "ads.example", 1),
             Verdict::Block,
             "rules still apply"
         );
@@ -1492,7 +2017,7 @@ mod tests {
             events.hostname_seen(&chat, "pixel.ads.example"),
             Verdict::Block
         );
-        assert_eq!(events.dns_query(&chat, "ads.example"), Verdict::Block);
+        assert_eq!(events.dns_query(&chat, "ads.example", 1), Verdict::Block);
         assert_eq!(events.hostname_seen(&chat, "chat.example"), Verdict::Allow);
         assert_eq!(
             events.hostname_seen(&maps, "pixel.ads.example"),
@@ -1671,7 +2196,10 @@ mod tests {
             events.hostname_seen(&first, "api.new.example"),
             Verdict::Block
         );
-        assert_eq!(events.dns_query(&first, "api.new.example"), Verdict::Block);
+        assert_eq!(
+            events.dns_query(&first, "api.new.example", 1),
+            Verdict::Block
+        );
         end(&first, Verdict::Block);
         assert_eq!(
             events.flow_started(&at(3, 2)),

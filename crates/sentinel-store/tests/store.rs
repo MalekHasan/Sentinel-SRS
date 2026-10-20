@@ -1813,3 +1813,198 @@ fn undo_puts_back_what_was_there_before() {
     assert_eq!(store.journal(100).unwrap().len(), 10);
     assert_eq!(store.undo(9_999, NOW + 19).unwrap(), Undo::NotFound);
 }
+
+/// SRS §12.3: the flows, alerts and actions of a time range export as JSON and as CSV,
+/// a page at a time. Joined, the pages make one document whatever their size; records
+/// outside the range are left out, and no cell can be a spreadsheet formula.
+#[test]
+fn the_history_exports_as_json_and_csv() {
+    use sentinel_detect::FirewallMode;
+    use sentinel_store::{ExportFormat, ExportKind, ExportPage};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let events: Vec<_> = (0..7)
+        .map(|i| {
+            let started = NOW + i * 1_000;
+            event(
+                u64::try_from(i).unwrap() + 1,
+                FlowRow {
+                    ended: Some(started + 500),
+                    bytes_up: 10,
+                    bytes_down: 20,
+                    ..flow("org.example.app", "=cmd.example", started)
+                },
+            )
+        })
+        .collect();
+    store.record_flows(1, &events).unwrap();
+    store
+        .record_flows(
+            1,
+            &[event(
+                100,
+                flow("org.example.app", "late.example", NOW + DAY),
+            )],
+        )
+        .unwrap();
+    store
+        .record_alert(&sentinel_detect::flow_limit(NOW, "org.example.app", 512))
+        .unwrap();
+    store
+        .set_firewall_mode(FirewallMode::BlockUnknown { since: NOW }, NOW)
+        .unwrap();
+
+    let export = |kind, format, limit| {
+        let (mut text, mut after, mut pages) = (String::new(), None, 0);
+        loop {
+            let page = store
+                .export_page(kind, format, NOW, NOW + DAY, after, limit)
+                .unwrap();
+            text.push_str(&page.text);
+            pages += 1;
+            match page.next {
+                Some(next) => after = Some(next),
+                None => return (text, pages),
+            }
+        }
+    };
+    for kind in [ExportKind::Flows, ExportKind::Alerts, ExportKind::Actions] {
+        for format in [ExportFormat::Json, ExportFormat::Csv] {
+            let (whole, pages) = export(kind, format, 1_000);
+            assert_eq!(pages, 1);
+            for limit in [1, 2, 3, 7] {
+                assert_eq!(
+                    export(kind, format, limit).0,
+                    whole,
+                    "{kind:?} {format:?} by {limit}"
+                );
+            }
+        }
+    }
+
+    let (flows, pages) = export(ExportKind::Flows, ExportFormat::Json, 3);
+    assert_eq!(pages, 3);
+    let flows: serde_json::Value = serde_json::from_str(&flows).unwrap();
+    assert_eq!(
+        flows.as_array().unwrap().len(),
+        7,
+        "the next day is outside"
+    );
+    assert_eq!(flows[0]["app"], "org.example.app");
+    assert_eq!(flows[0]["protocol"], "tcp");
+    assert_eq!(flows[0]["hostname"], "=cmd.example");
+    assert_eq!(flows[0]["hostname_source"], "dns");
+    assert_eq!(flows[0]["started"], "2026-10-14T12:00:00.000Z");
+    assert_eq!(flows[0]["ended"], "2026-10-14T12:00:00.500Z");
+    assert_eq!(flows[0]["bytes_down"], 20);
+    assert_eq!(flows[0]["blocked"], false);
+
+    let (alerts, _) = export(ExportKind::Alerts, ExportFormat::Json, 10);
+    let alerts: serde_json::Value = serde_json::from_str(&alerts).unwrap();
+    assert_eq!(alerts[0]["rule"], "flow-limit");
+    assert_eq!(alerts[0]["severity"], "warning");
+    assert_eq!(alerts[0]["state"], "open");
+    assert_eq!(alerts[0]["app"], "org.example.app");
+    assert_eq!(alerts[0]["evidence"][1]["limit"], 512);
+
+    let (actions, _) = export(ExportKind::Actions, ExportFormat::Json, 10);
+    let actions: serde_json::Value = serde_json::from_str(&actions).unwrap();
+    assert_eq!(actions.as_array().unwrap().len(), 1);
+    assert_eq!(actions[0]["at"], "2026-10-14T12:00:00.000Z");
+    assert_eq!(actions[0]["after"]["setting"], "mode");
+    assert_eq!(actions[0]["undone"], serde_json::Value::Null);
+
+    let (csv, _) = export(ExportKind::Flows, ExportFormat::Csv, 3);
+    let lines: Vec<&str> = csv.split_terminator("\r\n").collect();
+    assert_eq!(lines.len(), 8, "a header and seven flows");
+    assert_eq!(
+        lines[0],
+        "id,app,protocol,local_ip,local_port,remote_ip,remote_port,hostname,hostname_source,\
+         started,ended,bytes_up,bytes_down,bytes_up_while_away,bytes_down_while_away,blocked"
+    );
+    assert!(lines[1].contains(",'=cmd.example,dns,"), "{}", lines[1]);
+    let (csv, _) = export(ExportKind::Alerts, ExportFormat::Csv, 10);
+    // The evidence is one quoted cell of JSON.
+    assert!(
+        csv.contains(r#","[{""package"":""org.example.app"",""type"":""app""},"#),
+        "{csv}"
+    );
+
+    // Nothing in range: an empty array, or a header alone.
+    let empty = |format| {
+        store
+            .export_page(ExportKind::Flows, format, 0, 1, None, 10)
+            .unwrap()
+    };
+    assert_eq!(
+        empty(ExportFormat::Json),
+        ExportPage {
+            text: "[]".to_owned(),
+            next: None
+        }
+    );
+    assert_eq!(empty(ExportFormat::Csv).text.lines().count(), 1);
+}
+
+/// DL-02: what each app sent in the last day and in the fourteen days before, for apps
+/// that sent enough in the last day to matter; the same once older days are rolled up.
+#[test]
+fn uploads_are_totalled_for_the_last_day_and_the_fortnight_before() {
+    const MIB: i64 = 1024 * 1024;
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let mut id = 0;
+    let mut sent = |app: &str, started: i64, bytes_up: i64| {
+        id += 1;
+        let row = FlowRow {
+            ended: Some(started + 1_000),
+            bytes_up,
+            ..flow(app, "upload.example", started)
+        };
+        store.record_flows(1, &[event(id, row)]).unwrap();
+    };
+    for app in [
+        "org.example.surge",
+        "org.example.steady",
+        "org.example.quiet",
+    ] {
+        sent(app, NOW - 20 * DAY, 0);
+        for days_ago in 2..=14 {
+            sent(app, NOW - days_ago * DAY, 2 * MIB);
+        }
+    }
+    sent("org.example.surge", NOW - DAY / 2, 25 * MIB);
+    sent("org.example.steady", NOW - DAY / 2, 15 * MIB);
+    sent("org.example.quiet", NOW - DAY / 2, 5 * MIB);
+
+    let totals = |store: &Store| {
+        let mut uploads = store.uploads(NOW).unwrap();
+        uploads.sort_by(|a, b| a.app.cmp(&b.app));
+        uploads
+    };
+    let expected = |app: &str, last_day: i64| sentinel_detect::Uploads {
+        app: app.to_owned(),
+        first_seen: NOW - 20 * DAY,
+        last_day: u64::try_from(last_day).unwrap(),
+        baseline: u64::try_from(26 * MIB).unwrap(),
+    };
+    let both = vec![
+        expected("org.example.steady", 15 * MIB),
+        expected("org.example.surge", 25 * MIB),
+    ];
+    assert_eq!(
+        totals(&store),
+        both,
+        "the quiet app sent too little to look at"
+    );
+    assert!(store.apply_retention(NOW, 1).unwrap() > 0);
+    assert_eq!(totals(&store), both, "rolled-up days count");
+
+    let surges: Vec<_> = both
+        .iter()
+        .filter_map(|uploads| sentinel_detect::upload_surge(NOW, uploads))
+        .collect();
+    assert_eq!(surges.len(), 1);
+    assert_eq!(surges[0].app(), Some("org.example.surge"));
+}

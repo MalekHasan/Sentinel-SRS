@@ -1,0 +1,5 @@
+# What cargo-fuzz grows and finds; only the seeds are kept.
+/corpus
+/artifacts
+/coverage
+/target

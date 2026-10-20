@@ -59,6 +59,24 @@ class SentinelVpnService : VpnService() {
         }
     }
 
+    // Checks that the engine still reports, as often as it does (SP-03). Handler time
+    // stands still while the phone sleeps, so this never wakes it. A silent engine takes
+    // the phone's traffic and relays none of it: a new one replaces it, and its gap
+    // closes when that one runs (NF-07).
+    private val checkHeartbeat = object : Runnable {
+        override fun run() {
+            val running = engine ?: return
+            val age = running.snapshot().heartbeatAgeMs.toLong()
+            if (Heartbeat.check(this@SentinelVpnService, age, System.currentTimeMillis())) {
+                // Still in the foreground: Android may not let it come back from the background.
+                teardown(keepForeground = true)
+                startMonitoring()
+            } else {
+                main.postDelayed(this, Heartbeat.EVERY_MILLIS)
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         GapLog.recordUnexpectedExit(this)
@@ -136,6 +154,9 @@ class SentinelVpnService : VpnService() {
         sensorWatch = history?.let { SensorWatch(this, it, presence::isAway).also(SensorWatch::start) }
         GapLog.closeOpen(this, System.currentTimeMillis())
         Monitor.started(started)
+        // Only the VPN service itself can ask (SP-03, ADR-0030).
+        Monitor.alwaysOn = isAlwaysOn
+        main.post(checkHeartbeat)
         loadFeedData(started)
         // Apps installed or updated while monitoring runs are checked at once (ID-13).
         installWatch = InstallWatch(this).also(InstallWatch::start)
@@ -234,10 +255,11 @@ class SentinelVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun teardown() {
+    private fun teardown(keepForeground: Boolean = false) {
         listener = null
         IndicatorFeed.removeListener(feedChanged)
         main.removeCallbacks(recheckFeed)
+        main.removeCallbacks(checkHeartbeat)
         underlyingDns?.stop()
         underlyingDns = null
         networkWatch?.stop()
@@ -256,7 +278,7 @@ class SentinelVpnService : VpnService() {
         }
         engine = null
         Monitor.stopped()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        if (!keepForeground) stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     private fun goForeground() {
@@ -325,8 +347,9 @@ class SentinelVpnService : VpnService() {
         ): FlowOwner {
             val uid = ownerUid(proto, localIp, localPort, remoteIp, remotePort)
             val app = appNames.packageFor(uid)
-            // An app installed since the history began is new to the network (CM-04).
-            return FlowOwner(uid, app, app?.let(appNames::installedAt))
+            // An app installed since the history began is new to the network (CM-04). A
+            // system app's regular check-ins are not flagged (DL-04).
+            return FlowOwner(uid, app, app?.let(appNames::installedAt), appNames.isSystem(uid, app))
         }
 
         /** Only the active VPN app may ask Android who owns a connection (API 29+). */

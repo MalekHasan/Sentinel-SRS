@@ -54,7 +54,7 @@ impl Observer for Recorder {
         }
     }
 
-    fn dns_query(&self, _flow: &FlowInfo, qname: &str) -> Verdict {
+    fn dns_query(&self, _flow: &FlowInfo, qname: &str, _qtype: u16) -> Verdict {
         if Some(qname) == self.block_name {
             Verdict::Block
         } else {
@@ -242,6 +242,59 @@ async fn blocked_flow_gets_no_reply() {
     assert_eq!(ended[0].1.bytes_up, 0);
     drop(ended);
     h.engine.abort();
+}
+
+/// THREAT-MODEL-A D2: beyond `max_flows` open flows, a new one is refused before it
+/// reaches the observer, and the open ones go on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn flows_beyond_the_cap_are_refused() {
+    let server = udp_echo(Ipv4Addr::LOCALHOST.into());
+    let h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            max_flows: 2,
+            ..EngineConfig::default()
+        },
+    );
+    let from = |port| SocketAddr::new(APP_V4.into(), port);
+    for port in [41_000, 41_001] {
+        h.send(&udp_packet_from(from(port), server, b"open"));
+        let (_, to, _) = parse_udp(&h.recv().await.expect("an open flow is relayed"));
+        assert_eq!(to, from(port));
+    }
+    h.send(&udp_packet_from(from(41_002), server, b"one too many"));
+    assert!(h.recv().await.is_none(), "a flow beyond the cap is refused");
+    assert_eq!(h.stats.flows_refused(), 1);
+    assert_eq!(h.stats.flows_total(), 2, "a refused flow is no flow");
+    assert_eq!(h.stats.flows_active(), 2);
+    // The flows already open still work.
+    h.send(&udp_packet_from(from(41_000), server, b"still open"));
+    let (_, _, payload) = parse_udp(&h.recv().await.expect("an open flow goes on"));
+    assert_eq!(payload, b"still open");
+    assert!(h.recorder.ended.lock().unwrap().is_empty());
+    h.engine.abort();
+}
+
+/// SP-03: the engine reports every `heartbeat` while it runs, and once it stops, the time
+/// since its last report grows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_engine_reports_while_it_runs() {
+    let period = Duration::from_millis(100);
+    let mut h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            heartbeat: period,
+            ..EngineConfig::default()
+        },
+    );
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    let running = h.stats.since_heartbeat();
+    assert!(running < period * 5, "no report for {running:?}");
+    h.engine.abort();
+    let _ = (&mut h.engine).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let stopped = h.stats.since_heartbeat();
+    assert!(stopped >= Duration::from_millis(600), "{stopped:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

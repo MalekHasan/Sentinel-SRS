@@ -43,9 +43,20 @@ object GapLog {
         }
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(WANTED, false)) return
-        val (start, reason) = lastExit(context)
+        val (start, reason) = exitGap(
+            lastExit(context), Heartbeat.lastHeard(context), context.getString(R.string.gap_process_other),
+        )
         open(context, start, reason)
     }
+
+    /**
+     * When the gap a dead process left began, and why (SP-03): when it ended, if Android
+     * recorded that [exit]; else when the engine was last heard from. An exit recorded
+     * before the engine was last heard from is an earlier one: Android did not record
+     * this one.
+     */
+    fun exitGap(exit: Pair<Long, String>?, lastHeard: Long?, unknown: String): Pair<Long?, String> =
+        if (exit != null && (lastHeard == null || exit.first >= lastHeard)) exit else (lastHeard to unknown)
 
     /** Start a gap, unless one is already open. */
     fun open(context: Context, startMillis: Long?, reason: String) {
@@ -65,7 +76,8 @@ object GapLog {
             }
         } ?: emptyList()
 
-    private fun lastExit(context: Context): Pair<Long?, String> {
+    /** The process's last exit Android recorded: when, and why. */
+    private fun lastExit(context: Context): Pair<Long, String>? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val manager = context.getSystemService(ActivityManager::class.java)
             val exit = manager.getHistoricalProcessExitReasons(context.packageName, 0, 1)
@@ -83,7 +95,7 @@ object GapLog {
                 return exit.timestamp to context.getString(reason)
             }
         }
-        return null to context.getString(R.string.gap_process_other)
+        return null
     }
 
     private fun <T> safely(what: String, action: () -> T): T? =

@@ -49,11 +49,17 @@ object Monitor {
 
     internal fun stopped() {
         engine = null
+        alwaysOn = null
         ipSources = null
         trackerSources = null
         matchesIndicators = false
         mutableStatus.value = Status.OFF
     }
+
+    /** Whether Sentinel is the always-on VPN, as the running service last saw; null when off. */
+    @Volatile
+    var alwaysOn: Boolean? = null
+        internal set
 
     /** The sources of the IP database the engine uses, or null while it has none. */
     @Volatile

@@ -103,17 +103,29 @@ class FirewallTest {
             socket.getOutputStream().write("GET / HTTP/1.0\r\n".toByteArray())
             socket.getOutputStream().flush()
             val blocked = SystemClock.elapsedRealtime()
+            val ruleMs = System.currentTimeMillis()
             history.setFirewallRule(FirewallRule(context.packageName, null, RuleAction.BLOCK))
-            val ended = try {
-                socket.getInputStream().read() == -1
-            } catch (timeout: SocketTimeoutException) {
-                false
-            } catch (reset: IOException) {
-                true
-            }
+            val ended = closes(socket)
             val took = SystemClock.elapsedRealtime() - blocked
-            assertTrue("the connection is still open after $took ms", ended)
-            assertTrue("ended after $took ms", took < 1_000)
+            if (!ended || took >= 1_000) {
+                // Say what the engine saw: no flow means the connection went around the
+                // tunnel, no app that its owner was not found, and an end long after the
+                // rule that it was applied late rather than not at all.
+                socket.soTimeout = 15_000
+                val late = if (ended || closes(socket)) {
+                    "${SystemClock.elapsedRealtime() - blocked} ms"
+                } else {
+                    "never"
+                }
+                stopMonitoring()
+                val seen = history.recentFlows(100u)
+                    .filter { it.remoteIp == address && it.remotePort.toInt() == port }
+                    .map { "${it.app} blocked=${it.blocked} ended=+${it.endedMs?.minus(ruleMs)} ms" }
+                fail(
+                    (if (ended) "ended after $took ms" else "the connection is still open after $took ms") +
+                        "; it ended: $late; flows: $seen",
+                )
+            }
         }
         stopMonitoring()
         val flows = history.recentFlows(100u).filter { it.remoteIp == address && it.remotePort.toInt() == port }
@@ -143,6 +155,15 @@ class FirewallTest {
             "the network's resolver answers differently: rcode ${allowed.rcode}, ${allowed.answers} answers",
             allowed.rcode != 3 || allowed.answers > 0,
         )
+    }
+
+    /** Whether [socket]'s connection is closed or reset within its read timeout. */
+    private fun closes(socket: Socket): Boolean = try {
+        socket.getInputStream().read() == -1
+    } catch (timeout: SocketTimeoutException) {
+        false
+    } catch (reset: IOException) {
+        true
     }
 
     private class Reply(val rcode: Int, val answers: Int)
