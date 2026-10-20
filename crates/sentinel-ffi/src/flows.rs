@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use sentinel_vpn::{FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};
 use tokio::sync::Notify;
@@ -159,6 +159,9 @@ pub(crate) struct FlowEvents {
     history: Option<Arc<HistoryStore>>,
     /// This engine run, to tell its flow ids from earlier runs' in the history.
     session: u64,
+    /// The tunnel's own resolver addresses, the only DNS isolation lets through (audit
+    /// finding A-01).
+    tunnel_dns: Vec<IpAddr>,
     /// Flows that have started and not ended, with their owner.
     open: Mutex<HashMap<u64, (FlowInfo, FlowOwner)>>,
     /// When each app seen in this run was installed, where known (CM-04).
@@ -203,6 +206,7 @@ impl FlowEvents {
             foreign,
             history,
             session,
+            tunnel_dns: Vec::new(),
             open: Mutex::new(HashMap::new()),
             installed: Mutex::new(HashMap::new()),
             pending: Mutex::new(Vec::new()),
@@ -221,6 +225,12 @@ impl FlowEvents {
             ready: Notify::new(),
             history_failures: AtomicU64::new(0),
         }
+    }
+
+    /// The resolver addresses the tunnel gives apps (`VpnService.Builder.addDnsServer`).
+    pub(crate) fn with_tunnel_dns(mut self, tunnel_dns: Vec<IpAddr>) -> Self {
+        self.tunnel_dns = tunnel_dns;
+        self
     }
 
     /// Replace the IP database used for flows from now on (DT-01).
@@ -568,24 +578,28 @@ impl FlowEvents {
         self.ready.notify_one();
     }
 
-    /// What the firewall says about a connection or lookup on `port`: isolation first,
-    /// then its rules, then its mode (RA-03, CM-10, CM-08; ADR-0017, ADR-0015,
-    /// ADR-0016). A name's company comes from the tracker list, if one is set. Without a
-    /// history there are no rules, no mode and no isolation, and everything is allowed.
+    /// What the firewall says about a connection or lookup sent to `to`: isolation
+    /// first, then its rules, then its mode (RA-03, CM-10, CM-08; ADR-0017, ADR-0015,
+    /// ADR-0016). The rules see `address` and `name`, what is known of where it goes. A
+    /// name's company comes from the tracker list, if one is set. Without a history
+    /// there are no rules, no mode and no isolation, and everything is allowed.
     fn verdict(
         &self,
         owner: &FlowOwner,
+        to: SocketAddr,
         address: Option<IpAddr>,
-        port: u16,
         name: Option<&str>,
     ) -> Verdict {
         let Some(history) = &self.history else {
             return Verdict::Allow;
         };
         if let Some(isolation) = history.isolation_in_force()
-            && !history
-                .rule_set()
-                .isolation_lets_through(&isolation, owner.app.as_deref(), port)
+            && !history.rule_set().isolation_lets_through(
+                &isolation,
+                owner.app.as_deref(),
+                to,
+                &self.tunnel_dns,
+            )
         {
             return Verdict::Block;
         }
@@ -629,7 +643,7 @@ impl Observer for FlowEvents {
         if !self.admit(flow, &owner) {
             return Verdict::Block;
         }
-        let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), None);
+        let verdict = self.verdict(&owner, flow.dst, Some(flow.dst.ip()), None);
         let blocked = verdict == Verdict::Block;
         if !blocked {
             self.watch_encrypted_dns(&owner, flow, flow.hostname.as_deref());
@@ -649,7 +663,7 @@ impl Observer for FlowEvents {
             None => FlowOwner::unknown(),
         };
         self.match_name(&owner, hostname, Sighting::ServerName);
-        let verdict = self.verdict(&owner, Some(flow.dst.ip()), flow.dst.port(), Some(hostname));
+        let verdict = self.verdict(&owner, flow.dst, Some(flow.dst.ip()), Some(hostname));
         if verdict == Verdict::Allow {
             self.watch_encrypted_dns(&owner, flow, Some(hostname));
         }
@@ -662,7 +676,7 @@ impl Observer for FlowEvents {
             .map_or_else(FlowOwner::unknown, |(_, owner)| owner.clone());
         // The address is the resolver's, not the destination's: only names count here.
         self.match_name(&owner, qname, Sighting::DnsQuery);
-        let verdict = self.verdict(&owner, None, flow.dst.port(), Some(qname));
+        let verdict = self.verdict(&owner, flow.dst, None, Some(qname));
         if verdict == Verdict::Allow {
             self.watch_lookup(&owner, qname, qtype);
         }
@@ -679,12 +693,7 @@ impl Observer for FlowEvents {
             Some(HostnameSource::Sni) => open.hostname,
             _ => None,
         };
-        self.verdict(
-            &owner,
-            Some(flow.dst.ip()),
-            flow.dst.port(),
-            name.as_deref(),
-        )
+        self.verdict(&owner, flow.dst, Some(flow.dst.ip()), name.as_deref())
     }
 
     fn flow_ended(&self, flow: &FlowInfo, totals: FlowTotals) {
@@ -1862,9 +1871,10 @@ mod tests {
         assert_eq!(bare.flow_started(&at(6, "198.51.100.9:2")), Verdict::Allow);
     }
 
-    /// RA-03: isolation lets through DNS, Sentinel itself and apps allowed as a whole,
-    /// whatever the mode, until it ends; the rules still apply to what it lets through.
-    /// It is kept across reopening the history.
+    /// RA-03: isolation lets through DNS to the tunnel's resolver, Sentinel itself and
+    /// apps allowed as a whole, whatever the mode, until it ends; the rules still apply
+    /// to what it lets through. Port 53 on another server is blocked, over TCP and UDP
+    /// (audit finding A-01). It is kept across reopening the history.
     #[test]
     fn isolation_lets_through_only_dns_sentinel_and_allowed_apps() {
         use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
@@ -1879,7 +1889,8 @@ mod tests {
                 (53, installed("org.example.chat", old)),
             ],
         );
-        let events = FlowEvents::new(observer, Some(Arc::clone(&history)), 1);
+        let events = FlowEvents::new(observer, Some(Arc::clone(&history)), 1)
+            .with_tunnel_dns(vec!["10.215.173.53".parse().unwrap()]);
         let at = |id: u64, port: u16| flow(id, &format!("203.0.113.5:{port}"), None);
         assert_eq!(history.isolated_since_ms(), None);
         let before = now_ms();
@@ -1902,9 +1913,23 @@ mod tests {
             Verdict::Allow,
             "Sentinel itself"
         );
-        let dns = at(3, 53);
+        let dns = flow(3, "10.215.173.53:53", None);
         assert_eq!(events.flow_started(&dns), Verdict::Allow, "DNS");
         assert_eq!(events.dns_query(&dns, "chat.example", 1), Verdict::Allow);
+        // Audit finding A-01: an app's own server on port 53 could be sent anything.
+        for proto in [Proto::Tcp, Proto::Udp] {
+            let elsewhere = FlowInfo { proto, ..at(5, 53) };
+            assert_eq!(
+                events.flow_started(&elsewhere),
+                Verdict::Block,
+                "port 53 on another server, {proto:?}"
+            );
+            assert_eq!(
+                events.dns_query(&elsewhere, "chat.example", 1),
+                Verdict::Block,
+                "a lookup sent to another server, {proto:?}"
+            );
+        }
         let rule = |destination, action| FirewallRule {
             app: Some("org.example.chat".into()),
             destination,

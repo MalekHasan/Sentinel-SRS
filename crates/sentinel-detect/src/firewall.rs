@@ -14,7 +14,7 @@
 //! Where no rule matches, the [`FirewallMode`] decides (CM-08, ADR-0016).
 
 use std::fmt;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,8 +39,8 @@ pub enum Destination {
     Company { company: String },
 }
 
-/// Network isolation (RA-03, ADR-0017): while on, only DNS, Sentinel itself and the
-/// apps a rule allows as a whole may use the network.
+/// Network isolation (RA-03, ADR-0017): while on, only DNS through the tunnel's own
+/// resolver, Sentinel itself and the apps a rule allows as a whole may use the network.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Isolation {
     /// When it was turned on, Unix milliseconds.
@@ -334,17 +334,26 @@ impl RuleSet {
             && self.decide(Some(app), Place::default()).is_none()
     }
 
-    /// Whether `isolation` lets `app`'s connection to `port` through: DNS (port 53),
-    /// Sentinel itself, and apps a rule allows as a whole. The rules still apply to what
-    /// it lets through.
+    /// Whether `isolation` lets `app`'s connection or lookup sent to `to` through: DNS
+    /// to one of the tunnel's own `resolvers` (port 53), Sentinel itself, and apps a rule
+    /// allows as a whole. The rules still apply to what it lets through.
+    ///
+    /// Port 53 elsewhere is not let through: an app may send anything to its own server
+    /// there (audit finding A-01). The tunnel's resolver passes only lookups on to the
+    /// network's.
     pub fn isolation_lets_through(
         &self,
         isolation: &Isolation,
         app: Option<&str>,
-        port: u16,
+        to: SocketAddr,
+        resolvers: &[IpAddr],
     ) -> bool {
         const DNS: u16 = 53;
-        port == DNS
+        let to_resolver = to.port() == DNS
+            && resolvers
+                .iter()
+                .any(|resolver| normalize(*resolver) == normalize(to.ip()));
+        to_resolver
             || app == Some(isolation.own_app.as_str())
             || app.is_some_and(|app| {
                 self.decide(Some(app), Place::default()) == Some(RuleAction::Allow)
@@ -947,9 +956,9 @@ mod tests {
         assert!(about_a_place.blocks_new_app(on, CHAT, Some(1_000)));
     }
 
-    /// RA-03: isolation lets through DNS, Sentinel itself and the apps a rule allows as a
-    /// whole, and nothing else: not other apps, not unknown owners, not apps allowed only
-    /// some places.
+    /// RA-03: isolation lets through DNS to the tunnel's resolver, Sentinel itself and the
+    /// apps a rule allows as a whole, and nothing else: not other apps, not unknown
+    /// owners, not apps allowed only some places, and not port 53 on another server.
     #[test]
     fn isolation_lets_through_dns_sentinel_and_allowed_apps() {
         let isolation = Isolation {
@@ -961,10 +970,16 @@ mod tests {
             rule(Some(MAPS), domain("tiles.example"), RuleAction::Allow),
             rule(Some("org.example.blocked"), None, RuleAction::Block),
         ]);
-        let through = |app, port| rules.isolation_lets_through(&isolation, app, port);
-        assert!(through(Some(CHAT), 443), "allowed as a whole");
+        let resolvers: [IpAddr; 2] = [
+            "10.215.173.53".parse().unwrap(),
+            "fd00::53".parse().unwrap(),
+        ];
+        let through = |app, to: &str| {
+            rules.isolation_lets_through(&isolation, app, to.parse().unwrap(), &resolvers)
+        };
+        assert!(through(Some(CHAT), "203.0.113.5:443"), "allowed as a whole");
         assert!(
-            through(Some("io.github.malekhasan.sentinel"), 443),
+            through(Some("io.github.malekhasan.sentinel"), "203.0.113.5:443"),
             "Sentinel itself"
         );
         for app in [
@@ -973,9 +988,35 @@ mod tests {
             Some("android.uid.system:1000"),
             None,
         ] {
-            assert!(!through(app, 443), "{app:?}");
-            assert!(through(app, 53), "DNS for {app:?}");
+            assert!(!through(app, "203.0.113.5:443"), "{app:?}");
+            assert!(through(app, "10.215.173.53:53"), "DNS for {app:?}");
+            assert!(through(app, "[fd00::53]:53"), "DNS over IPv6 for {app:?}");
+            assert!(
+                through(app, "[::ffff:10.215.173.53]:53"),
+                "the resolver written as IPv6, for {app:?}"
+            );
+            // Audit finding A-01: port 53 on any other server could carry anything.
+            assert!(
+                !through(app, "203.0.113.5:53"),
+                "port 53 elsewhere, {app:?}"
+            );
+            assert!(
+                !through(app, "[2001:db8::5]:53"),
+                "port 53 elsewhere, {app:?}"
+            );
+            // The resolver serves DNS only.
+            assert!(
+                !through(app, "10.215.173.53:853"),
+                "the resolver's port 853, {app:?}"
+            );
         }
+        // Without a resolver, no DNS is let through.
+        assert!(!rules.isolation_lets_through(
+            &isolation,
+            None,
+            "10.215.173.53:53".parse().unwrap(),
+            &[]
+        ));
     }
 
     /// The stored names are part of the history's format.

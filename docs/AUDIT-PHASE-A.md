@@ -138,7 +138,7 @@
 
 #### A-01: العزل لا يعزل، فالمنفذ 53 مفتوح لأي خادم (RA-03)
 
-- [ ] تم الإصلاح
+- [x] تم الإصلاح: أثناء العزل يمرّ المنفذ 53 فقط إلى resolver النفق، وأي خادم آخر على 53 يُحجب، TCP و UDP ([ADR-0017](adr/0017-isolation.md))
 - **المكان:**
   - `crates/sentinel-detect/src/firewall.rs:346-347`: `port == DNS` يمرّر أي اتصال على المنفذ 53 لأي عنوان.
   - `crates/sentinel-ffi/src/flows.rs:585-591`.
@@ -394,7 +394,7 @@
 - [ ] **A-41:** `MainActivity` المُصدَّرة تقبل `EXTRA_ALERT_ID` من أي تطبيق. المكان: `MainActivity.kt:234`.
 - [ ] **A-42:** لا `FLAG_SECURE` على شاشات التاريخ والتنبيهات، فلقطات الشاشة وصورة Recents تكشف الأسماء.
 - [ ] **A-43:** `isolate()` لا ينظّف محارف U+2069 و U+202E الموجودة داخل أسماء التطبيقات، فيقدر الاسم يخرج من العزل ويعيد ترتيب الجملة. المكان: `Bidi.kt:10`.
-- [ ] **A-44:** لا إعادة تشغيل بعد crash (SP-02، و F3 في THREAT-MODEL-A). `Engine.stop()` ينتظر thread المحرّك على main thread، فقد يسبب ANR. المكان: `SentinelVpnService.kt:102` (`START_NOT_STICKY`)، `crates/sentinel-ffi/src/engine.rs:200`.
+- [ ] **A-44:** لا إعادة تشغيل بعد crash (SP-02، و F3 في THREAT-MODEL-A). `Engine.stop()` ينتظر thread المحرّك على main thread، فقد يسبب ANR. المكان: `SentinelVpnService.kt:102` (`START_NOT_STICKY`)، `crates/sentinel-ffi/src/engine.rs:200`. **إعادة التشغيل تمت في PR #14** ([ADR-0038](adr/0038-restart-after-a-crash.md)). يبقى `Engine.stop()` على main thread.
 - [ ] **A-45:** تنزيل القائمة إجباري بلا خيار إيقاف، و THREAT-MODEL I5 يقول "optional". ولا certificate pinning، بينما §14.3 يطلبه. الأثر على الخصوصية فقط، لأن السلامة يضمنها التوقيع.
 - [ ] **A-46:** لا `dataExtractionRules`. من Android 12، `allowBackup=false` لا تمنع النقل من جهاز لجهاز. الأثر محدود على `shared_prefs`.
 - [ ] **A-47:** `gradle-wrapper.properties` بلا `distributionSha256Sum`، ولا dependency verification ولا locking في Gradle.
@@ -454,7 +454,7 @@
 - [ ] مراجعة النصوص العربية من متحدثين أصليين، وفحص البساطة (AL-02)
 - [ ] جلسات استخدام مع 8 مستخدمين، والإعداد الأول في أقل من 5 دقائق (NF-12)
 - [ ] مفاتيح توقيع القائمة للمشرفين، منشأة ومحفوظة offline. بدونها، ID-13 و MS-02 لا يعملان في release
-- [ ] F3 من مراجعة نموذج التهديدات: إعادة التشغيل بعد crash (SP-02)
+- [x] F3 من مراجعة نموذج التهديدات: إعادة التشغيل بعد crash (SP-02). تمت في PR #14 ([ADR-0038](adr/0038-restart-after-a-crash.md))
 - [ ] F4: قفل التطبيق الاختياري (I4)، أو قبوله رسمياً لهذه المرحلة
 - [ ] إصدار موقّع على GitHub وتقديم لـ F-Droid
 - [ ] Beta عامة

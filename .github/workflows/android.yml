@@ -93,12 +93,17 @@ jobs:
           sudo docker image prune --all --force >/dev/null || true
           df -h /
       - name: Start the server the device tests connect to through the tunnel
-        # The emulator reaches this machine's loopback as 10.0.2.2.
+        # The emulator reaches this machine's loopback as 10.0.2.2. The same server on
+        # port 53 is where IsolationTest checks that isolation lets no app reach its own
+        # server on DNS's port (audit finding A-01); a port under 1024 needs root.
         run: |
           nohup python3 apps/android/scripts/test-server.py --bind 127.0.0.1 --port 8765 \
             >"$RUNNER_TEMP/http-server.log" 2>&1 &
+          sudo nohup python3 apps/android/scripts/test-server.py --bind 127.0.0.1 --port 53 \
+            >"$RUNNER_TEMP/http-server-53.log" 2>&1 &
           sleep 1
           curl -sf -o /dev/null http://127.0.0.1:8765/
+          curl -sf -o /dev/null http://127.0.0.1:53/
       - name: Run tests on an emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:

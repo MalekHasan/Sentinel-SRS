@@ -19,7 +19,7 @@ The firewall already decides every connection with what it knows for sure, and d
 ## Decision
 
 1. **Isolation is a switch above the rules and the mode.** While it is on, a connection or lookup is blocked unless it is:
-   - DNS (port 53), so that the apps that keep the internet can still find their servers;
+   - DNS to Sentinel's own resolver in the tunnel (port 53 at the address the VPN gives apps for DNS), so that the apps that keep the internet can still find their servers. Port 53 on any other server is blocked: an app could send anything to its own server there, not only lookups (audit finding A-01);
    - Sentinel itself, for its updates;
    - by an app that a rule allows as a whole.
 
@@ -30,13 +30,15 @@ The firewall already decides every connection with what it knows for sure, and d
 
 ## Verification
 
-- `sentinel-detect`: isolation lets through DNS, Sentinel itself and an app allowed as a whole, and nothing else: not another app, an app allowed only some places, an app blocked as a whole, a shared system identity, or a connection whose app is unknown.
+- `sentinel-detect`: isolation lets through DNS to the tunnel's resolver, over IPv4 and IPv6, Sentinel itself and an app allowed as a whole, and nothing else: not another app, an app allowed only some places, an app blocked as a whole, a shared system identity, a connection whose app is unknown, port 53 on another server, or the resolver on another port.
 - `sentinel-store`: isolation is kept until turned off, keeps when it began if turned on again, survives reopening, and a wipe forgets it.
 - `sentinel-ffi`:
-  - isolated, another app is blocked, Sentinel itself and DNS are not, rules still apply to what gets through, and an app allowed as a whole gets through; isolation survives reopening the history and ends when asked;
+  - isolated, another app is blocked, Sentinel itself and DNS to the tunnel's resolver are not, rules still apply to what gets through, and an app allowed as a whole gets through; isolation survives reopening the history and ends when asked;
+  - isolated, a connection to port 53 on another server is blocked, over TCP and UDP, and so is a lookup sent there;
   - through the real packet engine, isolating ends an app's open connection within a second; an allow rule lets it through, and removing the rule or ending isolation acts on the next connection.
 - On the Android 14 emulator (`IsolationTest`), with the probe as the other app:
   - isolating takes under a second; Sentinel's own request and a DNS lookup still get through, the probe's connection does not, and the same holds after monitoring restarts;
+  - the probe reaches a server on port 53 before isolating and not after, while DNS through the tunnel's resolver still works (CI runs the test server on port 53 too);
   - allowing the probe lets it through, removing the rule stops it again, and ending isolation lets it through;
   - the main screen isolates with one tap, then shows the banner, which ends isolation with one tap;
   - `RtlTest` shows the banner in Arabic, right to left.
@@ -45,6 +47,8 @@ The firewall already decides every connection with what it knows for sure, and d
 
 - **Isolation cannot outlast monitoring.** When the VPN is off, nothing is filtered. Android's "Always-on VPN" and "Block connections without VPN" settings would close that gap; Sentinel cannot set them, so the onboarding guide should explain them (AM-15).
 - **Some of Android's own traffic stops.** System services, time sync, push notifications for non-allowed apps and app updates stop while isolated, as RA-03 intends. Sentinel's own notifications are local and keep working.
+- **Data can still leave inside DNS names.** The tunnel's resolver passes lookups on to the network's resolver, which asks the servers of the domain looked up; an app that owns a domain can hide data in the names it looks up under it. Each name still meets the rules and the indicators, and DL-05 watches for unusual DNS use ([ADR-0032](0032-unusual-dns-use.md)). Lookups over TCP are passed on without being read (audit finding A-39).
+- **Apps that ask their own DNS server lose DNS while isolated**, as any app that sends to its own server does. Apps that use Android's resolver are not affected.
 - **Traffic that never enters the tunnel is not isolated**: the moment Android takes to route apps into a new tunnel, and system traffic Android exempts from VPNs (SRS §2.2).
 - **Sentinel updates mean Sentinel's own connections.** Until the signed feed (Sprint 7) exists, that is all of Sentinel's traffic through the tunnel.
 - **Isolating and ending isolation are in the action journal** ([ADR-0018](0018-action-journal.md)). Undoing an end isolates the phone again from the time it was first isolated.

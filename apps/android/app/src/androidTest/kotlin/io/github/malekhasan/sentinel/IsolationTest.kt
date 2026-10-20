@@ -25,8 +25,9 @@ import org.junit.runner.RunWith
 
 /**
  * RA-03 on a device (ADR-0017): isolating the phone leaves the internet to Sentinel
- * itself, DNS and the apps a rule allows as a whole, at once and across a restart of
- * monitoring, until it ends. The other app is the probe ([Probe]).
+ * itself, DNS through the tunnel's resolver and the apps a rule allows as a whole, at
+ * once and across a restart of monitoring, until it ends. The other app is the probe
+ * ([Probe]).
  */
 @RunWith(AndroidJUnit4::class)
 class IsolationTest {
@@ -89,6 +90,25 @@ class IsolationTest {
         val flows = probe.flows(host, port)
         assertEquals("stored as blocked: $flows", 3, flows.count { it.blocked })
         assertEquals("stored as allowed: $flows", 3, flows.count { !it.blocked })
+    }
+
+    /**
+     * Audit finding A-01: port 53 on a server of the app's choosing is not DNS isolation
+     * lets through, as the app could send it anything. Here that server answers plain
+     * HTTP.
+     */
+    @Test
+    fun isolationBlocksPort53OnAnotherServer() {
+        startMonitoring()
+        probe.install()
+        val host = testServerOnPort53()
+        assertNotNull("no test server answers on $host:53", answer(host, 53))
+        Probe.assertAnswered(probe.run(host, 53))
+
+        assertTrue(isolatePhone(context))
+        Probe.assertBlocked(probe.run(host, 53))
+        assertTrue("DNS through the tunnel's resolver", dnsAnswered("localhost"))
+        assertTrue("stored as blocked", probe.flows(host, 53).first().blocked)
     }
 
     /** One tap isolates while monitoring runs; the banner says since when and ends it. */
