@@ -263,10 +263,17 @@ class AccessibilityTest {
             node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
             val layout = layouts.firstOrNull() ?: return@mapNotNull null
             val text = layout.layoutInput.text.text.take(40)
+            // This layout is laid out at the full width the text may take, so its
+            // hasVisualOverflow is true for any text narrower than that (seen on the
+            // emulator for every one-word label). What counts is that all its lines are
+            // there, none shortened, within the height the text was given.
+            val whole = layout.multiParagraph
+            val shortened = (0 until layout.lineCount).any(layout::isLineEllipsized)
             // Where the text is laid out, before any clipping by what holds it.
             val left = node.positionInRoot.x
             when {
-                layout.hasVisualOverflow -> "cut: $text"
+                whole.didExceedMaxLines || shortened -> "lines left out: $text"
+                whole.height > node.size.height + 1 -> "cut: $text (${whole.height} > ${node.size.height})"
                 left < -1 || left + node.size.width > width + 1 -> "off the screen: $text at $left"
                 else -> null
             }
