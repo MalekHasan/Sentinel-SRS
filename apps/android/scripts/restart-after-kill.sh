@@ -51,8 +51,11 @@ pid() { adb shell pidof "$pkg" | tr -d '\r'; }
 # The service runs in the foreground, as it does while monitoring.
 monitoring() { adb shell dumpsys activity services "$service" | grep -q 'isForeground=true'; }
 
-# The tunnel is up: the VPN's interface exists.
-tunnel_up() { adb shell ip -o link show | grep -q ': tun[0-9]'; }
+# The tunnel is up: Android binds to the service as a VPN once the service establishes it.
+# (Reading the network interfaces is denied to adb's shell.)
+tunnel_up() {
+  adb shell dumpsys activity services "$service" | grep -q 'act=android.net.VpnService'
+}
 
 restarted() { [ -n "$(pid)" ] && [ "$(pid)" != "$before" ] && monitoring; }
 
