@@ -4,7 +4,6 @@ package io.github.malekhasan.sentinel
 import android.icu.text.ListFormatter
 import android.os.SystemClock
 import android.text.format.Formatter
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -88,7 +87,11 @@ fun LiveConnections(
             TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
         }
         item {
-            Text(stringResource(R.string.live_title), style = MaterialTheme.typography.headlineSmall)
+            Text(
+                stringResource(R.string.live_title),
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.asHeading(),
+            )
         }
         item {
             val explanation = when {
@@ -111,7 +114,9 @@ private fun LiveAppRow(row: LiveRow, onOpenApp: (String) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             // Connections whose owner is unknown have no app to open.
-            .clickable(enabled = packageName != null) { packageName?.let(onOpenApp) },
+            .opens(stringResource(R.string.a11y_open_app), enabled = packageName != null) {
+                packageName?.let(onOpenApp)
+            },
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(

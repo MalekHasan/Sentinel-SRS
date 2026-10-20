@@ -176,7 +176,11 @@ fun destinationOf(destination: String): RuleDestination =
 /** The firewall's modes, each with what it does, as a choice of one (CM-08). */
 @Composable
 fun FirewallModeChoice(mode: FirewallMode?, onMode: (FirewallMode) -> Unit) {
-    Text(stringResource(R.string.firewall_title), style = MaterialTheme.typography.titleSmall)
+    Text(
+        stringResource(R.string.firewall_title),
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.asHeading(),
+    )
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         FirewallMode.entries.forEach { option ->
             Row(

@@ -157,7 +157,11 @@ fun AppDetail(
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(details?.label ?: app, style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    details?.label ?: app,
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.asHeading(),
+                )
                 if (details != null && details.label != app) {
                     Text(app, style = MaterialTheme.typography.labelMedium)
                 }
@@ -217,7 +221,11 @@ fun AppDetail(
         }
         if (history.companies.isNotEmpty()) {
             item {
-                Text(stringResource(R.string.app_detail_companies_title), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    stringResource(R.string.app_detail_companies_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.asHeading(),
+                )
             }
             // Destination keys are hostnames or addresses, which never start with "company:".
             items(history.companies, key = { "company:${it.company}" }) { company ->
@@ -234,7 +242,11 @@ fun AppDetail(
             }
         }
         item {
-            Text(stringResource(R.string.app_detail_destinations_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.app_detail_destinations_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.asHeading(),
+            )
         }
         items(history.destinations, key = { it.destination }) { row ->
             val destination = destinationOf(row.destination)
@@ -277,7 +289,11 @@ private fun Access(
 ) {
     val text = MaterialTheme.typography.bodyMedium
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(stringResource(R.string.app_detail_access_title), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(R.string.app_detail_access_title),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.asHeading(),
+        )
         when {
             access.rule == RuleAction.BLOCK -> {
                 Text(stringResource(R.string.app_detail_blocked), style = text)

@@ -99,7 +99,11 @@ fun Journal(rows: List<JournalRow>, said: Int? = null, onBack: () -> Unit, onUnd
             TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
         }
         item {
-            Text(stringResource(R.string.journal_title), style = MaterialTheme.typography.headlineSmall)
+            Text(
+                stringResource(R.string.journal_title),
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.asHeading(),
+            )
         }
         item {
             val explanation = if (rows.isEmpty()) R.string.journal_empty else R.string.journal_explainer
@@ -107,7 +111,11 @@ fun Journal(rows: List<JournalRow>, said: Int? = null, onBack: () -> Unit, onUnd
         }
         if (said != null) {
             item {
-                Text(stringResource(said), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    stringResource(said),
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.announced(),
+                )
             }
         }
         items(rows, key = { it.entry.id }) { row -> JournalRowView(row, onUndo) }

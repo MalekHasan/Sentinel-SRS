@@ -17,6 +17,8 @@
     <string name="flow_closed">%1$s اتصل بـ %2$s</string>
     <string name="unknown_app">تطبيق مش معروف</string>
     <string name="back">رجوع</string>
+    <string name="a11y_open_alert">افتح التنبيه</string>
+    <string name="a11y_open_app">شوف شو عمل هالتطبيق</string>
 
     <string name="live_action">الاتصالات هلأ</string>
     <string name="isolation_title">هالتلفون معزول</string>

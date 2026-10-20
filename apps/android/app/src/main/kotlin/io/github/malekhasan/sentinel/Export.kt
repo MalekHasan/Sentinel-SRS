@@ -227,7 +227,11 @@ fun ExportContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
-        Text(stringResource(R.string.export_title), style = MaterialTheme.typography.headlineSmall)
+        Text(
+            stringResource(R.string.export_title),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.asHeading(),
+        )
         Text(stringResource(R.string.export_explainer), style = MaterialTheme.typography.bodyMedium)
         Options(
             R.string.export_what,
@@ -256,14 +260,15 @@ fun ExportContent(
         }
         when (state) {
             HistoryExport.State.Idle -> {}
-            HistoryExport.State.Saving -> Text(stringResource(R.string.export_saving))
+            HistoryExport.State.Saving -> Text(stringResource(R.string.export_saving), Modifier.announced())
             is HistoryExport.State.Saved -> Text(
                 stringResource(
                     R.string.export_saved,
                     isolate(Formatter.formatShortFileSize(context, state.bytes)),
                 ),
+                Modifier.announced(),
             )
-            HistoryExport.State.Failed -> Text(stringResource(R.string.export_failed))
+            HistoryExport.State.Failed -> Text(stringResource(R.string.export_failed), Modifier.announced())
         }
     }
 }
@@ -271,7 +276,7 @@ fun ExportContent(
 /** A choice of one of [options], under [title]. */
 @Composable
 private fun <T> Options(title: Int, options: List<T>, selected: T, name: (T) -> Int, onPick: (T) -> Unit) {
-    Text(stringResource(title), style = MaterialTheme.typography.titleSmall)
+    Text(stringResource(title), style = MaterialTheme.typography.titleSmall, modifier = Modifier.asHeading())
     Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         options.forEach { option ->
             Row(
