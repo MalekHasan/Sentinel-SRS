@@ -108,7 +108,11 @@ jobs:
           # The runner's defaults, but with sound and an emulated back camera, so that the
           # probe can record and open a camera (SensorTest, SE-01, SE-04).
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim -camera-back emulated
-          script: cd apps/android && ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest
+          # Then SP-02, which the instrumented tests cannot check as they die with the
+          # app's process: monitoring comes back by itself after its process is killed.
+          script: |
+            cd apps/android && ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest
+            cd apps/android && sh scripts/restart-after-kill.sh app/build/outputs/apk/debug/app-debug.apk
       - name: List the device tests that ran
         # Gradle prints no per-test results; show them so a skipped test cannot pass unseen.
         if: always()
