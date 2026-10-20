@@ -2,6 +2,7 @@
 package io.github.malekhasan.sentinel
 
 import android.app.NotificationManager
+import android.os.Build
 import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -35,6 +36,21 @@ class MonitoringTest {
 
     @After
     fun stop() = stopMonitoring()
+
+    /**
+     * THREAT-MODEL-A T5: the notification's Stop asks to unlock the phone first, so
+     * someone holding a locked phone cannot turn monitoring off without leaving a gap.
+     */
+    @Test
+    fun stoppingFromTheNotificationAsksToUnlockFirst() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        startMonitoring()
+        val ongoing = notifications.activeNotifications
+            .single { it.id == SentinelVpnService.NOTIFICATION_ID }
+        val stop = ongoing.notification.actions
+            .single { it.title.toString() == context.getString(R.string.action_stop) }
+        assertTrue("Stop asks to unlock first", stop.isAuthenticationRequired)
+    }
 
     @Test
     fun relaysTrafficAndDnsThenStopsCleanly() {
