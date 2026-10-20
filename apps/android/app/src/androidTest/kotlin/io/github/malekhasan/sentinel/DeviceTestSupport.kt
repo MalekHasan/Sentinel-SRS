@@ -113,6 +113,15 @@ internal fun testServer(): Pair<String, Int> {
     return host to port
 }
 
+/**
+ * The host of the same server on port 53, where DNS is usually served (audit finding
+ * A-01): by default the test machine's loopback again. CI starts it; locally run
+ * `sudo python3 apps/android/scripts/test-server.py --port 53` first, or pass another
+ * host with `-Pandroid.testInstrumentationRunnerArguments.sentinelTestServerOnPort53=host`.
+ */
+internal fun testServerOnPort53(): String =
+    InstrumentationRegistry.getArguments().getString("sentinelTestServerOnPort53", "10.0.2.2")
+
 /** A plain HTTP request the test server answers. */
 internal val REQUEST = "GET / HTTP/1.0\r\n\r\n".toByteArray()
 

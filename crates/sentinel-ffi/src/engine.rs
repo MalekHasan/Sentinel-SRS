@@ -129,7 +129,7 @@ impl Engine {
             .map_err(start_failed)?;
 
         let stats = Arc::new(EngineStats::default());
-        let dns = Arc::new(DnsForward::new(tunnel_dns));
+        let dns = Arc::new(DnsForward::new(tunnel_dns.clone()));
         let away = Arc::new(AtomicBool::new(false));
         let config = EngineConfig {
             dns_forward: Some(Arc::clone(&dns)),
@@ -141,7 +141,8 @@ impl Engine {
         let running = Arc::new(AtomicBool::new(true));
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
         // The start time names this run in the history; flow ids restart at 1 each run.
-        let events = Arc::new(FlowEvents::new(flows, history, now_ms()));
+        let events =
+            Arc::new(FlowEvents::new(flows, history, now_ms()).with_tunnel_dns(tunnel_dns));
 
         let thread = {
             let stats = Arc::clone(&stats);
