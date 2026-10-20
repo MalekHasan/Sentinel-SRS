@@ -25,7 +25,11 @@ trap 'rm -rf "$work"' EXIT
 
 fail() {
   echo "FAIL: $1" >&2
-  adb shell dumpsys activity services "$service" | head -n 40 >&2 || true
+  adb shell dumpsys activity services "$service" >&2 || true
+  # What Android said about Sentinel's process and service: a restart scheduled, put
+  # off, or not made.
+  adb logcat -d -v time 'ActivityManager:I' 'ActivityTaskManager:I' 'SentinelVpn:V' '*:S' |
+    grep -i -e sentinel -e restart | tail -n 60 >&2 || true
   exit 1
 }
 
@@ -46,6 +50,9 @@ pid() { adb shell pidof "$pkg" | tr -d '\r'; }
 
 # The service runs in the foreground, as it does while monitoring.
 monitoring() { adb shell dumpsys activity services "$service" | grep -q 'isForeground=true'; }
+
+# The tunnel is up: the VPN's interface exists.
+tunnel_up() { adb shell ip -o link show | grep -q ': tun[0-9]'; }
 
 restarted() { [ -n "$(pid)" ] && [ "$(pid)" != "$before" ] && monitoring; }
 
@@ -75,6 +82,10 @@ EOF
 # shellcheck disable=SC2086
 adb shell input tap $point
 wait_for 30 monitoring || fail "monitoring did not start"
+# Android kills a process that runs monitoring, not one still starting it: the service
+# is in the foreground before its tunnel is up.
+wait_for 30 tunnel_up || fail "the tunnel did not come up"
+sleep 3
 before=$(pid)
 echo "monitoring runs in process $before; killing it"
 

@@ -44,7 +44,7 @@ The heartbeat (ADR-0029) replaces an engine that hangs, but only while the proce
   - `GapLogTest`: three stops raise one Critical alert, with its evidence and action;
   - `RtlTest`: the alert in Arabic, right to left, with its count.
 - **Restart:** `apps/android/scripts/restart-after-kill.sh`, in CI after the instrumented tests. Those tests cannot check this, as they die with the app's process.
-  - The script installs the app, taps "Start monitoring", and kills the process with SIGKILL, as the low-memory killer does.
+  - The script installs the app, taps "Start monitoring", and once the tunnel is up kills the process with SIGKILL, as the low-memory killer does.
   - It then waits for the service to run in the foreground in a new process, and to stay running.
 
 ## Consequences
