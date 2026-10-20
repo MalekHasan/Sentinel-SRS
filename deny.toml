@@ -7,6 +7,14 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # basic-toml is unmaintained; no vulnerability is known. askama, which UniFFI's
+  # bindings generator uses, has no release without it yet (askama_derive 0.16.1,
+  # uniffi 0.32.2). It comes in only through sentinel-ffi's `cli` feature: the
+  # generator run on the build machine, not the library in the app. Remove this once
+  # UniFFI moves to an askama without basic-toml.
+  { id = "RUSTSEC-2026-0374", reason = "build-time only, in the UniFFI bindings generator; no release without it yet" },
+]
 
 [licenses]
 version = 2
