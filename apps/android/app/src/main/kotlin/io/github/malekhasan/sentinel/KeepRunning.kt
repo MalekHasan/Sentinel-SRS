@@ -156,7 +156,11 @@ fun KeepRunningContent(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
-        Text(stringResource(R.string.keep_running_title), style = MaterialTheme.typography.headlineSmall)
+        Text(
+            stringResource(R.string.keep_running_title),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.asHeading(),
+        )
         Text(stringResource(R.string.keep_running_explainer), style = MaterialTheme.typography.bodyMedium)
         items.forEach { item -> KeepRunningRow(item, onOpen) }
         Column(
@@ -165,7 +169,11 @@ fun KeepRunningContent(
                 .testTag(KEEP_RUNNING_MAKER_TAG),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(stringResource(R.string.keep_running_maker_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.keep_running_maker_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.asHeading(),
+            )
             Text(stringResource(makerSteps(maker)), style = MaterialTheme.typography.bodySmall)
             Text(stringResource(R.string.keep_running_maker_note), style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = onOpenAppSettings) {
@@ -183,7 +191,11 @@ private fun KeepRunningRow(item: KeepRunning.Item, onOpen: (KeepRunning.Step) ->
             .testTag(keepRunningRowTag(item.step)),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(stringResource(keepRunningTitle(item.step)), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(keepRunningTitle(item.step)),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.asHeading(),
+        )
         val status = when (item.done) {
             true -> R.string.hardening_status_done
             false -> R.string.hardening_status_to_do

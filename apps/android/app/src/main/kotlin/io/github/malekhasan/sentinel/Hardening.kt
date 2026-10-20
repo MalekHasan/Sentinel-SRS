@@ -135,7 +135,11 @@ fun HardeningChecklist(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
-        Text(stringResource(R.string.hardening_title), style = MaterialTheme.typography.headlineSmall)
+        Text(
+            stringResource(R.string.hardening_title),
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.asHeading(),
+        )
         Text(stringResource(R.string.hardening_explainer), style = MaterialTheme.typography.bodyMedium)
         items.forEach { item -> HardeningRow(item, securityPatch, onOpen) }
     }
@@ -149,7 +153,11 @@ private fun HardeningRow(item: HardeningItem, securityPatch: String?, onOpen: (H
             .testTag(hardeningRowTag(item.step)),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(stringResource(stepTitle(item.step)), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(stepTitle(item.step)),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.asHeading(),
+        )
         Text(stringResource(statusText(item.status)), style = MaterialTheme.typography.labelLarge)
         if (item.step == HardeningStep.SECURITY_UPDATE && securityPatch != null) {
             Text(

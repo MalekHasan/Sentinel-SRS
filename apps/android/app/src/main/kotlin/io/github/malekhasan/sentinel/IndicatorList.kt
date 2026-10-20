@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -34,7 +35,11 @@ fun IndicatorList(
     val locale = LocalConfiguration.current.locales[0]
     val format = DateFormat.getDateInstance(DateFormat.MEDIUM, locale)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.feed_title), style = MaterialTheme.typography.titleMedium)
+        Text(
+            stringResource(R.string.feed_title),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.asHeading(),
+        )
         val status = state.status
         when {
             !state.available -> Text(stringResource(R.string.feed_no_keys), style = MaterialTheme.typography.bodyMedium)

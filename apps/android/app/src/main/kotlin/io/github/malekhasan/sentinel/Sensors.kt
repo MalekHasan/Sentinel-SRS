@@ -55,7 +55,11 @@ fun SensorUses(
             .testTag(SENSORS_TAG),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(stringResource(R.string.sensors_title), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(R.string.sensors_title),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.asHeading(),
+        )
         if (uses.isEmpty()) {
             Text(stringResource(R.string.sensors_empty), style = MaterialTheme.typography.bodySmall)
         }

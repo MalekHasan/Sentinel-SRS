@@ -18,6 +18,8 @@
     <string name="flow_closed">%1$s → %2$s</string>
     <string name="unknown_app">Unknown app</string>
     <string name="back">Back</string>
+    <string name="a11y_open_alert">open the alert</string>
+    <string name="a11y_open_app">see what this app did</string>
 
     <string name="live_action">Live connections</string>
     <string name="isolation_title">This phone is isolated</string>

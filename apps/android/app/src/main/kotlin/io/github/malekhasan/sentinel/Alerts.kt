@@ -6,7 +6,6 @@ import android.icu.text.ListFormatter
 import android.text.format.DateUtils
 import android.text.format.Formatter
 import android.util.Log
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -155,18 +154,26 @@ fun AlertDetail(
         val alert = details.alert
         val label = { app: String -> details.appLabels[app] ?: app }
         SeverityBadge(alert.severity)
-        Text(alertTitle(alert), style = MaterialTheme.typography.headlineSmall)
+        Text(alertTitle(alert), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.asHeading())
         Text(alertExplanation(alert), style = MaterialTheme.typography.bodyLarge)
         Text(raisedWhen(alert), style = MaterialTheme.typography.bodySmall)
 
-        Text(stringResource(R.string.alert_evidence_title), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(R.string.alert_evidence_title),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.asHeading(),
+        )
         alert.evidence.forEach { evidence ->
             Text(describeEvidence(evidence, label), style = MaterialTheme.typography.bodyMedium)
         }
         if (alert.rule == AlertRule.KNOWN_INDICATOR) Advice()
 
         if (alert.actions.isNotEmpty()) {
-            Text(stringResource(R.string.alert_actions_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.alert_actions_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.asHeading(),
+            )
             alert.actions.forEach { action ->
                 Button(onClick = { onAction(action) }) { Text(actionLabel(action, label)) }
             }
@@ -193,7 +200,11 @@ val HELPLINES = listOf(
 @Composable
 private fun Advice() {
     val links = LocalUriHandler.current
-    Text(stringResource(R.string.alert_advice_title), style = MaterialTheme.typography.titleSmall)
+    Text(
+        stringResource(R.string.alert_advice_title),
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.asHeading(),
+    )
     Text(stringResource(R.string.alert_advice_keep), style = MaterialTheme.typography.bodyMedium)
     Text(stringResource(R.string.alert_advice_move), style = MaterialTheme.typography.bodyMedium)
     Text(stringResource(R.string.alert_advice_help), style = MaterialTheme.typography.bodyMedium)
@@ -216,7 +227,11 @@ private fun Advice() {
  */
 @Composable
 private fun Feedback(alert: HistoryAlert, onFeedback: (AlertFeedback?) -> Unit) {
-    Text(stringResource(R.string.alert_feedback_title), style = MaterialTheme.typography.titleSmall)
+    Text(
+        stringResource(R.string.alert_feedback_title),
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.asHeading(),
+    )
     when (alert.feedback) {
         null -> {
             OutlinedButton(onClick = { onFeedback(AlertFeedback.NOT_USEFUL) }) {
@@ -246,7 +261,7 @@ fun AlertRow(alert: HistoryAlert, onOpen: (Long) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onOpen(alert.id) },
+            .opens(stringResource(R.string.a11y_open_alert)) { onOpen(alert.id) },
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         SeverityBadge(alert.severity)

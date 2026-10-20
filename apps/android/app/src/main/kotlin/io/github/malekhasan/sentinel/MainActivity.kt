@@ -19,7 +19,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,8 +34,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -291,10 +288,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Material 3 in Sentinel's colours, light or dark, in high contrast when the user asks for it. */
 @Composable
 fun SentinelTheme(content: @Composable () -> Unit) {
-    val colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()
-    MaterialTheme(colorScheme = colors, content = content)
+    MaterialTheme(colorScheme = sentinelColors(isSystemInDarkTheme(), highContrast()), content = content)
 }
 
 @Composable
@@ -473,7 +470,11 @@ fun MonitorContent(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium)
+        Text(
+            stringResource(R.string.app_name),
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.asHeading(),
+        )
         Text(stringResource(R.string.tagline), style = MaterialTheme.typography.bodyLarge)
 
         // Isolation first: while it is on, almost nothing reaches the internet (RA-03).
@@ -483,21 +484,37 @@ fun MonitorContent(
 
         // Open alerts first: they are what needs the user (AL-01, AL-02).
         if (alerts.isNotEmpty()) {
-            Text(stringResource(R.string.alerts_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.alerts_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.asHeading(),
+            )
             alerts.forEach { AlertRow(it, onOpenAlert) }
         }
 
         when (status) {
             Monitor.Status.OFF -> {
-                Text(stringResource(R.string.status_off), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.status_off),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.announced(),
+                )
                 Text(stringResource(R.string.disclosure), style = MaterialTheme.typography.bodyMedium)
                 Button(onClick = onStart) { Text(stringResource(R.string.action_start)) }
             }
             Monitor.Status.STARTING -> {
-                Text(stringResource(R.string.status_starting), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.status_starting),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.announced(),
+                )
             }
             Monitor.Status.ON -> {
-                Text(stringResource(R.string.status_on), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.status_on),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.announced(),
+                )
                 snapshot?.let {
                     Text(
                         stringResource(
@@ -535,7 +552,11 @@ fun MonitorContent(
         feed?.let { IndicatorList(it, onCheckFeed, onImportFeed, traces) }
 
         if (away.isNotEmpty()) {
-            Text(stringResource(R.string.away_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.away_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.asHeading(),
+            )
             away.forEach { row ->
                 val app = row.away.app
                 Text(
@@ -546,25 +567,37 @@ fun MonitorContent(
                         Formatter.formatShortFileSize(context, row.away.bytesDownAway),
                     ),
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.clickable(enabled = app != null) { app?.let(onOpenApp) },
+                    modifier = Modifier.opens(stringResource(R.string.a11y_open_app), enabled = app != null) {
+                        app?.let(onOpenApp)
+                    },
                 )
             }
         }
 
         if (flows.isNotEmpty()) {
-            Text(stringResource(R.string.recent_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.recent_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.asHeading(),
+            )
             flows.forEach { flow ->
                 val app = flow.app
                 Text(
                     describeFlow(flow),
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.clickable(enabled = app != null) { app?.let(onOpenApp) },
+                    modifier = Modifier.opens(stringResource(R.string.a11y_open_app), enabled = app != null) {
+                        app?.let(onOpenApp)
+                    },
                 )
             }
         }
 
         if (gaps.isNotEmpty()) {
-            Text(stringResource(R.string.gaps_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.gaps_title),
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.asHeading(),
+            )
             Text(stringResource(R.string.gaps_text), style = MaterialTheme.typography.bodySmall)
             gaps.forEach { gap -> Text(describeGap(gap), style = MaterialTheme.typography.bodySmall) }
         }
@@ -596,7 +629,11 @@ private fun Isolated(since: Long, monitoring: Boolean, onEnd: () -> Unit) {
         shape = MaterialTheme.shapes.medium,
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.isolation_title), style = MaterialTheme.typography.titleMedium)
+            Text(
+                stringResource(R.string.isolation_title),
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.asHeading(),
+            )
             Text(stringResource(R.string.isolation_text, format.format(Date(since))), style = MaterialTheme.typography.bodyMedium)
             if (!monitoring) {
                 Text(stringResource(R.string.isolation_off_note), style = MaterialTheme.typography.bodyMedium)
