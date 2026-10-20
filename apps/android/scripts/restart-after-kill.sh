@@ -2,14 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # SP-02 on a device (ADR-0038): when Sentinel's process dies while monitoring runs,
-# Android starts monitoring again by itself. The instrumented tests cannot check this,
-# as they die with the process, so this script drives the app from outside:
+# monitoring starts again by itself: Android restarts the service, or, when Android
+# leaves it without a process, KeepMonitoringJob does. The instrumented tests cannot
+# check this, as they die with the process, so this script drives the app from outside:
 #
 #   1. installs the debug app, grants what the user's consent grants, opens it and taps
 #      "Start monitoring";
 #   2. kills the process as Android does to free memory (SIGKILL);
 #   3. waits for the service to run again in a new process, in the foreground, and to
-#      stay running.
+#      stay running, and says which of the two started it.
 #
 #   apps/android/scripts/restart-after-kill.sh [path/to/app-debug.apk]
 #
@@ -94,10 +95,18 @@ echo "monitoring runs in process $before; killing it"
 
 # SIGKILL, as Android's low-memory killer does; run-as gives the app's own user, which
 # may kill its own process.
+adb logcat -c
 adb shell run-as "$pkg" kill -9 "$before"
-wait_for 60 restarted || fail "monitoring did not come back within 60 s of the kill"
+# The job runs at most KeepMonitoringJob.AFTER_MILLIS (30 s) after the last heartbeat
+# check, then as soon as the job scheduler gets to it.
+wait_for 90 restarted || fail "monitoring did not come back within 90 s of the kill"
 after=$(pid)
 # Running, not just started: a start that fails stops the service again.
 sleep 5
 restarted || fail "monitoring came back in process $after but did not stay"
-echo "monitoring came back by itself in process $after"
+if adb logcat -d -s 'SentinelKeepMonitoring:I' | grep -q 'starting it'; then
+  by="KeepMonitoringJob"
+else
+  by="Android"
+fi
+echo "monitoring came back by itself in process $after, started by $by"

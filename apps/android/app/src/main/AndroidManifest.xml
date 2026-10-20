@@ -77,6 +77,13 @@
             </intent-filter>
         </service>
 
+        <!-- Starts monitoring again when Android does not after Sentinel's process died
+             (SP-02, ADR-0038). Only the system's job scheduler can bind it. -->
+        <service
+            android:name=".KeepMonitoringJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <!-- Looks for a newer indicator list every few hours (MS-10). Only the system's
              job scheduler can bind it. -->
         <service

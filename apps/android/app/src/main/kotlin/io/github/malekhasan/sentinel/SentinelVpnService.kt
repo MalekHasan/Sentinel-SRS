@@ -63,7 +63,8 @@ class SentinelVpnService : VpnService() {
     // Checks that the engine still reports, as often as it does (SP-03). Handler time
     // stands still while the phone sleeps, so this never wakes it. A silent engine takes
     // the phone's traffic and relays none of it: a new one replaces it, and its gap
-    // closes when that one runs (NF-07).
+    // closes when that one runs (NF-07). Each check also moves the job that starts
+    // monitoring again, should the process die, further ahead (SP-02).
     private val checkHeartbeat = object : Runnable {
         override fun run() {
             val running = engine ?: return
@@ -73,6 +74,7 @@ class SentinelVpnService : VpnService() {
                 teardown(keepForeground = true)
                 startMonitoring()
             } else {
+                KeepMonitoringJob.arm(this@SentinelVpnService)
                 main.postDelayed(this, Heartbeat.EVERY_MILLIS)
             }
         }
@@ -273,6 +275,8 @@ class SentinelVpnService : VpnService() {
     }
 
     private fun teardown(keepForeground: Boolean = false) {
+        // Monitoring that ends is not started again by the job; a new start arms it.
+        KeepMonitoringJob.disarm(this)
         listener = null
         IndicatorFeed.removeListener(feedChanged)
         main.removeCallbacks(recheckFeed)
