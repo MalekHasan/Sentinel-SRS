@@ -5,6 +5,7 @@ import android.app.ActivityOptions
 import android.app.NotificationManager
 import android.os.Build
 import android.os.Process
+import android.os.SystemClock
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -71,13 +72,19 @@ class MonitoringTest {
     fun firingTheNotificationsStopOnlyAsks() {
         startMonitoring()
         val question = context.getString(R.string.stop_title)
-        fun asked() = compose.onAllNodesWithText(question).fetchSemanticsNodes().isNotEmpty()
+        fun asked() = try {
+            compose.onAllNodesWithText(question).fetchSemanticsNodes().isNotEmpty()
+        } catch (e: IllegalStateException) {
+            false // No Compose screen at all: the question's activity is not, or no longer, open.
+        }
 
         fireStopAction()
         compose.waitUntil(10_000) { asked() }
         assertEquals("monitoring while asked", Monitor.Status.ON, Monitor.status.value)
         compose.onNodeWithText(context.getString(R.string.stop_keep)).performClick()
         compose.waitUntil(10_000) { !asked() }
+        // Time for a stop to arrive, were one sent.
+        SystemClock.sleep(1_000)
         assertEquals("monitoring kept", Monitor.Status.ON, Monitor.status.value)
 
         fireStopAction()
