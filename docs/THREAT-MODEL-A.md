@@ -98,7 +98,7 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 | D4 | Another VPN app takes the tunnel (always-on VPN) | `onRevoke` records a monitoring gap, shown on the main screen, with its Warning alert (ADR-0012) | Done |
 | D5 | Battery drain makes users uninstall | Idle wake-ups measured in CI (ADR-0006) | Done on the host; measuring on the reference phones is open (Sprint 9) |
 | D6 | The phone maker's battery management stops the service | The heartbeat and gaps make every stop visible; "Keep monitoring running" gives Android's and the maker's steps (ADR-0029, ADR-0030) | Done; the makers' steps are not checked on their phones |
-| D7 | After a crash or a kill, the service is not started again (`START_NOT_STICKY`). Monitoring stays off until the user opens Sentinel, unless always-on VPN is set; the gap is recorded only then | SP-02: restart after a crash, and a Critical alert when stops repeat | Open (review finding F3) |
+| D7 | After a crash or a kill, the service is not started again. Monitoring stays off until the user opens Sentinel, unless always-on VPN is set; the gap is recorded only then | While monitoring runs, the service is sticky: Android starts it again after its process dies, and the gap closes once monitoring runs. The third stop within 24 hours raises a Critical alert offering the steps that keep monitoring running (SP-02, [ADR-0038](adr/0038-restart-after-a-crash.md)) | Done; a maker that blocks restarts is covered by those steps and always-on VPN |
 
 ### Elevation of privilege
 
@@ -137,7 +137,7 @@ Every row was checked against the code and its tests as of PR #11, and the data 
 | --- | --- | --- |
 | F1 | Monitoring could be stopped from the notification on a locked phone, leaving no gap (T5) | Fixed in this review |
 | F2 | A history that cannot be opened is replaced without telling the user (T6). A0 planned the notice for Sprint 5 | Fixed in this review: an alert in the new history |
-| F3 | The service is not restarted after a crash or kill, and repeated stops raise no Critical alert (D7, SP-02) | Fix next: restart after a crash and alert on repeated stops, tested by killing the process on the emulator |
+| F3 | The service is not restarted after a crash or kill, and repeated stops raise no Critical alert (D7, SP-02) | Fixed after this review (ADR-0038): restarted by Android, tested by killing the process on the emulator; a Critical alert at the third stop within a day |
 | F4 | The optional app lock (SRS §15.2, I4) was planned for Sprint 10 in A0 but is not in Phase A's plan | For the owner: schedule it, or accept it for Phase A |
 
 **Still needed before the public beta** (SRS §15.4):

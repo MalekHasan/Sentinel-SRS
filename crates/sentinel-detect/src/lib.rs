@@ -134,6 +134,8 @@ pub enum Rule {
     /// The history could not be opened, so a new one was started: what the old one held
     /// is gone (THREAT-MODEL-A T6).
     HistoryStartedAnew,
+    /// Monitoring stopped again and again although the user wanted it on (SP-02).
+    MonitoringKeepsStopping,
 }
 
 impl Rule {
@@ -157,6 +159,7 @@ impl Rule {
             Rule::UploadSurge => "upload-surge",
             Rule::SharingSiteUpload => "sharing-site-upload",
             Rule::HistoryStartedAnew => "history-started-anew",
+            Rule::MonitoringKeepsStopping => "monitoring-keeps-stopping",
         }
     }
 
@@ -180,6 +183,7 @@ impl Rule {
             Rule::UploadSurge,
             Rule::SharingSiteUpload,
             Rule::HistoryStartedAnew,
+            Rule::MonitoringKeepsStopping,
         ]
         .into_iter()
         .find(|r| r.id() == id)
@@ -189,6 +193,8 @@ impl Rule {
     pub fn actions(self, evidence: &[Evidence]) -> Vec<Action> {
         let mut actions = match self {
             Rule::MonitoringInterrupted => vec![Action::StartMonitoring],
+            // The steps that keep monitoring running, the phone maker's among them.
+            Rule::MonitoringKeepsStopping => vec![Action::OpenKeepRunning],
             Rule::FirstNetworkUse
             | Rule::NewDestination
             | Rule::KnownIndicator
@@ -312,6 +318,9 @@ pub enum Evidence {
     /// The app had `limit` connections open at once, as many as it may; more were
     /// refused (THREAT-MODEL-A D2).
     FlowLimit { limit: u32 },
+    /// Monitoring stopped `count` times in the last `hours` hours, though the user
+    /// wanted it on (SP-02).
+    RepeatedGaps { count: u32, hours: u32 },
     /// The app connected to `destination` (a name, or an address when no name is known)
     /// `check_ins` times in a row, typically every `interval_ms` milliseconds, each time
     /// with at most `max_bytes` both ways (DL-04).
@@ -387,6 +396,9 @@ pub enum Action {
     /// Android's privacy settings, whose dashboard names the apps that used a sensor
     /// (SE-01 basic).
     OpenPrivacySettings,
+    /// Sentinel's "Keep monitoring running" steps: battery settings, always-on VPN and
+    /// the phone maker's own (SP-03, ADR-0030).
+    OpenKeepRunning,
 }
 
 /// One alert.
@@ -497,6 +509,28 @@ pub fn flow_limit(now: i64, app: &str, limit: u32) -> Alert {
     }
 }
 
+/// How many gaps, within [`REPEATED_GAPS_HOURS`], make monitoring "keep stopping"
+/// (SP-02).
+pub const REPEATED_GAPS: u32 = 3;
+/// The window [`REPEATED_GAPS`] are counted in.
+pub const REPEATED_GAPS_HOURS: u32 = 24;
+
+/// SP-02: monitoring stopped `count` times in the last [`REPEATED_GAPS_HOURS`] hours. A
+/// Critical alert from [`REPEATED_GAPS`] on: while monitoring keeps stopping, the phone
+/// is not watched, whether its maker's battery settings, another app or a fault in
+/// Sentinel stop it.
+pub fn monitoring_keeps_stopping(now: i64, count: u32) -> Option<Alert> {
+    (count >= REPEATED_GAPS).then(|| Alert {
+        rule: Rule::MonitoringKeepsStopping,
+        severity: Severity::Critical,
+        created: now,
+        evidence: vec![Evidence::RepeatedGaps {
+            count,
+            hours: REPEATED_GAPS_HOURS,
+        }],
+    })
+}
+
 /// THREAT-MODEL-A T6: the history could not be opened (its key is gone, or the file was
 /// changed), so a new one was started. Raised in the new history, so that the loss of
 /// the old one is not silent.
@@ -578,6 +612,10 @@ mod tests {
         assert_eq!(
             Rule::from_id("history-started-anew"),
             Some(Rule::HistoryStartedAnew)
+        );
+        assert_eq!(
+            Rule::from_id("monitoring-keeps-stopping"),
+            Some(Rule::MonitoringKeepsStopping)
         );
         assert_eq!(Rule::from_id("no-such-rule"), None);
         for state in [AlertState::Open, AlertState::Dismissed] {
@@ -664,6 +702,20 @@ mod tests {
             }]
         );
         assert_eq!(alert.actions(), [Action::StartMonitoring]);
+    }
+
+    #[test]
+    fn monitoring_that_keeps_stopping_is_critical_from_the_third_gap() {
+        assert_eq!(monitoring_keeps_stopping(9, REPEATED_GAPS - 1), None);
+        let alert = monitoring_keeps_stopping(9, REPEATED_GAPS).unwrap();
+        assert_eq!(alert.rule, Rule::MonitoringKeepsStopping);
+        assert_eq!(alert.severity, Severity::Critical);
+        assert_eq!(alert.app(), None);
+        assert_eq!(alert.actions(), [Action::OpenKeepRunning]);
+        assert_eq!(
+            evidence_to_json(&alert.evidence),
+            r#"[{"type":"repeated_gaps","count":3,"hours":24}]"#
+        );
     }
 
     #[test]

@@ -3,7 +3,11 @@ package io.github.malekhasan.sentinel
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.malekhasan.sentinel.core.AlertAction
+import io.github.malekhasan.sentinel.core.AlertEvidence
 import io.github.malekhasan.sentinel.core.AlertRule
+import io.github.malekhasan.sentinel.core.AlertSeverity
+import io.github.malekhasan.sentinel.core.HistoryAlert
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +41,24 @@ class GapLogTest {
             ),
             GapLog.recent(context, 10),
         )
+    }
+
+    /** SP-02: the third stop within a day raises one Critical alert, offering the steps
+     *  that keep monitoring running. */
+    @Test
+    fun monitoringThatKeepsStoppingRaisesACriticalAlert() {
+        fun keepsStopping() = History.get(context).alerts(true, 100u)
+            .filter { it.rule == AlertRule.MONITORING_KEEPS_STOPPING }
+        repeat(2) {
+            GapLog.open(context, System.currentTimeMillis(), "killed")
+            GapLog.closeOpen(context, System.currentTimeMillis())
+        }
+        assertEquals("two stops", emptyList<HistoryAlert>(), keepsStopping())
+        GapLog.open(context, System.currentTimeMillis(), "killed")
+        val alert = keepsStopping().single()
+        assertEquals(AlertSeverity.CRITICAL, alert.severity)
+        assertEquals(listOf(AlertEvidence.RepeatedGaps(count = 3u, hours = 24u)), alert.evidence)
+        assertEquals(listOf(AlertAction.OpenKeepRunning), alert.actions)
     }
 
     /**

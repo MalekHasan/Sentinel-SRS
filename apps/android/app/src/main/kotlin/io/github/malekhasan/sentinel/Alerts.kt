@@ -406,6 +406,7 @@ fun titleRes(rule: AlertRule): Int = when (rule) {
     AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_title
     AlertRule.SHARING_SITE_UPLOAD -> R.string.alert_sharing_site_upload_title
     AlertRule.HISTORY_STARTED_ANEW -> R.string.alert_history_started_anew_title
+    AlertRule.MONITORING_KEEPS_STOPPING -> R.string.alert_monitoring_keeps_stopping_title
 }
 
 fun explanationRes(rule: AlertRule): Int = when (rule) {
@@ -427,6 +428,7 @@ fun explanationRes(rule: AlertRule): Int = when (rule) {
     AlertRule.UPLOAD_SURGE -> R.string.alert_upload_surge_text
     AlertRule.SHARING_SITE_UPLOAD -> R.string.alert_sharing_site_upload_text
     AlertRule.HISTORY_STARTED_ANEW -> R.string.alert_history_started_anew_text
+    AlertRule.MONITORING_KEEPS_STOPPING -> R.string.alert_monitoring_keeps_stopping_text
 }
 
 @Composable
@@ -516,6 +518,12 @@ private fun describeEvidence(evidence: AlertEvidence, label: (String) -> String)
             R.string.alert_evidence_certificate, isolate(evidence.subject), isolate(evidence.sha256),
         )
         is AlertEvidence.FlowLimit -> stringResource(R.string.alert_evidence_flow_limit, evidence.limit.toInt())
+        is AlertEvidence.RepeatedGaps -> pluralStringResource(
+            R.plurals.alert_evidence_repeated_gaps,
+            evidence.count.toInt(),
+            evidence.count.toInt(),
+            evidence.hours.toInt(),
+        )
         is AlertEvidence.Beacon -> stringResource(
             R.string.alert_evidence_beacon,
             isolate(evidence.destination),
@@ -607,4 +615,5 @@ private fun actionLabel(action: AlertAction, label: (String) -> String): String 
         is AlertAction.OpenDeveloperSettings -> stringResource(R.string.alert_action_open_developer_settings)
         is AlertAction.OpenCertificateSettings -> stringResource(R.string.alert_action_open_certificate_settings)
         is AlertAction.OpenPrivacySettings -> stringResource(R.string.alert_action_open_privacy_settings)
+        is AlertAction.OpenKeepRunning -> stringResource(R.string.keep_running_action)
     }

@@ -1211,6 +1211,16 @@ impl Store {
         Ok(())
     }
 
+    /// How many gaps began at or after `since`, Unix ms (SP-02). A gap whose start is
+    /// unknown counts from when it ended; one still open with no known start, as `now`.
+    pub fn gaps_since(&self, since: i64, now: i64) -> Result<u32> {
+        Ok(lock(&self.conn).query_row(
+            "SELECT COUNT(*) FROM monitoring_gap WHERE COALESCE(started, ended, ?2) >= ?1",
+            params![since, now],
+            |r| r.get(0),
+        )?)
+    }
+
     /// The most recent gaps, newest first.
     pub fn recent_gaps(&self, limit: u32) -> Result<Vec<Gap>> {
         let conn = lock(&self.conn);

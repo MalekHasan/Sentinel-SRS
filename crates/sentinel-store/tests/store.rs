@@ -870,6 +870,25 @@ fn one_gap_is_open_at_a_time() {
 }
 
 #[test]
+fn gaps_are_counted_from_when_they_began() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    // Began before the window, began in it, unknown start but ended in it, still open
+    // with no known start.
+    store.open_gap(Some(NOW - 10_000), "old").unwrap();
+    store.close_gap(NOW - 9_000).unwrap();
+    store.open_gap(Some(NOW - 1_000), "in").unwrap();
+    store.close_gap(NOW - 900).unwrap();
+    store.open_gap(None, "unknown start").unwrap();
+    store.close_gap(NOW - 500).unwrap();
+    assert_eq!(store.gaps_since(NOW - 2_000, NOW).unwrap(), 2);
+    store.open_gap(None, "open").unwrap();
+    assert_eq!(store.gaps_since(NOW - 2_000, NOW).unwrap(), 3);
+    assert_eq!(store.gaps_since(NOW - 20_000, NOW).unwrap(), 4);
+    assert_eq!(store.gaps_since(NOW + 1, NOW).unwrap(), 0);
+}
+
+#[test]
 fn wipe_deletes_the_database_and_its_journal() {
     let dir = tempfile::tempdir().unwrap();
     let path = db(&dir);
