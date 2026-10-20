@@ -2,4 +2,11 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 <resources>
     <style name="Theme.Sentinel" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- A question over whatever is on screen (StopMonitoringActivity). -->
+    <style name="Theme.Sentinel.Question">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>

@@ -78,7 +78,7 @@ internal fun dnsAnswered(name: String, tries: Int = 5, timeoutMillis: Int = 2_00
 }
 
 /**
- * Stops the VPN the way the notification's Stop action does, and waits until Android
+ * Stops the VPN the way Sentinel's Stop does, and waits until Android
  * has taken the tunnel away. Otherwise a [startMonitoring] right after would find the
  * old tunnel still in place, and the next connection would go around both: Android
  * routes an app into a new tunnel a moment after the tunnel is created.

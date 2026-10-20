@@ -640,6 +640,17 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.hardening_status_check)).performScrollTo())
     }
 
+    /** THREAT-MODEL-A E6: the question the notification's Stop asks, right to left
+     *  although it names Sentinel. */
+    @Test
+    fun stopQuestion() {
+        compose.setContent { InArabic { StopMonitoringQuestion(onStop = {}, onKeep = {}) } }
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.stop_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.stop_text)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.action_stop)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.stop_keep)))
+    }
+
     /** SP-03: the steps that keep monitoring running, and a maker's own, right to left
      *  although they name Sentinel and the maker's settings. */
     @Test

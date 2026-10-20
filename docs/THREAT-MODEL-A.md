@@ -64,7 +64,7 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 | T2 | A frozen feed: the attacker blocks updates | Expiry: an expired list is still used, but the main screen says since when it is out of date (MS-15, ADR-0019) | Done |
 | T3 | A path-traversal bundle writes outside its folder | Only plain relative ASCII paths; symbolic links rejected | Done |
 | T4 | Editing the local database to hide history | Database encrypted with a Keystore-wrapped key; SQLCipher authenticates every page, so a changed file fails to open and the app starts a new history (ADR-0009) | Done; the user is told (T6) |
-| T5 | Someone holding the locked phone (B6) turns monitoring off from its notification. A stop the user asked for is not a gap, so nothing would show it | A stop is refused while the phone is locked; from Android 12 the Stop action asks to unlock first | Done: the action's unlock request is tested on Android 14; the refusal is not tested on a device (the CI emulator has no PIN) |
+| T5 | Someone holding the locked phone (B6) turns monitoring off from its notification. A stop the user asked for is not a gap, so nothing would show it | A stop is refused while the phone is locked; from Android 12 the Stop action asks to unlock first, and it then asks whether to stop (E6) | Done: the action's unlock request is tested on Android 14; the refusal is not tested on a device (the CI emulator has no PIN) |
 | T6 | The history cannot be opened (the key is gone, or the file was changed) and a new one is started without a word: earlier connections and alerts are gone unnoticed | The new history opens with a Warning alert, "Sentinel's history was started anew", saying what is gone and why that happens | Done (tested on Android 14 with a history file overwritten) |
 
 ### Repudiation
@@ -109,6 +109,7 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 | E3 | Memory-safety bugs in native code | Rust everywhere; `unsafe` denied workspace-wide except reviewed lines with SAFETY comments | Done |
 | E4 | Another app opens Sentinel's main activity, the one exported, with an alert to show | It can only show an alert inside Sentinel; nothing is changed without the user. Sentinel's notifications use immutable intents | Accepted |
 | E5 | Another app sends Sentinel broadcasts it listens to | Receivers are registered at run time for Android's own broadcasts, not exported from Android 13 on | Done |
+| E6 | An app with notification access fires the monitoring notification's Stop action itself (`PendingIntent.send()`), without a tap and without unlocking. Monitoring stops, and a stop the user asked for leaves no gap | The action opens a question in Sentinel, on a screen no other app can open, instead of reaching the service. Only the answer "Stop monitoring" stops it | Done (audit finding A-02): on Android 14, firing the action opens the question and monitoring runs on until the answer; also shown in Arabic, right to left |
 
 ## 4. Accepted limits (shown to users, SRS §19.1)
 

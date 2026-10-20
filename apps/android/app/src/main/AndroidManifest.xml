@@ -47,6 +47,16 @@
             </intent-filter>
         </activity>
 
+        <!-- Where the monitoring notification's Stop leads: a question (THREAT-MODEL-A E6).
+             Not exported: no other app can open it, and an app firing the notification's
+             action only opens the question. -->
+        <activity
+            android:name=".StopMonitoringActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Sentinel.Question" />
+
         <!-- Not exported: only Android itself (which holds BIND_VPN_SERVICE) can bind
              it, and only this app can start or stop it (THREAT-MODEL-A E1).
 

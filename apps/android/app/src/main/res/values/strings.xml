@@ -9,6 +9,9 @@
     <string name="disclosure">Sentinel uses Android\'s VPN feature to see which apps connect where. Your traffic stays on this phone: Sentinel has no servers, and nothing is sent to us.</string>
     <string name="action_start">Start monitoring</string>
     <string name="action_stop">Stop monitoring</string>
+    <string name="stop_title">Stop monitoring?</string>
+    <string name="stop_text">Sentinel will stop watching this phone\'s connections, and record nothing, until you start it again.</string>
+    <string name="stop_keep">Keep monitoring</string>
     <string name="status_off">Monitoring is off.</string>
     <string name="status_starting">Starting…</string>
     <string name="status_on">Monitoring is on.</string>

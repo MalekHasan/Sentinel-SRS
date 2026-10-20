@@ -153,7 +153,7 @@
 
 #### A-02: زر "إيقاف" في الإشعار يقدر تطبيق آخر يضغطه بلا تسجيل انقطاع (§15.3، T5)
 
-- [ ] تم الإصلاح
+- [x] تم الإصلاح: زر الإيقاف في الإشعار صار يفتح سؤالاً داخل Sentinel بدل إيقاف الخدمة، على شاشة غير مُصدَّرة. المراقبة توقف فقط لما الشخص يجاوب "وقّف المراقبة" ([THREAT-MODEL-A](THREAT-MODEL-A.md) E6)
 - **المكان:**
   - `apps/android/app/src/main/kotlin/io/github/malekhasan/sentinel/SentinelVpnService.kt:87-100`: معالجة `ACTION_STOP`.
   - `:307`: الـ PendingIntent.
