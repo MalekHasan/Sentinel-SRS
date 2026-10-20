@@ -204,7 +204,7 @@ Two-week sprints, team of about 3: Rust engine, Android and UI, and detection an
 
 ### Sprint 10 — Release readiness
 
-- [ ] TalkBack, large text, high contrast pass
+- [x] TalkBack, large text, high contrast pass. Screen and section titles are headings; tappable rows say what they open and are at least 48 dp high; whether monitoring runs, what an Undo did and how an export went are read out when they change; from Android 14, the user's colour contrast setting at medium or high switches Sentinel to high-contrast colours, text 7:1 or more ([ADR-0037](adr/0037-accessibility.md)). On the Android 14 emulator in CI: the headings, row labels and heights, and live regions; no text cut at twice the size on the main screen, an alert, the export and "Keep monitoring running"; WCAG ratios of every text pair in light and dark, standard and high contrast; and Android's contrast setting switching the theme both ways (127 device tests, none skipped). Still to do: a walk through every screen with TalkBack on a real phone, in English and Arabic, and keyboard navigation (§12.4)
 - [ ] Arabic copy review by native speakers; plain-language check (AL-02)
 - [ ] Usability sessions: 8 users, at least half Arabic-first; first-run setup in under 5 minutes (NF-12)
 - [ ] Threat-model review; fuzz the DNS, TLS and QUIC parsers. Fuzzing done: coverage-guided targets for the TLS ClientHello, DNS queries and answers and the names detection reads, run weekly in CI ([ADR-0036](adr/0036-fuzzing.md)); Sentinel parses no QUIC, so there is nothing to fuzz there. The threat-model review is still to do
