@@ -3,16 +3,13 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sentinel_vpn::{ClientHelloScan, scan_client_hello};
-
-/// The largest first record the scanner waits for: a header and 2^14 + 256 bytes.
-const MOST: usize = 5 + 16_384 + 256;
+use sentinel_vpn::{ClientHelloScan, MAX_HELLO, scan_client_hello};
 
 fuzz_target!(|data: &[u8]| {
     match scan_client_hello(data) {
         ClientHelloScan::NeedMore { total } => {
             assert!(total > data.len(), "asks for no more than it has");
-            assert!(total <= MOST, "asks for {total} bytes");
+            assert!(total <= MAX_HELLO, "asks for {total} bytes");
         }
         ClientHelloScan::Done(Some(name)) => {
             assert!(!name.is_empty() && name.len() <= 253);
@@ -27,6 +24,6 @@ fuzz_target!(|data: &[u8]| {
                     .all(|label| !label.is_empty() && label.len() <= 63)
             );
         }
-        ClientHelloScan::Done(None) | ClientHelloScan::NotTls => {}
+        ClientHelloScan::Done(None) | ClientHelloScan::NotTls | ClientHelloScan::Unreadable => {}
     }
 });

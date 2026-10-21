@@ -1,30 +1,45 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Server Name Indication from a TLS ClientHello (SRS CM-02).
 //!
-//! Reads only the first TLS record of a connection, never decrypts anything, and never
-//! stores the bytes. Every length is bounds-checked: input comes from untrusted apps.
+//! Reads only the ClientHello at the start of a connection, joined from the handshake
+//! records it is split into, never decrypts anything, and never stores the bytes. Every
+//! length is bounds-checked, and at most [`MAX_HELLO`] bytes are read: input comes from
+//! untrusted apps.
 
 /// Result of scanning the first bytes a client sent on a TCP connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientHelloScan {
     /// Not a TLS handshake; stop looking.
     NotTls,
-    /// Looks like TLS but the first record is incomplete. `total` bytes are needed.
-    /// Modern ClientHellos with post-quantum key shares are bigger than one TCP segment.
+    /// Looks like TLS but the ClientHello is incomplete: at least `total` bytes are
+    /// needed. Modern ClientHellos with post-quantum key shares are bigger than one TCP
+    /// segment, and a ClientHello may be split into several records.
     NeedMore { total: usize },
-    /// The full first record was read. `None` if it carries no usable server name
-    /// (no SNI extension, or a malformed one).
+    /// The whole ClientHello was read. `None` if it carries no usable server name (no SNI
+    /// extension, or a malformed one).
     Done(Option<String>),
+    /// TLS, but its ClientHello cannot be read: longer than [`MAX_HELLO`] bytes of
+    /// records, or broken across records. A server may still accept it and see a name
+    /// that this scan does not (audit finding A-03).
+    Unreadable,
 }
 
 const RECORD_HEADER: usize = 5;
 /// TLS 1.3 limit for a plaintext record (2^14) plus slack some stacks use.
 const MAX_RECORD: usize = 16_384 + 256;
+/// The most bytes of records read to find the ClientHello: twice the largest record.
+/// Real ClientHellos, with post-quantum key shares, take a few kilobytes.
+pub const MAX_HELLO: usize = 2 * (RECORD_HEADER + MAX_RECORD);
+/// The handshake message header: its type and a 24-bit length.
+const MESSAGE_HEADER: usize = 4;
 const HANDSHAKE: u8 = 0x16;
 const CLIENT_HELLO: u8 = 0x01;
 const EXT_SERVER_NAME: u16 = 0x0000;
 const NAME_TYPE_HOST: u8 = 0x00;
 
+/// Scan what a client sent first on a TCP connection for the server name of its
+/// ClientHello. A ClientHello split into several handshake records, as TLS allows and
+/// servers accept, is joined again (audit finding A-03).
 pub fn scan_client_hello(buf: &[u8]) -> ClientHelloScan {
     match buf.first() {
         None => {
@@ -35,23 +50,58 @@ pub fn scan_client_hello(buf: &[u8]) -> ClientHelloScan {
         Some(&HANDSHAKE) => {}
         Some(_) => return ClientHelloScan::NotTls,
     }
-    if buf.len() < RECORD_HEADER {
-        return ClientHelloScan::NeedMore {
-            total: RECORD_HEADER,
+    // The handshake bytes, joined from the records they came in.
+    let mut message = Vec::new();
+    let mut at = 0;
+    loop {
+        // No more records fit in what the scan reads.
+        if at + RECORD_HEADER > MAX_HELLO {
+            return ClientHelloScan::Unreadable;
+        }
+        let Some(header) = buf.get(at..at + RECORD_HEADER) else {
+            return ClientHelloScan::NeedMore {
+                total: at + RECORD_HEADER,
+            };
         };
+        if header[1] != 0x03 {
+            return if at == 0 {
+                ClientHelloScan::NotTls
+            } else {
+                ClientHelloScan::Unreadable
+            };
+        }
+        // Handshake messages may not be interleaved with other records, and records
+        // may not be empty or oversized.
+        let record_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
+        if header[0] != HANDSHAKE || record_len == 0 || record_len > MAX_RECORD {
+            return ClientHelloScan::Unreadable;
+        }
+        let end = at + RECORD_HEADER + record_len;
+        if end > MAX_HELLO {
+            return ClientHelloScan::Unreadable;
+        }
+        let Some(fragment) = buf.get(at + RECORD_HEADER..end) else {
+            return ClientHelloScan::NeedMore { total: end };
+        };
+        message.extend_from_slice(fragment);
+        at = end;
+        if message[0] != CLIENT_HELLO {
+            return ClientHelloScan::Done(None);
+        }
+        if let Some(length) = (Reader {
+            data: &message[1..],
+        })
+        .u24()
+        {
+            let total = MESSAGE_HEADER + length;
+            if total > MAX_HELLO {
+                return ClientHelloScan::Unreadable;
+            }
+            if message.len() >= total {
+                return ClientHelloScan::Done(server_name(&message[MESSAGE_HEADER..total]));
+            }
+        }
     }
-    if buf[1] != 0x03 {
-        return ClientHelloScan::NotTls;
-    }
-    let record_len = usize::from(u16::from_be_bytes([buf[3], buf[4]]));
-    if record_len == 0 || record_len > MAX_RECORD {
-        return ClientHelloScan::NotTls;
-    }
-    let total = RECORD_HEADER + record_len;
-    if buf.len() < total {
-        return ClientHelloScan::NeedMore { total };
-    }
-    ClientHelloScan::Done(server_name(&buf[RECORD_HEADER..total]))
 }
 
 /// A cursor that refuses to read past the end instead of panicking.
@@ -96,17 +146,9 @@ impl<'a> Reader<'a> {
     }
 }
 
-fn server_name(record: &[u8]) -> Option<String> {
-    let mut r = Reader { data: record };
-    if r.u8()? != CLIENT_HELLO {
-        return None;
-    }
-    // A ClientHello split across several records is cut short here; we then parse
-    // what we have and usually still find the name, which comes early in practice.
-    let declared = r.u24()?;
-    let mut body = Reader {
-        data: &r.data[..declared.min(r.data.len())],
-    };
+/// The server name in a ClientHello's body, the message without its header.
+fn server_name(hello: &[u8]) -> Option<String> {
+    let mut body = Reader { data: hello };
     body.take(2)?; // legacy_version
     body.take(32)?; // random
     body.vec8()?; // legacy_session_id
@@ -228,6 +270,88 @@ pub(crate) mod tests {
             scan_client_hello(&hello[..3]),
             ClientHelloScan::NeedMore { total: 5 }
         );
+    }
+
+    /// The handshake message of `hello` again, split into records of the given sizes,
+    /// and the rest in one record.
+    pub(crate) fn in_records(hello: &[u8], sizes: &[usize]) -> Vec<u8> {
+        let mut message = &hello[RECORD_HEADER..];
+        let mut out = Vec::new();
+        for &size in sizes.iter().chain(std::iter::once(&usize::MAX)) {
+            let (fragment, rest) = message.split_at(size.min(message.len()));
+            out.extend_from_slice(&[HANDSHAKE, 0x03, 0x01]);
+            out.extend_from_slice(&(fragment.len() as u16).to_be_bytes());
+            out.extend_from_slice(fragment);
+            message = rest;
+            if message.is_empty() {
+                break;
+            }
+        }
+        out
+    }
+
+    /// Audit finding A-03: a ClientHello split into several records, as TLS allows and
+    /// servers accept, still gives its name, however small the pieces.
+    #[test]
+    fn joins_a_client_hello_split_into_records() {
+        let hello = client_hello(&[(0x0033, vec![0xAB; 1300]), sni_ext("blocked.example")]);
+        for sizes in [vec![40], vec![1, 1, 1, 1, 1], vec![100; 13], vec![1; 400]] {
+            let split = in_records(&hello, &sizes);
+            assert!(split.len() > hello.len());
+            assert_eq!(
+                scan_client_hello(&split),
+                ClientHelloScan::Done(Some("blocked.example".into())),
+                "{sizes:?}"
+            );
+            // Any prefix asks for more, never for what it has.
+            for len in [3, 5, 6, 47, split.len() / 2, split.len() - 1] {
+                match scan_client_hello(&split[..len]) {
+                    ClientHelloScan::NeedMore { total } => assert!(total > len, "{len}"),
+                    other => panic!("{sizes:?} cut at {len}: {other:?}"),
+                }
+            }
+        }
+    }
+
+    /// TLS whose ClientHello is broken across records, or longer than this scan reads,
+    /// is told apart from a ClientHello without a name.
+    #[test]
+    fn a_broken_or_endless_client_hello_is_unreadable() {
+        let hello = client_hello(&[(0x0033, vec![0xAB; 600]), sni_ext("blocked.example")]);
+        let split = in_records(&hello, &[50]);
+        let second = RECORD_HEADER + 50;
+
+        // Another kind of record before the ClientHello is complete.
+        let mut interleaved = split.clone();
+        interleaved[second] = 0x17;
+        assert_eq!(scan_client_hello(&interleaved), ClientHelloScan::Unreadable);
+
+        // An empty record.
+        let mut empty = split[..second].to_vec();
+        empty.extend_from_slice(&[HANDSHAKE, 0x03, 0x01, 0, 0]);
+        empty.extend_from_slice(&split[second..]);
+        assert_eq!(scan_client_hello(&empty), ClientHelloScan::Unreadable);
+
+        // A ClientHello that says it is longer than the scan reads.
+        let mut long = hello.clone();
+        long[RECORD_HEADER + 1..RECORD_HEADER + 4].copy_from_slice(&[0x01, 0x00, 0x00]);
+        assert_eq!(scan_client_hello(&long), ClientHelloScan::Unreadable);
+
+        // Pieces so small that the records outgrow the limit before the ClientHello ends.
+        let big = client_hello(&[(0x0033, vec![0xAB; 7000]), sni_ext("blocked.example")]);
+        let tiny = in_records(&big, &vec![1; 7000]);
+        assert!(tiny.len() > MAX_HELLO);
+        assert_eq!(scan_client_hello(&tiny), ClientHelloScan::Unreadable);
+        assert_eq!(
+            scan_client_hello(&tiny[..MAX_HELLO]),
+            ClientHelloScan::Unreadable,
+            "known before the limit is read"
+        );
+
+        // A first message that is not a ClientHello carries no name to look for.
+        let mut not_hello = hello.clone();
+        not_hello[RECORD_HEADER] = 0x02;
+        assert_eq!(scan_client_hello(&not_hello), ClientHelloScan::Done(None));
     }
 
     #[test]

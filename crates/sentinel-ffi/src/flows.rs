@@ -670,6 +670,22 @@ impl Observer for FlowEvents {
         verdict
     }
 
+    fn hostname_unreadable(&self, flow: &FlowInfo) -> Verdict {
+        let Some(history) = &self.history else {
+            return Verdict::Allow;
+        };
+        let app = lock(&self.open)
+            .get(&flow.id)
+            .and_then(|(_, owner)| owner.app.clone());
+        // Without its name, the connection may be going where a rule blocks by name: it
+        // is not let past that rule unread (audit finding A-03, ADR-0015).
+        if history.rule_set().blocks_by_name(app.as_deref()) {
+            Verdict::Block
+        } else {
+            Verdict::Allow
+        }
+    }
+
     fn dns_query(&self, flow: &FlowInfo, qname: &str, qtype: u16) -> Verdict {
         let owner = lock(&self.open)
             .get(&flow.id)
@@ -1980,6 +1996,59 @@ mod tests {
             Verdict::Allow,
             "isolation ended"
         );
+    }
+
+    /// Audit finding A-03: a TLS connection whose server name cannot be read is blocked
+    /// when a rule blocking a domain or a company applies to its app, and let through
+    /// when none does.
+    #[test]
+    fn an_unreadable_name_is_blocked_where_a_rule_blocks_by_name() {
+        use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
+
+        let (_dir, history) = history();
+        let old = Some(history.began_ms() - 1);
+        let observer = listen(
+            &history,
+            vec![
+                (1, installed("org.example.chat", old)),
+                (2, installed("org.example.maps", old)),
+            ],
+        );
+        let events = FlowEvents::new(observer, Some(Arc::clone(&history)), 1);
+        let at = |id: u64, port: u16| flow(id, &format!("203.0.113.5:{port}"), None);
+        let chat = at(1, 1);
+        let maps = at(2, 2);
+        assert_eq!(events.flow_started(&chat), Verdict::Allow);
+        assert_eq!(events.flow_started(&maps), Verdict::Allow);
+        assert_eq!(events.hostname_unreadable(&chat), Verdict::Allow, "no rule");
+
+        history
+            .set_firewall_rule(
+                FirewallRule {
+                    app: Some("org.example.chat".into()),
+                    destination: Some(RuleDestination::Domain {
+                        name: "ads.example".into(),
+                    }),
+                    action: RuleAction::Block,
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(events.hostname_unreadable(&chat), Verdict::Block);
+        assert_eq!(
+            events.hostname_unreadable(&maps),
+            Verdict::Allow,
+            "the rule is about another app"
+        );
+        assert_eq!(
+            events.hostname_unreadable(&at(3, 3)),
+            Verdict::Allow,
+            "a flow not known: its app is not the rule's"
+        );
+
+        // Without a history there are no rules.
+        let bare = FlowEvents::new(listen(&history, vec![]), None, 2);
+        assert_eq!(bare.hostname_unreadable(&chat), Verdict::Allow);
     }
 
     /// RA-01: a company rule blocks the names the tracker list gives that company, at a

@@ -162,17 +162,26 @@ where
     let to_client = copy_counted(&mut up_rx, &mut client_tx, |n| flow.counters.add_down(n));
     let to_server = async {
         let first = read_client_hello(&mut client_rx, ctx.config.sni_wait).await?;
-        if let ClientHelloScan::Done(Some(name)) = scan_client_hello(&first) {
-            let mut named = flow.clone();
-            named.hostname = Some(name.clone());
-            named.hostname_source = Some(HostnameSource::Sni);
-            let verdict = ctx.observer.hostname_seen(&named, &name);
-            let _ = sni.set(name);
-            if verdict == Verdict::Block {
-                blocked.store(true, Ordering::Relaxed);
-                // Nothing from the client has reached the server yet.
-                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        let verdict = match scan_client_hello(&first) {
+            ClientHelloScan::Done(Some(name)) => {
+                let mut named = flow.clone();
+                named.hostname = Some(name.clone());
+                named.hostname_source = Some(HostnameSource::Sni);
+                let verdict = ctx.observer.hostname_seen(&named, &name);
+                let _ = sni.set(name);
+                verdict
             }
+            // A TLS handshake whose name was not read in time, or cannot be: the server
+            // may still see one (audit finding A-03). Not a client that sent nothing.
+            ClientHelloScan::NeedMore { .. } | ClientHelloScan::Unreadable if !first.is_empty() => {
+                ctx.observer.hostname_unreadable(&flow)
+            }
+            _ => Verdict::Allow,
+        };
+        if verdict == Verdict::Block {
+            blocked.store(true, Ordering::Relaxed);
+            // Nothing from the client has reached the server yet.
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
         }
         if first.is_empty() {
             up_tx.shutdown().await.ok();
@@ -201,8 +210,10 @@ where
 }
 
 /// Read the client's first bytes. If they start a TLS ClientHello, keep reading until
-/// the whole first record is here (modern ClientHellos span two TCP segments) or
-/// `wait` passes. Returns an empty buffer if the client closes without sending.
+/// the whole ClientHello is here (modern ClientHellos span two TCP segments, and may be
+/// split into several records) or `wait` passes. The scan bounds what is kept, at
+/// [`crate::MAX_HELLO`] bytes and one read more. Returns an empty buffer if the client
+/// closes without sending.
 async fn read_client_hello<R: AsyncRead + Unpin>(
     client: &mut R,
     wait: Duration,
@@ -446,4 +457,162 @@ fn connect_udp(protect: &dyn Protect, dst: SocketAddr) -> io::Result<UdpSocket> 
     socket.bind(&unspecified.into())?;
     socket.connect(&dst.into())?;
     UdpSocket::from_std(socket.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protect::NoProtect;
+    use crate::sni::tests::{client_hello, in_records, sni_ext};
+    use std::sync::Mutex;
+    use tokio::net::TcpListener;
+
+    /// Blocks one server name, and, if asked, every name it cannot read; notes what the
+    /// relay asked.
+    struct Names {
+        blocked: &'static str,
+        block_unreadable: bool,
+        seen: Mutex<Vec<String>>,
+        unreadable: AtomicU64,
+    }
+
+    impl Names {
+        fn new(blocked: &'static str, block_unreadable: bool) -> Arc<Names> {
+            Arc::new(Names {
+                blocked,
+                block_unreadable,
+                seen: Mutex::new(Vec::new()),
+                unreadable: AtomicU64::new(0),
+            })
+        }
+    }
+
+    impl Observer for Names {
+        fn hostname_seen(&self, _flow: &FlowInfo, hostname: &str) -> Verdict {
+            self.seen.lock().unwrap().push(hostname.to_owned());
+            if hostname == self.blocked {
+                Verdict::Block
+            } else {
+                Verdict::Allow
+            }
+        }
+
+        fn hostname_unreadable(&self, _flow: &FlowInfo) -> Verdict {
+            self.unreadable.fetch_add(1, Ordering::Relaxed);
+            if self.block_unreadable {
+                Verdict::Block
+            } else {
+                Verdict::Allow
+            }
+        }
+    }
+
+    /// An app sends `pieces` to a server on loopback through the relay, `pause` apart,
+    /// with the relay waiting 100 ms for a ClientHello's rest. Returns what the server
+    /// received.
+    async fn relay(names: Arc<Names>, pieces: &[Vec<u8>], pause: Duration) -> Vec<u8> {
+        let ctx = Arc::new(Ctx {
+            protect: Arc::new(NoProtect),
+            observer: names,
+            dns: DnsCache::new(16),
+            config: EngineConfig {
+                sni_wait: Duration::from_millis(100),
+                ..EngineConfig::default()
+            },
+            stats: Arc::new(EngineStats::default()),
+            next_id: AtomicU64::new(1),
+        });
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dst = server.local_addr().unwrap();
+        let received = tokio::spawn(async move {
+            let (mut socket, _) = server.accept().await.unwrap();
+            let mut got = Vec::new();
+            // Ends when the relay closes its side, cleanly or not.
+            let _ = socket.read_to_end(&mut got).await;
+            got
+        });
+        let (app, engine_side) = tokio::io::duplex(64 * 1024);
+        let relayed = tokio::spawn(tcp(
+            ctx,
+            engine_side,
+            "10.0.0.2:40000".parse().unwrap(),
+            dst,
+        ));
+        let (mut app_rx, mut app_tx) = tokio::io::split(app);
+        for (i, piece) in pieces.iter().enumerate() {
+            if i > 0 {
+                tokio::time::sleep(pause).await;
+            }
+            if app_tx.write_all(piece).await.is_err() {
+                break;
+            }
+        }
+        let _ = app_tx.shutdown().await;
+        let _ = app_rx.read_to_end(&mut Vec::new()).await;
+        relayed.await.unwrap();
+        received.await.unwrap()
+    }
+
+    fn hello(name: &str) -> Vec<u8> {
+        client_hello(&[(0x0033, vec![0xAB; 1300]), sni_ext(name)])
+    }
+
+    /// Audit finding A-03: a ClientHello split into small records still gives its name,
+    /// and a blocked name reaches nothing.
+    #[tokio::test]
+    async fn a_name_in_a_split_client_hello_is_still_blocked() {
+        let names = Names::new("blocked.example", false);
+        let split = in_records(&hello("blocked.example"), &[1, 1, 1, 50]);
+        let got = relay(Arc::clone(&names), &[split], Duration::ZERO).await;
+        assert!(got.is_empty(), "the server got {} bytes", got.len());
+        assert_eq!(*names.seen.lock().unwrap(), ["blocked.example"]);
+
+        let names = Names::new("blocked.example", false);
+        let allowed = in_records(&hello("allowed.example"), &[1, 1, 1, 50]);
+        let got = relay(
+            Arc::clone(&names),
+            std::slice::from_ref(&allowed),
+            Duration::ZERO,
+        )
+        .await;
+        assert_eq!(got, allowed, "a name not blocked passes, every byte");
+    }
+
+    /// Audit finding A-03: a ClientHello sent too slowly to be read is not let through
+    /// unread when the observer says so; otherwise every byte passes, as before.
+    #[tokio::test]
+    async fn a_client_hello_too_slow_to_read_is_put_to_the_observer() {
+        let slow = hello("blocked.example");
+        let pieces = [slow[..100].to_vec(), slow[100..].to_vec()];
+
+        let names = Names::new("blocked.example", true);
+        let got = relay(Arc::clone(&names), &pieces, Duration::from_millis(400)).await;
+        assert!(got.is_empty(), "the server got {} bytes", got.len());
+        assert_eq!(names.unreadable.load(Ordering::Relaxed), 1);
+        assert!(names.seen.lock().unwrap().is_empty());
+
+        let names = Names::new("blocked.example", false);
+        let got = relay(Arc::clone(&names), &pieces, Duration::from_millis(400)).await;
+        assert_eq!(got, slow);
+        assert_eq!(names.unreadable.load(Ordering::Relaxed), 1);
+    }
+
+    /// Only a TLS handshake whose name cannot be read is put to the observer: not one
+    /// without a name, not another protocol, not a client that sends nothing.
+    #[tokio::test]
+    async fn only_an_unreadable_handshake_is_put_to_the_observer() {
+        let no_name = client_hello(&[(0x000a, vec![0, 2, 0, 29])]);
+        let http = b"GET / HTTP/1.1\r\nHost: blocked.example\r\n\r\n".to_vec();
+        for first in [no_name, http, Vec::new()] {
+            let names = Names::new("blocked.example", true);
+            let got = relay(
+                Arc::clone(&names),
+                std::slice::from_ref(&first),
+                Duration::ZERO,
+            )
+            .await;
+            assert_eq!(got, first);
+            assert_eq!(names.unreadable.load(Ordering::Relaxed), 0);
+        }
+    }
 }

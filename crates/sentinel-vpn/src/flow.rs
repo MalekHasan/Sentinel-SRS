@@ -129,6 +129,14 @@ pub trait Observer: Send + Sync + 'static {
         Verdict::Allow
     }
 
+    /// A TCP flow began a TLS handshake whose server name cannot be read: its ClientHello
+    /// came too slowly ([`crate::EngineConfig::sni_wait`]), or broken, or longer than the
+    /// engine reads. The server may still see a name. Returning [`Verdict::Block`] closes
+    /// the flow before anything is forwarded (audit finding A-03).
+    fn hostname_unreadable(&self, _flow: &FlowInfo) -> Verdict {
+        Verdict::Allow
+    }
+
     /// A DNS query for `qname` is about to be sent, asking for records of type `qtype`
     /// (see [`crate::DnsQuery`]). Returning [`Verdict::Block`] answers it at once with
     /// "no such name" instead, and nothing is sent.

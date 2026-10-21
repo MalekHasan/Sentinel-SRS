@@ -326,6 +326,25 @@ impl RuleSet {
 }
 
 impl RuleSet {
+    /// Whether a rule that blocks by name, a domain or a company, applies to `app`'s
+    /// connections (`None` when the app is not known). A connection whose TLS server name
+    /// cannot be read may be going to such a name, and is then blocked rather than let
+    /// past the rule unread (audit finding A-03, ADR-0015). Allow rules for some names
+    /// are not weighed: without the name, none can be shown to apply.
+    pub fn blocks_by_name(&self, app: Option<&str>) -> bool {
+        self.rules.iter().any(|rule| {
+            rule.action == RuleAction::Block
+                && matches!(
+                    rule.destination,
+                    Some(Destination::Domain { .. } | Destination::Company { .. })
+                )
+                && rule
+                    .app
+                    .as_deref()
+                    .is_none_or(|rule_app| app == Some(rule_app))
+        })
+    }
+
     /// Whether `mode` keeps `app`, installed at `installed`, off the network as a new
     /// app: Block-unknown blocks it and no rule is about the app as a whole. Rules about
     /// some of its destinations may still let it reach those.
@@ -1017,6 +1036,41 @@ mod tests {
             "10.215.173.53:53".parse().unwrap(),
             &[]
         ));
+    }
+
+    /// Audit finding A-03: a rule blocking a domain or a company, for every app or for
+    /// this one, means a connection whose name cannot be read may be going there.
+    #[test]
+    fn rules_that_block_by_name_are_found_for_their_apps() {
+        let company = || {
+            Some(Destination::Company {
+                company: "Example Ads".into(),
+            })
+        };
+        let network = Some(Destination::Network {
+            network: Network::parse("203.0.113.0/24").unwrap(),
+        });
+        let none = RuleSet::new(vec![
+            rule(None, network.clone(), RuleAction::Block),
+            rule(Some(CHAT), None, RuleAction::Block),
+            rule(None, domain("allowed.example"), RuleAction::Allow),
+        ]);
+        for app in [Some(CHAT), Some(MAPS), None] {
+            assert!(!none.blocks_by_name(app), "no rule blocks a name, {app:?}");
+        }
+
+        let everyone = RuleSet::new(vec![rule(None, domain("ads.example"), RuleAction::Block)]);
+        for app in [Some(CHAT), Some(MAPS), None] {
+            assert!(everyone.blocks_by_name(app), "{app:?}");
+        }
+
+        let chat_only = RuleSet::new(vec![rule(Some(CHAT), company(), RuleAction::Block)]);
+        assert!(chat_only.blocks_by_name(Some(CHAT)));
+        assert!(!chat_only.blocks_by_name(Some(MAPS)));
+        assert!(
+            !chat_only.blocks_by_name(None),
+            "an unknown app is not this one"
+        );
     }
 
     /// The stored names are part of the history's format.
