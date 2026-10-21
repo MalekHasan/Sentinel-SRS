@@ -25,6 +25,7 @@ The heartbeat (ADR-0029) replaces an engine that hangs, but only while the proce
    - **The gap:** it opens as the new process starts, from when Android recorded the exit or the engine was last heard from, and closes once monitoring runs.
    - **Never restarted:** a Stop, a VPN taken over by another app or switched off in Android's settings, and a start that fails all end the service.
    - **A Stop refused on a locked phone** (THREAT-MODEL-A T5) keeps the service sticky.
+   - **When Android does not restart it, a job does** (`KeepMonitoringJob`). When the process dies, Android's VPN also lets go of the service. When that comes before Android has handled the death, Android 14 can leave the service started, with no process and no restart: CI saw this on the emulator ("Exception when unbinding service", then no "Scheduling restart"). So while monitoring runs, every heartbeat check (every 10 s, ADR-0029) moves a job 30 s ahead. When the process dies the checks stop and the job runs. It starts monitoring if the user still wants it, Android's VPN consent still holds, and monitoring does not run. Monitoring that ends, by a Stop, a revoked VPN or a failed start, cancels the job.
 2. **Repeated stops raise a Critical alert**, "Monitoring keeps stopping":
    - **When:** at the third gap within 24 hours (`REPEATED_GAPS`, `REPEATED_GAPS_HOURS`). Every gap counts, whatever stopped monitoring, from when it began.
    - **Evidence:** the count and the hours.
@@ -41,14 +42,17 @@ The heartbeat (ADR-0029) replaces an engine that hangs, but only while the proce
   - the third raises one Critical alert with its evidence and action;
   - a fourth while it is open raises no second one.
 - On the Android 14 emulator:
+  - `KeepMonitoringJobTest`: the job is armed while monitoring runs and cancelled by Stop; run, it leaves monitoring the user stopped off, and starts monitoring still wanted;
   - `GapLogTest`: three stops raise one Critical alert, with its evidence and action;
   - `RtlTest`: the alert in Arabic, right to left, with its count.
 - **Restart:** `apps/android/scripts/restart-after-kill.sh`, in CI after the instrumented tests. Those tests cannot check this, as they die with the app's process.
-  - The script installs the app, taps "Start monitoring", and kills the process with SIGKILL, as the low-memory killer does.
-  - It then waits for the service to run in the foreground in a new process, and to stay running.
+  - The script installs the app, taps "Start monitoring", and once the tunnel is up kills the process with SIGKILL, as the low-memory killer does.
+  - It then waits up to 90 s for the service to run in the foreground in a new process, and to stay running, and says whether Android or the job started it.
 
 ## Consequences
 
+- **Up to about 30 s more without monitoring** when the job has to start it, as long as the job scheduler takes. In Doze, jobs wait for a maintenance window; so does the job.
+- **While the phone sleeps** the heartbeat checks pause (ADR-0029), so the job may come due while monitoring runs. It then finds monitoring running and does nothing, at most once per sleep; the next check arms it again.
 - **A crash loop:** Android spaces out the restarts of a service whose process keeps dying. The Critical alert says the phone is not watched meanwhile.
 - **"Force stop"** in Android's settings stops an app for good until it is opened again: Android restarts nothing. The gap is recorded when Sentinel next starts, with the exit Android recorded.
 - **Not covered: a phone maker that blocks restarts.** Some makers stop an app from starting again in the background whatever it asks. "Keep monitoring running" and always-on VPN are the answer there.

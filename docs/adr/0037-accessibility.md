@@ -42,7 +42,7 @@ On the Android 14 emulator (`AccessibilityTest`):
 - the monitoring status and an export's result are live regions;
 - at twice the text size, no text is cut or off the screen on the main screen, an alert, the export screen and "Keep monitoring running";
 - in light and dark, standard and high contrast, each text pair the app uses (text, dialogs, text buttons, buttons, the four severity badges, errors) meets 4.5:1, or 7:1 in high contrast, and outlines 3:1, or 4.5:1;
-- setting Android's colour contrast to high (`settings put secure contrast_level 1.0`) switches the open screen to high-contrast colours, and setting it back switches it back.
+- setting Android's colour contrast to high (`settings put secure contrast_level 1.0`) switches the open screen to high-contrast colours, and setting it back switches it back. Android may recreate the open screen when the contrast changes; the test's screen sets its own content, as Sentinel's do (`ThemeProbeActivity`, debug builds only), so it shows the colours either way.
 
 ## Consequences
 

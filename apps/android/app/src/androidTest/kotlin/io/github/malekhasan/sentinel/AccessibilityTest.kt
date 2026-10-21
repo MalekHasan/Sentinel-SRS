@@ -5,7 +5,6 @@ import android.app.UiModeManager
 import android.content.res.Configuration
 import android.os.Build
 import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
@@ -26,6 +25,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.AlertAction
@@ -171,7 +171,12 @@ class AccessibilityTest {
         assertEquals(emptyList<String>(), failures)
     }
 
-    /** Android 14's contrast setting at "medium" or "high" switches Sentinel to its high-contrast colours. */
+    /**
+     * Android 14's contrast setting at "medium" or "high" switches Sentinel to its
+     * high-contrast colours. Android may recreate the open screen when the contrast
+     * changes, so the screen sets its own content, as Sentinel's do ([ThemeProbeActivity]):
+     * one a test set would come back empty, and the test would wait in vain (audit A-50).
+     */
     @Test
     fun androidsContrastSettingSwitchesToHighContrast() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
@@ -180,19 +185,20 @@ class AccessibilityTest {
             Configuration.UI_MODE_NIGHT_YES
         val standard = sentinelColors(dark, highContrast = false).surface
         val high = sentinelColors(dark, highContrast = true).surface
-        var surface: Color? = null
-        compose.setContent { SentinelTheme { surface = MaterialTheme.colorScheme.surface } }
-        compose.waitForIdle()
-        assertEquals("standard contrast", standard, surface)
-        try {
-            shell("settings put secure contrast_level 1.0")
-            waitFor("Android to report high contrast") { modes.contrast >= HIGH_CONTRAST_LEVEL }
-            compose.waitUntil(timeoutMillis = 5_000) { surface == high }
-        } finally {
-            shell("settings put secure contrast_level 0.0")
+        fun shown() = ThemeProbeActivity.surface
+        ThemeProbeActivity.surface = null
+        ActivityScenario.launch(ThemeProbeActivity::class.java).use {
+            waitFor("the standard colours") { shown() == standard }
+            try {
+                shell("settings put secure contrast_level 1.0")
+                waitFor("Android to report high contrast") { modes.contrast >= HIGH_CONTRAST_LEVEL }
+                waitFor("the high-contrast colours") { shown() == high }
+            } finally {
+                shell("settings put secure contrast_level 0.0")
+            }
+            waitFor("Android to report standard contrast") { modes.contrast < HIGH_CONTRAST_LEVEL }
+            waitFor("the standard colours again") { shown() == standard }
         }
-        waitFor("Android to report standard contrast") { modes.contrast < HIGH_CONTRAST_LEVEL }
-        compose.waitUntil(timeoutMillis = 5_000) { surface == standard }
     }
 
     @Composable

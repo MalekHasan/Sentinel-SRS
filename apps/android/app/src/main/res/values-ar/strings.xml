@@ -8,6 +8,9 @@
     <string name="disclosure">تطبيق Sentinel بيستخدم ميزة الـVPN بأندرويد عشان يشوف أي تطبيق بيتصل بأي مكان. بياناتك بتضل على هالموبايل: ما عنا سيرفرات، وما في إشي بينبعتلنا.</string>
     <string name="action_start">شغّل المراقبة</string>
     <string name="action_stop">وقّف المراقبة</string>
+    <string name="stop_title">بدك توقّف المراقبة؟</string>
+    <string name="stop_text">رح يبطّل تطبيق Sentinel يراقب اتصالات هالموبايل، وما رح يسجّل شي، لحتى ترجع تشغّله.</string>
+    <string name="stop_keep">خلّي المراقبة شغّالة</string>
     <string name="status_off">المراقبة مطفية.</string>
     <string name="status_starting">عم تشتغل…</string>
     <string name="status_on">المراقبة شغّالة.</string>

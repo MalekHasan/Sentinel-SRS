@@ -153,7 +153,7 @@
 
 #### A-02: زر "إيقاف" في الإشعار يقدر تطبيق آخر يضغطه بلا تسجيل انقطاع (§15.3، T5)
 
-- [ ] تم الإصلاح
+- [x] تم الإصلاح: زر الإيقاف في الإشعار صار يفتح سؤالاً داخل Sentinel بدل إيقاف الخدمة، على شاشة غير مُصدَّرة. المراقبة توقف فقط لما الشخص يجاوب "وقّف المراقبة" ([THREAT-MODEL-A](THREAT-MODEL-A.md) E6)
 - **المكان:**
   - `apps/android/app/src/main/kotlin/io/github/malekhasan/sentinel/SentinelVpnService.kt:87-100`: معالجة `ACTION_STOP`.
   - `:307`: الـ PendingIntent.
@@ -403,7 +403,7 @@
 **الاختبارات والـ CI**
 
 - [ ] **A-49:** الـ fuzzing الأسبوعي في CI لم يشتغل ولا مرة. ولا targets لـ parsers القائمة (manifest، ملفات المؤشرات، `ip.db`، `trackers.db`) ولا لـ stack الحزم.
-- [ ] **A-50:** اختبار متذبذب: `AccessibilityTest.androidsContrastSettingSwitchesToHighContrast` فشل عند دمج #11، ونجح على نفس الكود في فرعه وعلى `6204460`.
+- [x] **A-50:** (تم: أندرويد قد يعيد إنشاء الشاشة عند تغيير التباين، والشاشة التي وضع الاختبار محتواها ترجع فارغة. صار الاختبار يستخدم شاشة تضع محتواها بنفسها، `ThemeProbeActivity`، في نسخة debug فقط.) اختبار متذبذب: `AccessibilityTest.androidsContrastSettingSwitchesToHighContrast` فشل عند دمج #11، ونجح على نفس الكود في فرعه وعلى `6204460`.
 - [ ] **A-51:** `StringsTest` يبحث عن كلمات قليلة: لا يشمل "سليم" ولا "أمان" ولا "بأمان" ولا "safely" ولا "safety". ولا اختبار يضمن أن `test-key.pub` غير موجود في release، ولا يوجد CODEOWNERS لـ `keys/feed`.
 
 ### ملاحظات (Info)

@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
+import android.app.ActivityOptions
 import android.app.NotificationManager
 import android.os.Build
 import android.os.Process
+import android.os.SystemClock
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.FlowProto
@@ -14,6 +20,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -30,6 +37,10 @@ private const val CONNECTIONS = 20
 class MonitoringTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val notifications = context.getSystemService(NotificationManager::class.java)
+
+    /** For the question the notification's Stop opens, in its own activity. */
+    @get:Rule
+    val compose = createEmptyComposeRule()
 
     @Before
     fun grantPermissions() = grantMonitoringPermissions()
@@ -50,6 +61,53 @@ class MonitoringTest {
         val stop = ongoing.notification.actions
             .single { it.title.toString() == context.getString(R.string.action_stop) }
         assertTrue("Stop asks to unlock first", stop.isAuthenticationRequired)
+    }
+
+    /**
+     * THREAT-MODEL-A E6 (audit finding A-02): an app with notification access can fire the
+     * Stop action itself, without a tap. That only asks; monitoring stops when the person
+     * holding the phone answers Stop.
+     */
+    @Test
+    fun firingTheNotificationsStopOnlyAsks() {
+        startMonitoring()
+        val question = context.getString(R.string.stop_title)
+        fun asked() = try {
+            compose.onAllNodesWithText(question).fetchSemanticsNodes().isNotEmpty()
+        } catch (e: IllegalStateException) {
+            false // No Compose screen at all: the question's activity is not, or no longer, open.
+        }
+
+        fireStopAction()
+        compose.waitUntil(10_000) { asked() }
+        assertEquals("monitoring while asked", Monitor.Status.ON, Monitor.status.value)
+        compose.onNodeWithText(context.getString(R.string.stop_keep)).performClick()
+        compose.waitUntil(10_000) { !asked() }
+        // Time for a stop to arrive, were one sent.
+        SystemClock.sleep(1_000)
+        assertEquals("monitoring kept", Monitor.Status.ON, Monitor.status.value)
+
+        fireStopAction()
+        compose.waitUntil(10_000) { asked() }
+        compose.onNodeWithText(context.getString(R.string.action_stop)).performClick()
+        waitFor("monitoring to stop") { Monitor.status.value == Monitor.Status.OFF }
+    }
+
+    /** What an app with notification access can do: fire the Stop action as it is. */
+    private fun fireStopAction() {
+        val stop = notifications.activeNotifications
+            .single { it.id == SentinelVpnService.NOTIFICATION_ID }
+            .notification.actions
+            .single { it.title.toString() == context.getString(R.string.action_stop) }
+        // As an app that Android lets start activities, the worst case: it opens the question.
+        val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            @Suppress("DEPRECATION") // Its successor needs Android 16; the emulator runs 14.
+            val allowed = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+            ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(allowed).toBundle()
+        } else {
+            null
+        }
+        stop.actionIntent.send(context, 0, null, null, null, null, options)
     }
 
     @Test

@@ -63,7 +63,8 @@ class SentinelVpnService : VpnService() {
     // Checks that the engine still reports, as often as it does (SP-03). Handler time
     // stands still while the phone sleeps, so this never wakes it. A silent engine takes
     // the phone's traffic and relays none of it: a new one replaces it, and its gap
-    // closes when that one runs (NF-07).
+    // closes when that one runs (NF-07). Each check also moves the job that starts
+    // monitoring again, should the process die, further ahead (SP-02).
     private val checkHeartbeat = object : Runnable {
         override fun run() {
             val running = engine ?: return
@@ -73,6 +74,7 @@ class SentinelVpnService : VpnService() {
                 teardown(keepForeground = true)
                 startMonitoring()
             } else {
+                KeepMonitoringJob.arm(this@SentinelVpnService)
                 main.postDelayed(this, Heartbeat.EVERY_MILLIS)
             }
         }
@@ -85,9 +87,9 @@ class SentinelVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            // Someone holding a locked phone must not turn monitoring off from the
-            // notification: it would leave no gap, as a stop the user asked for is not
-            // one (THREAT-MODEL-A T5). From Android 12 the action asks to unlock first.
+            // Someone holding a locked phone must not turn monitoring off: it would leave
+            // no gap, as a stop the user asked for is not one (THREAT-MODEL-A T5). Only
+            // Sentinel's own screens send this: the notification's Stop asks first (E6).
             if (engine != null && getSystemService(KeyguardManager::class.java)?.isDeviceLocked == true) {
                 Log.w(TAG, "not stopping: the phone is locked")
                 return START_STICKY
@@ -273,6 +275,8 @@ class SentinelVpnService : VpnService() {
     }
 
     private fun teardown(keepForeground: Boolean = false) {
+        // Monitoring that ends is not started again by the job; a new start arms it.
+        KeepMonitoringJob.disarm(this)
         listener = null
         IndicatorFeed.removeListener(feedChanged)
         main.removeCallbacks(recheckFeed)
@@ -313,8 +317,11 @@ class SentinelVpnService : VpnService() {
         val openApp = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
         )
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, SentinelVpnService::class.java).setAction(ACTION_STOP),
+        // Stop asks first, in Sentinel: an app with notification access can fire the
+        // action itself, and must not stop monitoring that way (THREAT-MODEL-A E6).
+        val stop = PendingIntent.getActivity(
+            this, 1,
+            Intent(this, StopMonitoringActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = Notification.Builder(this, CHANNEL_ID)
