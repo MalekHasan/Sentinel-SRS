@@ -94,13 +94,19 @@ pub struct FlowOwner {
     pub app: Option<String>,
     /// When the app was first installed, Unix milliseconds, if known: on Android,
     /// `PackageInfo.firstInstallTime`. An app installed since the history began is new
-    /// to the network when the history first sees it (CM-04).
+    /// to the network when the history first sees it (CM-04). For a shared UID, its
+    /// newest package's: one package installed since makes the UID new (audit A-09).
     #[uniffi(default = None)]
     pub installed_ms: Option<i64>,
     /// Whether the app is part of the system: on Android, `ApplicationInfo.FLAG_SYSTEM`
     /// or a system UID. Its check-ins are not flagged (DL-04).
     #[uniffi(default = false)]
     pub system: bool,
+    /// Every package of a shared UID (`sharedUserId`); empty for one package's own. The
+    /// network cannot tell them apart, so a firewall rule about any of them applies to
+    /// the UID's connections (audit A-09).
+    #[uniffi(default = [])]
+    pub packages: Vec<String>,
 }
 
 impl FlowOwner {
@@ -111,6 +117,15 @@ impl FlowOwner {
             app: None,
             installed_ms: None,
             system: false,
+            packages: Vec::new(),
+        }
+    }
+
+    /// The owner as the firewall rules see it.
+    fn rules_owner(&self) -> sentinel_detect::Owner<'_> {
+        sentinel_detect::Owner {
+            app: self.app.as_deref(),
+            packages: &self.packages,
         }
     }
 }
@@ -166,6 +181,8 @@ pub(crate) struct FlowEvents {
     open: Mutex<HashMap<u64, (FlowInfo, FlowOwner)>>,
     /// When each app seen in this run was installed, where known (CM-04).
     installed: Mutex<HashMap<String, i64>>,
+    /// The packages of each shared UID seen in this run (audit A-09).
+    shared_uids: Mutex<HashMap<String, Vec<String>>>,
     pending: Mutex<Vec<FlowRecord>>,
     databases: RwLock<Databases>,
     /// The feed whose indicators the traffic is matched against (ID-13).
@@ -209,6 +226,7 @@ impl FlowEvents {
             tunnel_dns: Vec::new(),
             open: Mutex::new(HashMap::new()),
             installed: Mutex::new(HashMap::new()),
+            shared_uids: Mutex::new(HashMap::new()),
             pending: Mutex::new(Vec::new()),
             databases: RwLock::new(Databases::default()),
             feed: RwLock::new(None),
@@ -370,12 +388,19 @@ impl FlowEvents {
                     blocked,
                 } => {
                     let installed = lock(&self.installed).get(app).copied();
+                    let packages = lock(&self.shared_uids)
+                        .get(app)
+                        .cloned()
+                        .unwrap_or_default();
                     // Said only when the app was blocked for being new, which allowing
                     // it undoes, not when a rule about a destination stopped it.
                     let blocked_as_new = *blocked
                         && history.rule_set().blocks_new_app(
                             history.mode_in_force(),
-                            app,
+                            sentinel_detect::Owner {
+                                app: Some(app),
+                                packages: &packages,
+                            },
                             installed,
                         );
                     alerts.extend(sentinel_detect::first_network_use(
@@ -596,7 +621,7 @@ impl FlowEvents {
         if let Some(isolation) = history.isolation_in_force()
             && !history.rule_set().isolation_lets_through(
                 &isolation,
-                owner.app.as_deref(),
+                owner.rules_owner(),
                 to,
                 &self.tunnel_dns,
             )
@@ -614,7 +639,7 @@ impl FlowEvents {
         };
         let decision = history.rule_set().verdict(
             history.mode_in_force(),
-            owner.app.as_deref(),
+            owner.rules_owner(),
             owner.installed_ms,
             place,
         );
@@ -636,6 +661,11 @@ impl Observer for FlowEvents {
         );
         if let (Some(app), Some(installed)) = (&owner.app, owner.installed_ms) {
             lock(&self.installed).insert(app.clone(), installed);
+        }
+        if let Some(app) = &owner.app
+            && !owner.packages.is_empty()
+        {
+            lock(&self.shared_uids).insert(app.clone(), owner.packages.clone());
         }
         // The app and the address are known for sure; a name from an earlier DNS answer
         // is not, so it is not matched (ADR-0015).
@@ -674,12 +704,12 @@ impl Observer for FlowEvents {
         let Some(history) = &self.history else {
             return Verdict::Allow;
         };
-        let app = lock(&self.open)
+        let owner = lock(&self.open)
             .get(&flow.id)
-            .and_then(|(_, owner)| owner.app.clone());
+            .map_or_else(FlowOwner::unknown, |(_, owner)| owner.clone());
         // Without its name, the connection may be going where a rule blocks by name: it
         // is not let past that rule unread (audit finding A-03, ADR-0015).
-        if history.rule_set().blocks_by_name(app.as_deref()) {
+        if history.rule_set().blocks_by_name(owner.rules_owner()) {
             Verdict::Block
         } else {
             Verdict::Allow
@@ -931,6 +961,7 @@ mod tests {
             app: Some(app.to_owned()),
             installed_ms: None,
             system: false,
+            packages: Vec::new(),
         }
     }
 
@@ -1141,6 +1172,7 @@ mod tests {
             app: Some(app.to_owned()),
             installed_ms,
             system: false,
+            packages: Vec::new(),
         }
     }
 
@@ -2371,5 +2403,80 @@ mod tests {
             .find(|f| f.app.as_deref() == Some("org.example.new") && f.ended_ms == Some(10))
             .unwrap();
         assert!(first_stored.blocked);
+    }
+
+    /// Audit A-09: spyware made of two packages that share a UID is known to Android by
+    /// the UID's name. Blocking either package, as an alert about it offers, blocks the
+    /// UID's connections. A package of it installed since Block-unknown was turned on
+    /// keeps it off as new and raises the new-app alert. A connection Android cannot name
+    /// an owner for gets past Watch only, not Block-unknown.
+    #[test]
+    fn shared_uids_and_unknown_owners_do_not_get_past_the_firewall() {
+        use crate::alerts::{AlertEvidence, AlertRule};
+        use crate::firewall::{FirewallMode, FirewallRule, RuleAction};
+
+        const SHARED: &str = "org.example.spy.shared:10123";
+        let (_dir, history) = history();
+        let in_a_minute = now_ms() + 60_000;
+        let spy = FlowOwner {
+            packages: vec!["org.example.spy".into(), "org.example.spy.helper".into()],
+            ..installed(SHARED, Some(in_a_minute))
+        };
+        let observer = listen(&history, vec![(1, spy), (2, FlowOwner::unknown())]);
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let at = |id: u64, port: u16| flow(id, &format!("203.0.113.5:{port}"), None);
+
+        assert_eq!(events.flow_started(&at(1, 1)), Verdict::Allow);
+        assert_eq!(events.flow_started(&at(2, 2)), Verdict::Allow, "Watch only");
+        let blocked = history
+            .set_firewall_rule(
+                FirewallRule {
+                    app: Some("org.example.spy.helper".into()),
+                    destination: None,
+                    action: RuleAction::Block,
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(events.flow_started(&at(3, 1)), Verdict::Block);
+        assert!(history.remove_firewall_rule(blocked).unwrap());
+
+        history
+            .set_firewall_mode(FirewallMode::BlockUnknown)
+            .unwrap();
+        let new = at(4, 1);
+        assert_eq!(events.flow_started(&new), Verdict::Block, "new");
+        let unknown = at(5, 2);
+        assert_eq!(events.flow_started(&unknown), Verdict::Block, "no owner");
+        assert_eq!(
+            events.dns_query(&unknown, "anything.example", 1),
+            Verdict::Block
+        );
+        let allowed = history
+            .set_firewall_rule(
+                FirewallRule {
+                    app: Some("org.example.spy".into()),
+                    destination: None,
+                    action: RuleAction::Allow,
+                },
+                None,
+            )
+            .unwrap();
+        assert_eq!(events.flow_started(&at(6, 1)), Verdict::Allow, "allowed");
+        assert!(history.remove_firewall_rule(allowed).unwrap());
+
+        events.close_all(20);
+        let heard = observer.heard.lock().unwrap().clone();
+        let alert = heard
+            .iter()
+            .find(|alert| alert.rule == AlertRule::FirstNetworkUse)
+            .expect("the shared UID is new to the network");
+        assert!(
+            alert
+                .evidence
+                .contains(&AlertEvidence::App { app: SHARED.into() }),
+            "{:?}",
+            alert.evidence
+        );
     }
 }

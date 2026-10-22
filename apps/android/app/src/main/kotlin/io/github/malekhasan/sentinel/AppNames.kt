@@ -6,6 +6,7 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Process
+import io.github.malekhasan.sentinel.core.FlowOwner
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -16,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 class AppNames(context: Context) {
     private val packages = context.packageManager
     private val cache = ConcurrentHashMap<Int, String>()
+    private val shared = ConcurrentHashMap<Int, List<String>>()
     private val labels = ConcurrentHashMap<String, String>()
     private val installed = ConcurrentHashMap<String, Long>()
     private val system = ConcurrentHashMap<String, Boolean>()
@@ -32,6 +34,36 @@ class AppNames(context: Context) {
                 owners?.size == 1 -> owners[0]
                 else -> packages.getNameForUid(uid) ?: owners?.minOrNull() ?: "uid $uid"
             }
+        }
+    }
+
+    /**
+     * Who owns a connection by [uid], for the firewall and the history. A UID that several
+     * packages share (`sharedUserId`) lists them all: the network cannot tell them apart,
+     * so a rule about any of them applies to all, and the UID is new when one of them is,
+     * by its newest install time. Android's own UIDs have no install time, as before
+     * (audit A-09). A system app's regular check-ins are not flagged (DL-04).
+     */
+    fun ownerOf(uid: Int): FlowOwner {
+        val app = packageFor(uid)
+        val packages = sharedPackagesFor(uid)
+        val ofSystem = isSystem(uid, app)
+        val installed = when {
+            packages.isEmpty() -> app?.let(::installedAt)
+            ofSystem -> null
+            else -> packages.mapNotNull(::installedAt).maxOrNull()
+        }
+        return FlowOwner(uid, app, installed, ofSystem, packages)
+    }
+
+    /**
+     * Every package of [uid] when several share it, sorted; empty when it is one
+     * package's own or not known.
+     */
+    fun sharedPackagesFor(uid: Int): List<String> {
+        if (uid < 0) return emptyList()
+        return shared.getOrPut(uid) {
+            packages.getPackagesForUid(uid)?.takeIf { it.size > 1 }?.sorted().orEmpty()
         }
     }
 

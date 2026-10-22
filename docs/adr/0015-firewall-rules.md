@@ -3,6 +3,7 @@
 - Status: **Accepted** (Sprint 6; `crates/sentinel-detect`, then `crates/sentinel-store`, `crates/sentinel-vpn`, `crates/sentinel-ffi`, `apps/android`)
 - Date: 2026-10-15
 - Implements: SRS CM-10 for Android, the Phase A subset: rules by app, domain, address and company; RA-01 (block an app, a destination or a company, from the app). Modes (CM-08) are [ADR-0016](0016-firewall-modes.md), isolation (RA-03) is [ADR-0017](0017-isolation.md); the action journal and undo are [ADR-0018](0018-action-journal.md).
+- Amended 2026-10-22 for audit finding A-09 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): decision 1, apps that share a Linux user.
 
 ## Context
 
@@ -20,6 +21,7 @@ Names are the hard part. The engine learns a name for an address from the DNS an
 
 1. **A rule names an app, a destination, or both, and allows or blocks.**
    - The app is a package name.
+   - **Packages that share a Linux user (`sharedUserId`) are one owner on the network.** Android names a connection's owner by its Linux user, and several packages from one maker can share one. Android then names the user, for example `org.example.shared:10123`, and Kotlin also gives every package that shares it. A rule about any of those packages, or about the user's name, applies to all its connections: the network cannot tell them apart. Before, a rule made from an alert about one package (ID-12, ID-13) did not match the user's connections, so spyware made of two packages that share a user got past it (audit A-09). Allowing one package does not undo blocking another: blocking wins the tie.
    - A destination is a domain, an address range or a company. A domain covers the names below it (`example.com` covers `www.example.com` but not `notexample.com`). A single address is a range of one. A company covers the names the tracker list gives it (DT-06, [ADR-0011](0011-tracker-list.md)), spelt as the list spells it, so it is matched only where a name is: at a TLS server name and at a DNS lookup.
    - Rules are checked when made: a rule needs an app or a destination; a domain must be a plain name; a range is written one way only (no bits set past its prefix). An IPv4 address written as IPv6 is the IPv4 address.
 2. **The most specific rule decides.** A rule for an app and a destination beats one for a destination, which beats one for an app. Among matching rules equally specific, blocking wins. When no rule matches, the firewall mode decides ([ADR-0016](0016-firewall-modes.md)): in Watch only, the default, that means allow.
@@ -43,6 +45,7 @@ Names are the hard part. The engine learns a name for an address from the DNS an
 
 - `sentinel-detect` (`firewall` tests), one test per field and per rule of decision:
   - an app rule covers that app's traffic only, and nothing whose owner is unknown;
+  - a rule about one package of a shared Linux user, or about the user's name, covers all its connections, for names blocked unread too; Block new apps and isolation treat it as one app;
   - a domain rule covers the names below it and no look-alikes (`notads.example`, `ads.example.org`). Case and the trailing dot do not matter, and an address never matches a domain;
   - a company rule covers its names only once their company is known, spelt exactly; an app's exception to it needs that app; company names are checked;
   - an address rule covers that address, also written as IPv4-in-IPv6, and a range covers exactly its range, in IPv4 and IPv6;
@@ -85,6 +88,7 @@ Names are the hard part. The engine learns a name for an address from the DNS an
 - **Indicators (ID-13) are not matched against a name that cannot be read,** and such a connection raises no indicator alert. Indicators never block (SRS §9).
 - **Apps that bypass the tunnel's DNS** (their own DNS over HTTPS, or addresses built in) are stopped by domain rules only on TLS connections that name the server. Address rules still apply. QUIC traffic that never looked a name up through the tunnel is not stopped by a domain rule.
 - **Per-app domain rules at DNS lookups** depend on Android saying which app a lookup belongs to. Lookups that Android attributes to the system match only rules for every app.
+- **A connection without a known owner is not stopped by an app rule** in Watch only. An app the user blocked can still send a UDP datagram if it closes its socket before Sentinel asks Android whose it is; with the socket closed, no reply reaches it. Block new apps and isolation stop such connections (audit A-09).
 - **An app blocked as a whole stays blocked.** A rule allowing it one domain does not open its TLS connections, because they are refused when they start, before their name is known. Allowing it an address range works. Domain allows are for exceptions to domain blocks.
 - **The moment monitoring starts.** Android moves apps into a new tunnel a moment after Sentinel creates it. A connection made in that moment goes around Sentinel, as traffic does while monitoring is off, so no rule applies to it. The device tests therefore wait until the tunnel is this app's network before connecting, and after stopping, until it no longer is: otherwise a restart finds the old tunnel still listed and connects around both.
 - **Companies are only as complete as the tracker list.** A company's names that the list does not give are not blocked by its rule, and without a tracker list no company rule matches. The app detail screen offers company blocks only for companies the list named among the app's destinations.

@@ -3,6 +3,7 @@
 - Status: **Accepted** (Sprint 6; `crates/sentinel-detect`, `crates/sentinel-store`, `crates/sentinel-ffi`, `apps/android`)
 - Date: 2026-10-15
 - Implements: SRS CM-08 for Android, the Phase A subset: Monitor and Block unknown ("Mode switch takes effect within 1 s"). Prompt mode (CM-09) is for Windows and macOS; Lockdown is a Phase A "should".
+- Amended 2026-10-22 for audit finding A-09 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): decision 2, connections without a known owner, and apps that share a Linux user.
 
 ## Context
 
@@ -25,7 +26,9 @@ Android gives every app its first install time (`PackageInfo.firstInstallTime`),
 1. **Two modes on Android: Watch only (Monitor) and Block new apps (Block unknown).** Watch only is the default. In it, nothing is blocked but what the user's rules block.
 2. **Block new apps blocks the apps installed since it was turned on, until a rule allows them.** The history keeps when the mode was turned on (schema version 12, `firewall_mode`). A connection whose app was installed at or after that time is blocked, unless a rule decides otherwise. The decision uses the same three moments as the rules: when a connection starts, at its TLS server name, and at a DNS lookup through the tunnel.
    - Apps installed before, and Sentinel itself, are never stopped by the mode.
-   - Connections whose app is not known, or has no install time (Android's shared system identities, such as `android.uid.system:1000`), are never stopped by the mode. Blocking them could break the phone, and Sentinel cannot tell new from old there.
+   - Connections whose app has no install time (Android's own system identities, such as `android.uid.system:1000`) are never stopped by the mode. Blocking them could break the phone, and Sentinel cannot tell new from old there.
+   - **Connections Android cannot name an owner for are stopped by the mode**, unless a rule that names no app allows where they go. Such a connection may be a new app's: an app can make its owner unknown by closing its socket before Sentinel asks Android, which works for a UDP datagram sent and forgotten (audit A-09). Ordinary traffic comes from sockets still open, whose owner Android finds, and the system resolver makes DNS lookups as the app that asked. How much traffic on real phones has no known owner is not measured yet: a connection the mode stops is stored as blocked, with no app. Before, these connections were never stopped, and a new app could get past the mode this way.
+   - **An app made of several packages that share a Linux user is new when one of them is**, by the newest of their install times, so a package added since the switch makes it new (audit A-09). A rule about any of its packages decides for it ([ADR-0015](0015-firewall-rules.md)).
    - Turning the mode on again while it is on changes nothing. Turning it off and on again counts from the new time: apps installed in between, and used while it was off, are no longer new.
 3. **Rules come first; the mode decides only where no rule matches** (`RuleSet::verdict`). A rule allowing the app as a whole lets a new app through. A rule blocking a destination still applies to it.
 4. **The new app's first connection raises the CM-04 alert, saying it was blocked.** The evidence then carries `new_app_blocked`, and the alert offers "Let this app use the internet", which keeps a rule allowing the app. The alert says it only when the mode blocked the app: when a rule about a destination stopped a new app's first connection, allowing the app would change nothing, so the alert does not offer it. The alert stays Info, as CM-04 is: the user chose the mode, and the notification is there to say why a new app has no internet.
@@ -37,7 +40,8 @@ Android gives every app its first install time (`PackageInfo.firstInstallTime`),
 
 - `sentinel-detect`:
   - Watch only lets through what no rule blocks, whatever the install time;
-  - Block new apps blocks an app installed at or after the switch, at every moment the engine asks, and lets through apps installed before and connections without an app or install time;
+  - Block new apps blocks an app installed at or after the switch, at every moment the engine asks, and lets through apps installed before and connections without an install time;
+  - Block new apps blocks a connection without a known owner, unless a rule that names no app allows its destination; Watch only lets it through;
   - rules come before the mode: allowing an app lets it through except where a rule blocks, and a domain allow for a new app applies only once the name is known;
   - an app is "blocked as new" only when no rule is about the app as a whole;
   - the stored mode names and the `new_app_blocked` evidence are fixed by tests; the blocked new app's alert offers to allow it first.
@@ -46,6 +50,7 @@ Android gives every app its first install time (`PackageInfo.firstInstallTime`),
   - switching applies to the very next connection, measured well under a second;
   - the new app is blocked when it starts, at its server name and at its DNS lookup, and stored as blocked;
   - older apps and connections without an install time get through;
+  - spyware made of two packages that share a Linux user is blocked by a rule about either package, is new when one package is, raises the new-app alert under the user's name, and gets through once one package is allowed; a connection without a known owner gets through Watch only, not Block new apps;
   - turning the mode on again keeps its time; allowing the app lets it through, removing the rule blocks it again, and Watch only lets it through;
   - the alert says the app was blocked and offers to allow it; a rule about a destination does not make it say so;
   - through the real packet engine, a new app's datagram never reaches the server, and its alert says it was blocked.
