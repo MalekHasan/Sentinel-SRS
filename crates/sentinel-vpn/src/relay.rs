@@ -60,6 +60,16 @@ impl Ctx {
         }
     }
 
+    /// Whether DNS answers from `resolver` may name later flows (audit A-05,
+    /// THREAT-MODEL-A S2): with a tunnel resolver set, its answers only; without one, any.
+    /// An app that asks a server of its own choosing could have it answer anything.
+    fn names_from(&self, resolver: SocketAddr) -> bool {
+        self.config
+            .dns_forward
+            .as_ref()
+            .is_none_or(|forward| forward.serves(resolver))
+    }
+
     /// A view of the firewall's changes from now on: taken before a flow is first
     /// decided, so that no change after that decision goes unseen.
     fn firewall_changes(&self) -> Option<watch::Receiver<u64>> {
@@ -480,7 +490,9 @@ async fn udp_to_client<W: AsyncWrite + Unpin>(
             received = upstream.recv(&mut buf) => {
                 let n = received?;
                 if is_dns && let Some(answer) = parse_dns_response(&buf[..n]) {
-                    ctx.dns.insert(&answer);
+                    if ctx.names_from(flow.dst) {
+                        ctx.dns.insert(&answer);
+                    }
                     let ips: Vec<_> = answer.ips.iter().map(|(ip, _)| *ip).collect();
                     ctx.observer.dns_answer(flow, &answer.qname, &ips);
                 }
@@ -513,8 +525,64 @@ mod tests {
     use super::*;
     use crate::protect::NoProtect;
     use crate::sni::tests::{client_hello, in_records, sni_ext};
+    use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Mutex;
     use tokio::net::TcpListener;
+
+    /// Audit A-05, THREAT-MODEL-A S2: a DNS answer names later flows only when the tunnel's
+    /// resolver gave it. A server the app chose could answer anything, and rename the
+    /// traffic of every other app.
+    #[tokio::test]
+    async fn only_the_tunnel_resolvers_answers_name_flows() {
+        let resolver: SocketAddr = "10.0.0.53:53".parse().unwrap();
+        let ctx = Ctx {
+            protect: Arc::new(NoProtect),
+            observer: Arc::new(NoObserver),
+            dns: DnsCache::new(16),
+            config: EngineConfig {
+                dns_forward: Some(Arc::new(crate::DnsForward::new(vec![resolver.ip()]))),
+                ..EngineConfig::default()
+            },
+            stats: Arc::new(EngineStats::default()),
+            next_id: AtomicU64::new(1),
+        };
+        let app: SocketAddr = "10.0.0.2:40000".parse().unwrap();
+        for (asked, address, learned) in [
+            ("203.0.113.9:53", Ipv4Addr::new(198, 51, 100, 7), false),
+            ("10.0.0.53:53", Ipv4Addr::new(198, 51, 100, 8), true),
+        ] {
+            // A server on loopback answers in the place of the one the app asked.
+            let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let upstream = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            upstream
+                .connect(server.local_addr().unwrap())
+                .await
+                .unwrap();
+            let answer = crate::dns::tests::response("name.example", &[address], &[]);
+            server
+                .send_to(&answer, upstream.local_addr().unwrap())
+                .await
+                .unwrap();
+            let flow = ctx.new_flow(Proto::Udp, app, asked.parse().unwrap());
+            let (mut app_side, mut engine_side) = tokio::io::duplex(4096);
+            let (_replies, replies) = tokio::sync::mpsc::channel(1);
+            let mut got = [0u8; 512];
+            tokio::select! {
+                _ = udp_to_client(&upstream, &mut engine_side, &ctx, &flow, replies) => {
+                    panic!("the relay ended")
+                }
+                read = app_side.read(&mut got) => assert!(read.unwrap() > 0, "the answer reaches the app"),
+            }
+            assert_eq!(
+                ctx.dns.lookup(&IpAddr::V4(address)).is_some(),
+                learned,
+                "answer from {asked}"
+            );
+        }
+    }
+
+    struct NoObserver;
+    impl Observer for NoObserver {}
 
     /// Blocks one server name, and, if asked, every name it cannot read; notes what the
     /// relay asked.
