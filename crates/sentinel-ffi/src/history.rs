@@ -674,11 +674,19 @@ impl HistoryStore {
     }
 }
 
-/// Delete the history database at `path` (one-tap wipe, SRS §13.2). Close every
-/// `HistoryStore` on it first; the app deletes the key.
+/// Delete the history database at `path`, and any set aside (one-tap wipe, SRS §13.2).
+/// Close every `HistoryStore` on it first; the app deletes the key.
 #[uniffi::export]
 pub fn wipe_history(path: String) -> Result<(), HistoryError> {
     Ok(sentinel_store::wipe(Path::new(&path))?)
+}
+
+/// Set the history database at `path` aside, so that a new one can start there: for a
+/// history that can never be read (audit A-06). It is kept until the next one is set
+/// aside, or the wipe. Close every `HistoryStore` on it first.
+#[uniffi::export]
+pub fn set_aside_history(path: String) -> Result<(), HistoryError> {
+    Ok(sentinel_store::set_aside(Path::new(&path))?)
 }
 
 impl HistoryStore {
@@ -840,6 +848,12 @@ mod tests {
             HistoryStore::open(path.clone(), vec![2; 32]),
             Err(HistoryError::WrongKey)
         ));
+        // Set aside, a new history starts at the path; the wipe deletes both (A-06).
+        set_aside_history(path.clone()).unwrap();
+        let history = HistoryStore::open(path.clone(), vec![2; 32]).unwrap();
+        assert!(history.recent_gaps(5).unwrap().is_empty());
+        drop(history);
+        assert!(std::fs::read_dir(dir.path()).unwrap().count() > 1);
         wipe_history(path).unwrap();
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }

@@ -1090,6 +1090,75 @@ fn gaps_are_counted_from_when_they_began() {
     assert_eq!(store.gaps_since(NOW + 1, NOW).unwrap(), 0);
 }
 
+/// Audit A-06: only a key that cannot read the file is a wrong key. A database busy in
+/// another connection is not, so the app does not start a new history over it.
+#[test]
+fn only_a_key_that_cannot_read_the_file_is_a_wrong_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    drop(Store::open(&path, &KEY).unwrap());
+    assert!(matches!(
+        Store::open(&path, &[8; 32]),
+        Err(StoreError::WrongKey)
+    ));
+
+    // Another connection holds the database to itself.
+    let holder = rusqlite::Connection::open(&path).unwrap();
+    let hex: String = KEY.iter().map(|b| format!("{b:02X}")).collect();
+    holder
+        .pragma_update(None, "key", format!("x'{hex}'"))
+        .unwrap();
+    holder
+        .pragma_update(None, "locking_mode", "EXCLUSIVE")
+        .unwrap();
+    holder.execute_batch("BEGIN EXCLUSIVE; COMMIT;").unwrap();
+    match Store::open(&path, &KEY) {
+        Err(StoreError::Sqlite(e)) => {
+            assert_eq!(
+                e.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseBusy)
+            );
+        }
+        Err(other) => panic!("busy, not {other:?}"),
+        Ok(_) => panic!("opened while held"),
+    }
+    drop(holder);
+    assert!(Store::open(&path, &KEY).is_ok());
+}
+
+/// Audit A-06: a database set aside makes room for a new one at the same path, and the
+/// wipe deletes it too.
+#[test]
+fn a_database_set_aside_is_kept_until_the_wipe() {
+    use sentinel_store::{SET_ASIDE, set_aside};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    store.open_gap(Some(NOW), "old").unwrap();
+    drop(store);
+    set_aside(&path).unwrap();
+    let mut aside = path.as_os_str().to_owned();
+    aside.push(SET_ASIDE);
+    assert!(Path::new(&aside).exists());
+    assert!(!path.exists());
+
+    let store = Store::open(&path, &KEY).unwrap();
+    assert!(
+        store.recent_gaps(10).unwrap().is_empty(),
+        "a new one at the path"
+    );
+    drop(store);
+    // The old one is still whole, and opens with its key.
+    let old = Store::open(Path::new(&aside), &KEY).unwrap();
+    assert_eq!(old.recent_gaps(10).unwrap().len(), 1);
+    drop(old);
+
+    wipe(&path).unwrap();
+    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+    assert!(left.is_empty(), "files left after wipe: {left:?}");
+}
+
 #[test]
 fn wipe_deletes_the_database_and_its_journal() {
     let dir = tempfile::tempdir().unwrap();
