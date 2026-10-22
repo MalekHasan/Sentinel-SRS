@@ -15,6 +15,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 sentinel-detect = { path = "../crates/sentinel-detect" }
+sentinel-enrich = { path = "../crates/sentinel-enrich" }
+sentinel-feed = { path = "../crates/sentinel-feed" }
+sentinel-ioc = { path = "../crates/sentinel-ioc" }
 sentinel-vpn = { path = "../crates/sentinel-vpn" }
 
 [workspace]
@@ -48,6 +51,34 @@ bench = false
 [[bin]]
 name = "dns_names"
 path = "fuzz_targets/dns_names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "feed_manifest"
+path = "fuzz_targets/feed_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "indicator_file"
+path = "fuzz_targets/indicator_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ip_db"
+path = "fuzz_targets/ip_db.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tracker_db"
+path = "fuzz_targets/tracker_db.rs"
 test = false
 doc = false
 bench = false

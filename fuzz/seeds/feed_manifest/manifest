@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "feed": "sentinel-indicators",
+  "version": 5,
+  "created": 1792160187,
+  "expires": 2107520187,
+  "files": [
+    {
+      "path": "indicators-sentinel-test.json",
+      "sha256": "2984d9bff7915fa9b34d2dde737f919a5f7d353cb8b1f5e0d7e09d96a5ebbb89",
+      "size": 824
+    },
+    {
+      "path": "ip.db",
+      "sha256": "ae70f8742c57f6837215abec0eb266d510b629e02d4e44cbdbe8951e912ef950",
+      "size": 130
+    },
+    {
+      "path": "trackers.db",
+      "sha256": "fcd839eca6f656d1ab26e81af69c76108a9e4cf8800b2883d599780be3c4f705",
+      "size": 234
+    }
+  ]
+}
