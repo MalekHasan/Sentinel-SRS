@@ -93,6 +93,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        guardWindow()
         enableEdgeToEdge()
         GapLog.recordUnexpectedExit(this)
         FeedUpdateJob.schedule(this)
@@ -371,7 +372,10 @@ fun MonitorScreen(
         AlertDialog(
             onDismissRequest = { confirmWipe = false },
             title = { Text(stringResource(R.string.wipe_title)) },
-            text = { Text(stringResource(R.string.wipe_text)) },
+            text = {
+                GuardDialogWindow()
+                Text(stringResource(R.string.wipe_text))
+            },
             confirmButton = {
                 TextButton(onClick = {
                     confirmWipe = false

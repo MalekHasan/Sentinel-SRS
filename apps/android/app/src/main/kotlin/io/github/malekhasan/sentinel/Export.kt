@@ -204,7 +204,10 @@ fun ExportContent(
         AlertDialog(
             onDismissRequest = { warning = false },
             title = { Text(stringResource(R.string.export_warning_title)) },
-            text = { Text(stringResource(R.string.export_warning_text)) },
+            text = {
+                GuardDialogWindow()
+                Text(stringResource(R.string.export_warning_text))
+            },
             confirmButton = {
                 TextButton(onClick = {
                     warning = false

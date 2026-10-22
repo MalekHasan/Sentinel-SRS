@@ -118,7 +118,10 @@ fun ShorterKeepQuestion(days: UInt, onChange: () -> Unit, onCancel: () -> Unit) 
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text(stringResource(R.string.retention_shorter_title, keepDays(days))) },
-        text = { Text(stringResource(R.string.retention_shorter_text)) },
+        text = {
+            GuardDialogWindow()
+            Text(stringResource(R.string.retention_shorter_text))
+        },
         confirmButton = {
             TextButton(onClick = onChange) { Text(stringResource(R.string.retention_shorter_change)) }
         },

@@ -3,6 +3,7 @@
 - Status: **Accepted** (Sprint 10; `apps/android`)
 - Date: 2026-10-20
 - Implements the "TalkBack, large text, high contrast pass" of [PHASE-A-ANDROID.md](../PHASE-A-ANDROID.md) (Sprint 10), towards SRS §12.4: "WCAG 2.2 AA, full keyboard navigation, Narrator/TalkBack support, high-contrast themes, English and Arabic with RTL layout".
+- Amended 2026-10-22 for audit finding A-17 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): Sentinel's screens are data-sensitive to accessibility services that are not tools.
 
 ## Context
 
@@ -43,6 +44,12 @@ On the Android 14 emulator (`AccessibilityTest`):
 - at twice the text size, no text is cut or off the screen on the main screen, an alert, the export screen and "Keep monitoring running";
 - in light and dark, standard and high contrast, each text pair the app uses (text, dialogs, text buttons, buttons, the four severity badges, errors) meets 4.5:1, or 7:1 in high contrast, and outlines 3:1, or 4.5:1;
 - setting Android's colour contrast to high (`settings put secure contrast_level 1.0`) switches the open screen to high-contrast colours, and setting it back switches it back. Android may recreate the open screen when the contrast changes; the test's screen sets its own content, as Sentinel's do (`ThemeProbeActivity`, debug builds only), so it shows the colours either way.
+
+## Accessibility services that are not tools (audit A-17)
+
+Spyware often holds accessibility access, which ID-12 reports, and with it can read any screen and press its buttons: Allow on its own alert, End isolation, Wipe. From Android 14, Sentinel's windows and dialogs are data-sensitive (`setAccessibilityDataSensitive`): only accessibility services that declare themselves tools (`isAccessibilityTool`), as TalkBack and Switch Access do, can read and act on them. Other services see nothing of them. On every version, a touch made while another app's window covers Sentinel's is dropped (`filterTouchesWhenObscured`), and from Android 12 other apps' overlays are hidden while Sentinel's window shows (`setHideOverlayWindows`, with `HIDE_OVERLAY_WINDOWS`). `WindowGuardTest` checks both windows and dialogs, and that a tap marked as under another window does nothing.
+
+A helper that is not a tool, such as a screen reader that does not declare itself one, can no longer read Sentinel from Android 14. Before Android 14 the guard is touches and overlays only.
 
 ## Consequences
 

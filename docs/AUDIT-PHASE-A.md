@@ -335,7 +335,7 @@
 
 #### A-17: واجهة Sentinel غير محمية من الأتمتة والـ overlays (tapjacking)
 
-- [ ] تم الإصلاح
+- [x] تم الإصلاح: نوافذ Sentinel وحواراته تُسقط اللمسة التي تحدث تحت نافذة تطبيق آخر، وتُخفي overlays التطبيقات الأخرى من Android 12، ومن Android 14 هي data-sensitive فلا تقرأها ولا تضغط أزرارها خدمات accessibility التي ليست أدوات (TalkBack وأمثاله تبقى تعمل) ([ADR-0037](adr/0037-accessibility.md)، THREAT-MODEL-A E7). يبقى A-41: `MainActivity` تقبل `EXTRA_ALERT_ID` من أي تطبيق
 - **المكان:** لا `filterTouchesWhenObscured` ولا `setHideOverlayWindows` ولا `accessibilityDataSensitive` في `apps/android/app/src/main`. الأزرار الحساسة في `Alerts.kt` و `MainActivity.kt`: Allow، Undo، Wipe، إنهاء العزل، تغيير الوضع.
 - **السيناريو:** تطبيق حصل على accessibility (وهذا ما ينبّه عليه ID-12) يفتح Sentinel ويضغط "Allow" على تنبيهه، أو ينهي العزل. يساعده أن `MainActivity` تقبل `EXTRA_ALERT_ID` من أي تطبيق (`MainActivity.kt:234`).
 - **اتجاه الإصلاح:**

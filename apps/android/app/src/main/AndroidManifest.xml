@@ -18,6 +18,10 @@
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- Hide other apps' overlays while Sentinel's screens show, so that none can cover a
+         button the user is about to tap (audit A-17). Granted at install; Android 12
+         and later. -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
     <!-- Whether Android Advanced Protection is on, for the hardening checklist (MS-12).
          Granted at install; Android 16 and later only. -->
     <uses-permission android:name="android.permission.QUERY_ADVANCED_PROTECTION_MODE" />
