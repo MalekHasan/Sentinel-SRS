@@ -65,7 +65,10 @@ object Hardening {
     /** The checklist as of today. */
     fun items(context: Context): List<HardeningItem> = hardeningChecklist(facts(context))
 
-    /** Android's settings for [step]: the screen named for it, else the nearest one. */
+    /**
+     * Android's settings for [step]: the screen named for it, else the nearest one, in an
+     * app that came with the phone (audit A-40).
+     */
     fun openSettings(context: Context, step: HardeningStep) {
         val screens = when (step) {
             // Advanced Protection is in Android's security settings.
@@ -80,7 +83,7 @@ object Hardening {
         } + Settings.ACTION_SETTINGS
         for (screen in screens) {
             try {
-                context.startActivity(Intent(screen))
+                context.startSystemScreen(Intent(screen))
                 return
             } catch (e: ActivityNotFoundException) {
                 // Try the next one.

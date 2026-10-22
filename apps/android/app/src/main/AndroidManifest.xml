@@ -51,6 +51,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Where an alert's notification leads (audit A-41). Not exported: only Sentinel's
+             own notifications open an alert. Any app can open MainActivity, which opens
+             none when asked through it. -->
+        <activity-alias
+            android:name=".OpenAlert"
+            android:exported="false"
+            android:targetActivity=".MainActivity" />
+
         <!-- Where the monitoring notification's Stop leads: a question (THREAT-MODEL-A E6).
              Not exported: no other app can open it, and an app firing the notification's
              action only opens the question. -->
