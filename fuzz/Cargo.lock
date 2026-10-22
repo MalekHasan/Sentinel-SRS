@@ -602,12 +602,15 @@ dependencies = [
 name = "sentinel-fuzz"
 version = "0.0.0"
 dependencies = [
+ "futures",
  "libfuzzer-sys",
+ "netstack-smoltcp",
  "sentinel-detect",
  "sentinel-enrich",
  "sentinel-feed",
  "sentinel-ioc",
  "sentinel-vpn",
+ "tokio",
 ]
 
 [[package]]
