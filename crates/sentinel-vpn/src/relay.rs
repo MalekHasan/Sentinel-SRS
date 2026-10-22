@@ -15,7 +15,7 @@ use tokio::net::{TcpSocket, TcpStream, UdpSocket};
 use tokio::sync::watch;
 use tokio::time::{Instant, timeout_at};
 
-use crate::dns::{DnsCache, name_error_reply, parse_dns_query, parse_dns_response};
+use crate::dns::{DnsCache, name_error_reply, parse_dns_questions, parse_dns_response};
 use crate::engine::{EngineConfig, EngineStats};
 use crate::flow::{FlowCounters, FlowInfo, FlowTotals, HostnameSource, Proto, Verdict, now_ms};
 use crate::sni::{ClientHelloScan, scan_client_hello};
@@ -58,6 +58,14 @@ impl Ctx {
             Some(forward) => forward.route(dst),
             None => Ok(dst),
         }
+    }
+
+    /// Whether `dst` is the tunnel's own resolver, where only DNS is served.
+    fn is_tunnel_resolver(&self, dst: SocketAddr) -> bool {
+        self.config
+            .dns_forward
+            .as_ref()
+            .is_some_and(|forward| forward.serves(dst))
     }
 
     /// Whether DNS answers from `resolver` may name later flows (audit A-05,
@@ -183,11 +191,29 @@ where
     let (mut up_rx, mut up_tx) = upstream.into_split();
     let sni: OnceLock<String> = OnceLock::new();
     let blocked = AtomicBool::new(false);
+    // DNS over TCP to the tunnel's resolver is checked query by query, as over UDP
+    // (audit A-39). Its answers name later flows.
+    let dns = ctx.is_tunnel_resolver(flow.dst);
+    let (replies_tx, replies_rx) = tokio::sync::mpsc::channel(16);
 
     // Server-to-client starts at once, so server-first protocols (SSH, SMTP) are not
     // delayed. Client-to-server first inspects the ClientHello, then copies.
-    let to_client = copy_counted(&mut up_rx, &mut client_tx, |n| flow.counters.add_down(n));
+    let to_client = async {
+        if dns {
+            dns_to_client(&mut up_rx, &mut client_tx, &ctx, &flow, replies_rx).await
+        } else {
+            copy_counted(&mut up_rx, &mut client_tx, |n| flow.counters.add_down(n)).await
+        }
+    };
     let to_server = async {
+        if dns {
+            let lookups = Lookups {
+                ctx: &ctx,
+                flow: &flow,
+                replies: replies_tx,
+            };
+            return dns_to_server(&mut client_rx, &mut up_tx, &lookups).await;
+        }
         let first = read_client_hello(&mut client_rx, ctx.config.sni_wait).await?;
         let verdict = match scan_client_hello(&first) {
             ClientHelloScan::Done(Some(name)) => {
@@ -313,6 +339,102 @@ where
         writer.write_all(&buf[..n]).await?;
         count(n);
     }
+}
+
+/// DNS over TCP from the app to the tunnel's resolver (audit A-39). Each query, framed
+/// with a two-byte length (RFC 1035 §4.2.2), is held until it is whole and checked as
+/// over UDP; a blocked one is answered "no such name" by [`dns_to_client`] and not sent.
+async fn dns_to_server<R, W>(
+    client: &mut R,
+    upstream: &mut W,
+    lookups: &Lookups<'_>,
+) -> io::Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut pending = Vec::new();
+    let mut buf = vec![0u8; BUF];
+    loop {
+        while let Some(len) = whole_message(&pending) {
+            let frame: Vec<u8> = pending.drain(..2 + len).collect();
+            if !lookups.blocked(&frame[2..]) {
+                upstream.write_all(&frame).await?;
+                lookups.flow.counters.add_up(frame.len());
+            }
+        }
+        let n = client.read(&mut buf).await?;
+        if n == 0 {
+            upstream.shutdown().await.ok();
+            return Ok(());
+        }
+        pending.extend_from_slice(&buf[..n]);
+    }
+}
+
+/// DNS over TCP from the tunnel's resolver to the app (audit A-39). Answers are passed
+/// on whole, each naming later flows as over UDP, so that "no such name" for a blocked
+/// query is written between two answers, never inside one.
+async fn dns_to_client<R, W>(
+    upstream: &mut R,
+    client: &mut W,
+    ctx: &Ctx,
+    flow: &FlowInfo,
+    mut replies: tokio::sync::mpsc::Receiver<Vec<u8>>,
+) -> io::Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    async fn reply<W: AsyncWrite + Unpin>(client: &mut W, message: &[u8]) -> io::Result<()> {
+        let Ok(len) = u16::try_from(message.len()) else {
+            return Ok(());
+        };
+        client.write_all(&len.to_be_bytes()).await?;
+        client.write_all(message).await
+    }
+    let mut pending = Vec::new();
+    let mut buf = vec![0u8; BUF];
+    loop {
+        tokio::select! {
+            // Both are cancel-safe: nothing read is lost when the other is chosen.
+            read = upstream.read(&mut buf) => {
+                let n = read?;
+                if n == 0 {
+                    // Answers to queries blocked last, then what is left as it came.
+                    while let Ok(message) = replies.try_recv() {
+                        reply(client, &message).await?;
+                    }
+                    client.write_all(&pending).await?;
+                    flow.counters.add_down(pending.len());
+                    client.shutdown().await.ok();
+                    return Ok(());
+                }
+                pending.extend_from_slice(&buf[..n]);
+                while let Some(len) = whole_message(&pending) {
+                    let frame: Vec<u8> = pending.drain(..2 + len).collect();
+                    if let Some(answer) = parse_dns_response(&frame[2..]) {
+                        ctx.dns.insert(&answer);
+                        let ips: Vec<_> = answer.ips.iter().map(|(ip, _)| *ip).collect();
+                        ctx.observer.dns_answer(flow, &answer.qname, &ips);
+                    }
+                    client.write_all(&frame).await?;
+                    flow.counters.add_down(frame.len());
+                }
+            }
+            Some(message) = replies.recv() => {
+                // Written here, between answers, not sent upstream.
+                reply(client, &message).await?;
+            }
+        }
+    }
+}
+
+/// The length of the DNS message at the start of `pending`, framed for TCP, if it is
+/// all there.
+fn whole_message(pending: &[u8]) -> Option<usize> {
+    let len = usize::from(u16::from_be_bytes([*pending.first()?, *pending.get(1)?]));
+    (pending.len() >= 2 + len).then_some(len)
 }
 
 /// Run both directions. A clean end of one direction waits for the other; an error in
@@ -446,17 +568,26 @@ struct Lookups<'a> {
 
 impl Lookups<'_> {
     /// True if the query was blocked: it was answered "no such name" and must not be
-    /// sent.
+    /// sent. Every question is asked about, and one blocked blocks the query (audit
+    /// A-39).
     fn blocked(&self, query: &[u8]) -> bool {
-        let Some(asked) = parse_dns_query(query) else {
-            return false;
+        let Some(questions) = parse_dns_questions(query) else {
+            // Only DNS is served at the tunnel's resolver: what cannot be read as a query
+            // there is not sent on, as nothing in it could be checked (audit A-39).
+            // Elsewhere on port 53 it may be another protocol, such as a VPN that uses
+            // the port to get through, and it goes as it came.
+            return self.ctx.is_tunnel_resolver(self.flow.dst);
         };
-        if self
-            .ctx
-            .observer
-            .dns_query(self.flow, &asked.name, asked.qtype)
-            != Verdict::Block
-        {
+        let mut blocked = false;
+        for asked in &questions {
+            // All are asked about, for matching and DL-05, even once one is blocked.
+            blocked |= self
+                .ctx
+                .observer
+                .dns_query(self.flow, &asked.name, asked.qtype)
+                == Verdict::Block;
+        }
+        if !blocked {
             return false;
         }
         if let Some(reply) = name_error_reply(query) {
@@ -732,6 +863,202 @@ mod tests {
         let got = relay(Arc::clone(&names), &pieces, Duration::from_millis(400)).await;
         assert_eq!(got, slow);
         assert_eq!(names.unreadable.load(Ordering::Relaxed), 1);
+    }
+
+    /// Blocks one looked-up name; notes every name looked up and answered.
+    #[derive(Default)]
+    struct LookedUp {
+        asked: Mutex<Vec<String>>,
+        answered: Mutex<Vec<String>>,
+    }
+
+    impl Observer for LookedUp {
+        fn dns_query(&self, _flow: &FlowInfo, qname: &str, _qtype: u16) -> Verdict {
+            self.asked.lock().unwrap().push(qname.to_owned());
+            if qname == "ads.example" {
+                Verdict::Block
+            } else {
+                Verdict::Allow
+            }
+        }
+
+        fn dns_answer(&self, _flow: &FlowInfo, qname: &str, _ips: &[IpAddr]) {
+            self.answered.lock().unwrap().push(qname.to_owned());
+        }
+    }
+
+    /// A DNS message framed for TCP: its length, then itself.
+    fn framed(message: &[u8]) -> Vec<u8> {
+        let len = u16::try_from(message.len()).unwrap().to_be_bytes();
+        [len.as_slice(), message].concat()
+    }
+
+    /// The DNS messages in `stream`, framed for TCP.
+    fn unframed(mut stream: &[u8]) -> Vec<simple_dns::Packet<'_>> {
+        let mut messages = Vec::new();
+        while let Some(len) = whole_message(stream) {
+            messages.push(simple_dns::Packet::parse(&stream[2..2 + len]).unwrap());
+            stream = &stream[2 + len..];
+        }
+        assert!(stream.is_empty(), "{} bytes left over", stream.len());
+        messages
+    }
+
+    /// Audit A-39: DNS over TCP to the tunnel's resolver is checked query by query, as
+    /// over UDP. A blocked query is answered "no such name" between the resolver's
+    /// answers and never sent; the others go, and their answers name later flows.
+    /// Queries split across reads are put back together.
+    #[tokio::test]
+    async fn dns_over_tcp_to_the_tunnel_resolver_is_checked() {
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let resolver = server.local_addr().unwrap();
+        let heard = tokio::spawn(async move {
+            let (mut socket, _) = server.accept().await.unwrap();
+            let mut got = Vec::new();
+            let mut buf = [0u8; 4096];
+            let mut names = Vec::new();
+            loop {
+                let n = socket.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    return names;
+                }
+                got.extend_from_slice(&buf[..n]);
+                while let Some(len) = whole_message(&got) {
+                    let query: Vec<u8> = got.drain(..2 + len).collect();
+                    let query = simple_dns::Packet::parse(&query[2..]).unwrap();
+                    let name = query.questions[0].qname.to_string();
+                    let answer =
+                        crate::dns::tests::response(&name, &[Ipv4Addr::new(198, 51, 100, 9)], &[]);
+                    let mut answer = simple_dns::Packet::parse(&answer).unwrap().into_reply();
+                    answer.set_id(query.id());
+                    socket
+                        .write_all(&framed(&answer.build_bytes_vec().unwrap()))
+                        .await
+                        .unwrap();
+                    names.push(name);
+                }
+            }
+        });
+        let tunnel_dns: SocketAddr = "10.0.0.53:53".parse().unwrap();
+        let forward = Arc::new(crate::DnsForward::new(vec![tunnel_dns.ip()]));
+        forward.set_upstream(vec![resolver]);
+        let lookups = Arc::new(LookedUp::default());
+        let ctx = Arc::new(Ctx {
+            protect: Arc::new(NoProtect),
+            observer: Arc::clone(&lookups) as Arc<dyn Observer>,
+            dns: DnsCache::new(16),
+            config: EngineConfig {
+                dns_forward: Some(forward),
+                ..EngineConfig::default()
+            },
+            stats: Arc::new(EngineStats::default()),
+            next_id: AtomicU64::new(1),
+        });
+        let (app, engine_side) = tokio::io::duplex(64 * 1024);
+        let relayed = tokio::spawn(tcp(
+            Arc::clone(&ctx),
+            engine_side,
+            "10.0.0.2:40000".parse().unwrap(),
+            tunnel_dns,
+        ));
+        let (mut app_rx, mut app_tx) = tokio::io::split(app);
+        let queries = [
+            framed(&crate::dns::tests::query(1, "ads.example")),
+            framed(&crate::dns::tests::query(2, "chat.example")),
+        ]
+        .concat();
+        // In two pieces, the second query cut in its middle.
+        let cut = queries.len() - 5;
+        app_tx.write_all(&queries[..cut]).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        app_tx.write_all(&queries[cut..]).await.unwrap();
+        app_tx.shutdown().await.unwrap();
+        let mut got = Vec::new();
+        app_rx.read_to_end(&mut got).await.unwrap();
+        relayed.await.unwrap();
+
+        let answers = unframed(&got);
+        assert_eq!(answers.len(), 2, "one answer per query");
+        let by_id = |id| answers.iter().find(|a| a.id() == id).unwrap();
+        assert_eq!(by_id(1).rcode(), simple_dns::RCODE::NameError);
+        assert_eq!(by_id(2).answers.len(), 1);
+        assert_eq!(
+            heard.await.unwrap(),
+            ["chat.example"],
+            "the blocked one never went"
+        );
+        assert_eq!(
+            *lookups.asked.lock().unwrap(),
+            ["ads.example", "chat.example"]
+        );
+        assert_eq!(*lookups.answered.lock().unwrap(), ["chat.example"]);
+        assert!(
+            ctx.dns
+                .lookup(&IpAddr::V4(Ipv4Addr::new(198, 51, 100, 9)))
+                .is_some()
+        );
+    }
+
+    /// Audit A-39: what cannot be read as a query is held back at the tunnel's resolver,
+    /// where only DNS is served, and goes on elsewhere on port 53, where it may be
+    /// another protocol. A query with several questions is blocked if one is.
+    #[test]
+    fn every_question_is_checked_and_unreadable_queries_stop_at_the_tunnel_resolver() {
+        let tunnel_dns: SocketAddr = "10.0.0.53:53".parse().unwrap();
+        let looked_up = Arc::new(LookedUp::default());
+        let ctx = Ctx {
+            protect: Arc::new(NoProtect),
+            observer: Arc::clone(&looked_up) as Arc<dyn Observer>,
+            dns: DnsCache::new(16),
+            config: EngineConfig {
+                dns_forward: Some(Arc::new(crate::DnsForward::new(vec![tunnel_dns.ip()]))),
+                ..EngineConfig::default()
+            },
+            stats: Arc::new(EngineStats::default()),
+            next_id: AtomicU64::new(1),
+        };
+        let app: SocketAddr = "10.0.0.2:40000".parse().unwrap();
+        for (to, held) in [
+            (tunnel_dns, true),
+            ("203.0.113.9:53".parse().unwrap(), false),
+        ] {
+            let flow = ctx.new_flow(Proto::Udp, app, to);
+            let (replies, _) = tokio::sync::mpsc::channel(4);
+            let lookups = super::Lookups {
+                ctx: &ctx,
+                flow: &flow,
+                replies,
+            };
+            assert_eq!(lookups.blocked(b"not a DNS query"), held, "to {to}");
+        }
+
+        let flow = ctx.new_flow(Proto::Udp, app, tunnel_dns);
+        let (replies, mut answered) = tokio::sync::mpsc::channel(4);
+        let lookups = super::Lookups {
+            ctx: &ctx,
+            flow: &flow,
+            replies,
+        };
+        let mut query = simple_dns::Packet::new_query(9);
+        for name in ["chat.example", "ads.example"] {
+            query.questions.push(simple_dns::Question::new(
+                simple_dns::Name::new_unchecked(name),
+                simple_dns::TYPE::A.into(),
+                simple_dns::CLASS::IN.into(),
+                false,
+            ));
+        }
+        assert!(lookups.blocked(&query.build_bytes_vec().unwrap()));
+        let reply = answered.try_recv().expect("answered");
+        let reply = simple_dns::Packet::parse(&reply).unwrap();
+        assert_eq!(
+            (reply.id(), reply.rcode()),
+            (9, simple_dns::RCODE::NameError)
+        );
+        assert_eq!(
+            *looked_up.asked.lock().unwrap(),
+            ["chat.example", "ads.example"]
+        );
     }
 
     /// Only a TLS handshake whose name cannot be read is put to the observer: not one

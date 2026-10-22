@@ -53,15 +53,27 @@ pub struct DnsQuery {
 /// What a DNS query asks, from its first question. `None` for responses, malformed
 /// packets and queries without a question.
 pub fn parse_dns_query(datagram: &[u8]) -> Option<DnsQuery> {
+    parse_dns_questions(datagram)?.into_iter().next()
+}
+
+/// Every question of a DNS query: a query may ask several, and each is checked (audit
+/// A-39). `None` for responses, malformed packets, queries without a question and
+/// questions for the root.
+pub fn parse_dns_questions(datagram: &[u8]) -> Option<Vec<DnsQuery>> {
     let packet = Packet::parse(datagram).ok()?;
-    if packet.has_flags(PacketFlag::RESPONSE) {
+    if packet.has_flags(PacketFlag::RESPONSE) || packet.questions.is_empty() {
         return None;
     }
-    let question = packet.questions.first()?;
-    Some(DnsQuery {
-        name: presentation(&question.qname)?,
-        qtype: u16::from(question.qtype),
-    })
+    packet
+        .questions
+        .iter()
+        .map(|question| {
+            Some(DnsQuery {
+                name: presentation(&question.qname)?,
+                qtype: u16::from(question.qtype),
+            })
+        })
+        .collect()
 }
 
 /// A name as Sentinel keeps and shows it: lower case, without the trailing dot, in DNS

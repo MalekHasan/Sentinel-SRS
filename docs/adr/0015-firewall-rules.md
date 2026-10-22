@@ -33,7 +33,11 @@ Names are the hard part. The engine learns a name for an address from the DNS an
    - **A TLS server name:** the app, the address and that name, and the name's company if the tracker list gives one. Domain and company rules decide here too.
      - The ClientHello is read whole, joined from the handshake records TLS lets a client split it into, up to `MAX_HELLO` (about 33 KB) of records. The engine waits up to 500 ms (`sni_wait`) for its rest.
      - **A name that cannot be read is not let past a rule that blocks by name** (audit finding A-03). This covers a ClientHello that comes too slowly, is broken across records, or is longer than the engine reads; the server may still see a name. If a rule blocking a domain or a company applies to the app, the connection is blocked before anything is forwarded. Otherwise it goes on, as before. A ClientHello read whole that carries no name is not blocked: a client connecting to an address needs none.
-   - **A DNS lookup through the tunnel:** the app that sent it, the name looked up and its company. A blocked name is answered "no such name" at once, so the app never learns the address. This is what blocks a domain over QUIC and plain HTTP, which carry no TLS server name the engine reads.
+   - **A DNS lookup through the tunnel:** the app that sent it, the name looked up and its company. A blocked name is answered "no such name" at once, so the app never learns the address. This is what blocks a domain over QUIC and plain HTTP, which carry no TLS server name the engine reads. Amended after audit A-39:
+     - Every question of a query is asked about, and one blocked blocks the query.
+     - Lookups over TCP to the tunnel's resolver are checked one by one, as over UDP. Android's resolver uses TCP there when an answer is too long for UDP.
+     - What cannot be read as a query is not sent on at the tunnel's resolver, where only DNS is served. Elsewhere on port 53 it goes as it came: it may be another protocol, such as a VPN that uses the port to get through.
+     - TCP to another server on port 53 is relayed as other TCP is. Reading it as DNS would hold back the bytes of a protocol that is not DNS. An app that asks a resolver of its own is still seen by its flows, as is one that uses encrypted DNS (DL-05).
    - **A change of the rules or the mode, while a connection is open:** the same app, address and TLS server name, if one was seen. A connection now blocked ends at once, in both directions, and is stored as blocked. Blocking an app (RA-01) therefore also stops what it is already sending. The history signals each change to the running engine, and every open connection asks again.
 
    A name learned only from an earlier DNS answer is never matched against a rule, for the reason above. It still names the connection in the history.
@@ -73,7 +77,9 @@ Names are the hard part. The engine learns a name for an address from the DNS an
   - when the firewall changes, every open flow is asked again; one still allowed goes on, one now blocked ends at once and is reported as blocked, and without a change no flow is asked;
   - a query's name is read, and answers or garbage are not queries;
   - the "no such name" reply repeats the query's id and question and names no address;
-  - through the engine, a blocked lookup is answered at once and never reaches the resolver, while other lookups are forwarded as before.
+  - through the engine, a blocked lookup is answered at once and never reaches the resolver, while other lookups are forwarded as before;
+  - over TCP to the tunnel's resolver, with queries split across reads, a blocked one is answered "no such name" between the resolver's answers and never sent, and the other is answered by the resolver and names later flows (A-39);
+  - a query whose second question is blocked is blocked; what cannot be read as a query is held back at the tunnel's resolver and passed on elsewhere (A-39).
 - `sentinel-ffi`: a lookup is decided by the app that sends it and the name looked up, never by the resolver's address. A domain rule for every app blocks it whoever asks, and an app's exception needs that app.
 - On the Android 14 emulator (`FirewallTest`), with this app's own connections through the tunnel:
   - a rule blocking the test server's address stops the request, and it gets through once the rule is removed, five times over with monitoring restarted in between. The history stores five connections as blocked and five as allowed;
