@@ -51,6 +51,7 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 | S1 | A fake feed (DNS hijack, compromised mirror, malicious file) | DSSE envelope, Ed25519, trusted keys compiled in, threshold, payload type bound into the signature | Done (ADR-0005, 14 tests) |
 | S2 | An app feeds fake DNS answers to make its traffic look like another domain | The DNS cache learns only from responses on upstream sockets we opened, never from packets an app sends into the tunnel | Done (by design in `relay.rs`) |
 | S3 | An app puts a misleading server name (SNI) in its ClientHello | Every name shows its source: "Name from the connection itself (TLS server name)", or from a DNS answer; the address's network owner is shown alongside (DT-02, ADR-0010, ADR-0011) | Done |
+| S8 | An app hides its server name from Sentinel but not from the server: it sends the ClientHello slowly, or splits it into many records, so that domain and company rules do not apply | The ClientHello is joined from its records, up to a limit. A name not read in time, or not readable, is blocked whenever a rule blocking a domain or a company applies to the app (ADR-0015) | Done (audit finding A-03) |
 | S4 | Another app shows notifications that imitate Sentinel's alerts | Alerts always also live inside the app; alert notifications only open the app (ADR-0012) | Done |
 | S5 | Tapjacking over the VPN consent dialog | Android shows this dialog itself; we never draw over other apps | Accepted |
 | S6 | An app names its package after a sharing service to pass as that service's own app, so its uploads there are not flagged (DL-06) | Only the package name is compared. The uploads still show as connections, and as new places (CM-04); indicators (ID-13) still apply | Accepted (ADR-0035) |
@@ -77,7 +78,7 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
-| I1 | Payloads leak through logs or the database | Payloads are never stored; only the first record is parsed for SNI, in memory | Done (engine) |
+| I1 | Payloads leak through logs or the database | Payloads are never stored; only the ClientHello is parsed for SNI, in memory | Done (engine) |
 | I2 | Cloud backup copies the history off the phone | `android:allowBackup="false"` | Done |
 | I3 | Another app reads our files | App-private no-backup storage plus SQLCipher with a random key wrapped by the Android Keystore (ADR-0009) | Done |
 | I4 | Someone with the unlocked phone browses the history | One-tap wipe (deletes database and key); optional app lock (SRS §15.2) | Wipe done. The app lock is not in Phase A's plan: open, for the owner to schedule (review finding F4) |

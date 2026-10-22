@@ -40,7 +40,7 @@ pub use forward::DnsForward;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub use protect::SoMark;
 pub use protect::{NoProtect, Protect};
-pub use sni::{ClientHelloScan, scan_client_hello};
+pub use sni::{ClientHelloScan, MAX_HELLO, scan_client_hello};
 #[cfg(feature = "ipstack")]
 pub use stack_ipstack::run_ipstack;
 pub use stack_smoltcp::run;

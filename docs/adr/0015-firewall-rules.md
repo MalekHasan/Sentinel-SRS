@@ -26,6 +26,8 @@ Names are the hard part. The engine learns a name for an address from the DNS an
 3. **The core decides, the engine enforces.** The rules and their decision live in `sentinel-detect` (`firewall`), so every edition decides the same way. The engine asks at three moments, each with only what it knows for sure:
    - **A new connection:** its app and address. App rules and address rules decide here, and a blocked connection never reaches the server.
    - **A TLS server name:** the app, the address and that name, and the name's company if the tracker list gives one. Domain and company rules decide here too.
+     - The ClientHello is read whole, joined from the handshake records TLS lets a client split it into, up to `MAX_HELLO` (about 33 KB) of records. The engine waits up to 500 ms (`sni_wait`) for its rest.
+     - **A name that cannot be read is not let past a rule that blocks by name** (audit finding A-03). This covers a ClientHello that comes too slowly, is broken across records, or is longer than the engine reads; the server may still see a name. If a rule blocking a domain or a company applies to the app, the connection is blocked before anything is forwarded. Otherwise it goes on, as before. A ClientHello read whole that carries no name is not blocked: a client connecting to an address needs none.
    - **A DNS lookup through the tunnel:** the app that sent it, the name looked up and its company. A blocked name is answered "no such name" at once, so the app never learns the address. This is what blocks a domain over QUIC and plain HTTP, which carry no TLS server name the engine reads.
    - **A change of the rules or the mode, while a connection is open:** the same app, address and TLS server name, if one was seen. A connection now blocked ends at once, in both directions, and is stored as blocked. Blocking an app (RA-01) therefore also stops what it is already sending. The history signals each change to the running engine, and every open connection asks again.
 
@@ -72,10 +74,15 @@ Names are the hard part. The engine learns a name for an address from the DNS an
   - `AppDetailTest`: blocking this app from its own detail screen stops its next request, and taking the block back lets it through; the screen blocks the app, a destination for it and a company in every app, says what is blocked, takes each block back by its own rule, and allows a new app;
   - `AlertsTest` shows the alert's block action, and `RtlTest` the app's access in Arabic, right to left;
   - a domain rule stops a connection whose TLS ClientHello names a host below it, while another name gets through;
+  - (`sentinel-vpn`) a ClientHello split into records as small as one byte still gives its name, and a blocked name reaches nothing; one too slow to read is put to the observer, which may block it before a byte is forwarded; one read whole without a name, another protocol, or a client that sends nothing is not; records broken or beyond the limit are unreadable (audit finding A-03);
+  - (`sentinel-detect`, `sentinel-ffi`) a name that cannot be read is blocked when a domain or company block applies to the app, for every app or this one, and let through when none does;
   - a domain rule for `localhost` (which resolves anywhere) makes the tunnel's resolver answer "no such name" with no address, and once it is removed the network's resolver answers.
 
 ## Consequences
 
+- **A TLS connection without a server name is not stopped by a domain rule.** An app that connects to an address of its own needs no name, and only address rules apply to it. The name is needed where a server hosts many names, as content delivery networks do; there a name that cannot be read is blocked, as above.
+- **A slow ClientHello is blocked whenever a domain or company block applies to the app,** whatever name it would have carried. Allow rules for some names are not weighed, since none can be shown to apply. Apps send their ClientHello at once, so this should not happen to them. The fuzzing of ADR-0036 covers the joined records.
+- **Indicators (ID-13) are not matched against a name that cannot be read,** and such a connection raises no indicator alert. Indicators never block (SRS §9).
 - **Apps that bypass the tunnel's DNS** (their own DNS over HTTPS, or addresses built in) are stopped by domain rules only on TLS connections that name the server. Address rules still apply. QUIC traffic that never looked a name up through the tunnel is not stopped by a domain rule.
 - **Per-app domain rules at DNS lookups** depend on Android saying which app a lookup belongs to. Lookups that Android attributes to the system match only rules for every app.
 - **An app blocked as a whole stays blocked.** A rule allowing it one domain does not open its TLS connections, because they are refused when they start, before their name is known. Allowing it an address range works. Domain allows are for exceptions to domain blocks.
