@@ -472,12 +472,25 @@ fn bits_of(address: IpAddr) -> u8 {
     if address.is_ipv4() { 32 } else { 128 }
 }
 
-/// An IPv4 address written as IPv6 (`::ffff:192.0.2.1`) is the IPv4 address.
+/// An IPv4 address written as IPv6 is the IPv4 address: mapped (`::ffff:192.0.2.1`) or
+/// through NAT64 (`64:ff9b::192.0.2.1`).
 fn normalize(address: IpAddr) -> IpAddr {
     match address {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(address, IpAddr::V4),
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .or_else(|| nat64(v6))
+            .map_or(address, IpAddr::V4),
         v4 => v4,
     }
+}
+
+/// The IPv4 address an address of NAT64's well-known prefix stands for: `64:ff9b::/96`
+/// (RFC 6052), as on a network that reaches IPv4 only through NAT64 (audit A-23).
+fn nat64(v6: Ipv6Addr) -> Option<Ipv4Addr> {
+    let [a, b, c, d] = v6.octets()[12..] else {
+        return None;
+    };
+    (v6.segments()[..6] == [0x64, 0xff9b, 0, 0, 0, 0]).then(|| Ipv4Addr::new(a, b, c, d))
 }
 
 fn masked(address: IpAddr, prefix: u8) -> IpAddr {
@@ -602,6 +615,16 @@ mod tests {
             rules.decide(None, Place::new(Some(ip("::ffff:192.0.2.7")), None)),
             Some(RuleAction::Block),
             "an IPv4 address written as IPv6"
+        );
+        assert_eq!(
+            rules.decide(None, Place::new(Some(ip("64:ff9b::192.0.2.7")), None)),
+            Some(RuleAction::Block),
+            "an IPv4 address through NAT64 (audit A-23)"
+        );
+        assert_eq!(
+            rules.decide(None, Place::new(Some(ip("64:ff9b:1::192.0.2.7")), None)),
+            None,
+            "not the well-known prefix"
         );
         assert_eq!(
             rules.decide(None, Place::new(Some(ip("2001:db8::7")), None)),
@@ -762,6 +785,16 @@ mod tests {
             Destination::network("::ffff:192.0.2.0/120").map(|d| d.to_string()),
             Err(RuleError::BadNetwork("::ffff:192.0.2.0/120".to_owned())),
             "a mapped range is written as IPv4"
+        );
+        assert_eq!(
+            Destination::network("64:ff9b::/96").map(|d| d.to_string()),
+            Err(RuleError::BadNetwork("64:ff9b::/96".to_owned())),
+            "a NAT64 range, which no address would match (audit A-23)"
+        );
+        assert_eq!(
+            Destination::network("64:ff9b::198.51.100.7").map(|d| d.to_string()),
+            Ok("network:198.51.100.7".to_owned()),
+            "an address through NAT64 is written as IPv4"
         );
         assert_eq!(
             Destination::domain("_dmarc.Example.COM").unwrap(),

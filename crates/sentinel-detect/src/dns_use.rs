@@ -5,7 +5,7 @@
 //! - an app that talks to an encrypted DNS service itself, so that its lookups pass by
 //!   the phone's resolver and Sentinel cannot see them.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::net::IpAddr;
 
 use crate::{Alert, Evidence, Rule, Severity};
@@ -98,7 +98,10 @@ pub struct DnsWatch {
     names: HashMap<(String, String), VecDeque<(i64, String)>>,
     /// TXT lookups by app.
     txt: HashMap<String, VecDeque<i64>>,
-    reported: HashSet<(String, Option<String>)>,
+    /// What was reported, by app and domain (`None` for TXT lookups): when. At most
+    /// [`FOLLOWED`] are kept, the oldest forgotten first (audit A-33); one forgotten may be
+    /// reported again, which the history takes as the alert still open.
+    reported: HashMap<(String, Option<String>), i64>,
 }
 
 impl DnsWatch {
@@ -121,7 +124,7 @@ impl DnsWatch {
         let key = (app.to_owned(), domain.to_owned());
         if self
             .reported
-            .contains(&(key.0.clone(), Some(key.1.clone())))
+            .contains_key(&(key.0.clone(), Some(key.1.clone())))
         {
             return None;
         }
@@ -144,7 +147,7 @@ impl DnsWatch {
         }
         let names = u32::try_from(seen.len()).unwrap_or(u32::MAX);
         self.names.remove(&key);
-        self.reported.insert((key.0, Some(key.1.clone())));
+        self.report(now, (key.0, Some(key.1.clone())));
         Some(DnsTunnel::Names {
             domain: key.1,
             names,
@@ -153,7 +156,7 @@ impl DnsWatch {
     }
 
     fn txt_lookup(&mut self, now: i64, app: &str) -> Option<DnsTunnel> {
-        if self.reported.contains(&(app.to_owned(), None)) {
+        if self.reported.contains_key(&(app.to_owned(), None)) {
             return None;
         }
         if !self.txt.contains_key(app) && self.txt.len() >= FOLLOWED {
@@ -169,8 +172,15 @@ impl DnsWatch {
         }
         let lookups = u32::try_from(seen.len()).unwrap_or(u32::MAX);
         self.txt.remove(app);
-        self.reported.insert((app.to_owned(), None));
+        self.report(now, (app.to_owned(), None));
         Some(DnsTunnel::TxtLookups { lookups })
+    }
+
+    fn report(&mut self, now: i64, what: (String, Option<String>)) {
+        if self.reported.len() >= FOLLOWED {
+            forget_oldest(&mut self.reported, |&at| Some(at));
+        }
+        self.reported.insert(what, now);
     }
 }
 
@@ -434,6 +444,24 @@ mod tests {
             watch.lookup(i as i64, APP, &name, 1);
         }
         assert_eq!(watch.names.len(), FOLLOWED);
+
+        // Audit A-33: what was reported is bounded too.
+        let mut watch = DnsWatch::new();
+        for domain in 0..(FOLLOWED as i64 + 50) {
+            for i in 0..TUNNEL_NAMES as i64 {
+                let at = domain * 100 + i;
+                // Over 52 characters: random-looking whatever its digits.
+                let label = encoded(at as u64) + &encoded(!(at as u64));
+                let name = format!("{label}.d{domain}.example");
+                watch.lookup(at, APP, &name, 1);
+            }
+        }
+        assert_eq!(watch.reported.len(), FOLLOWED);
+        assert!(
+            watch
+                .reported
+                .contains_key(&(APP.to_owned(), Some(format!("d{}.example", FOLLOWED + 49))))
+        );
     }
 
     #[test]

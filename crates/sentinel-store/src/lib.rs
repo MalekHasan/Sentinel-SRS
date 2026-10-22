@@ -1067,6 +1067,17 @@ impl Store {
         Ok(uses)
     }
 
+    /// The device settings last seen (ID-03, ID-10), if any. A state this version
+    /// cannot read counts as none.
+    pub fn posture(&self) -> Result<Option<Posture>> {
+        let json: Option<String> = lock(&self.conn)
+            .query_row("SELECT state FROM posture_state WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(json.and_then(|json| Posture::from_json(&json).ok()))
+    }
+
     /// Keep `posture` as the device settings last seen (ID-03, ID-10) and return the
     /// ones seen before, if any. A state this version cannot read counts as none.
     pub fn swap_posture(&self, posture: &Posture, now: i64) -> Result<Option<Posture>> {
@@ -1092,18 +1103,7 @@ impl Store {
     pub fn swap_access(&self, held: &[(String, Access)]) -> Result<Vec<(String, Access)>> {
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
-        let mut before = HashSet::new();
-        {
-            let mut rows = tx.prepare("SELECT app, access FROM app_access")?;
-            let rows =
-                rows.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
-            for row in rows {
-                let (app, access) = row?;
-                if let Some(access) = Access::from_name(&access) {
-                    before.insert((app, access));
-                }
-            }
-        }
+        let before = access_held(&tx)?;
         let now: HashSet<&(String, Access)> = held.iter().collect();
         if now.len() != before.len() || !now.iter().all(|entry| before.contains(*entry)) {
             tx.execute("DELETE FROM app_access", [])?;
@@ -1115,13 +1115,13 @@ impl Store {
             }
         }
         tx.commit()?;
-        let mut gained: Vec<(String, Access)> = Vec::new();
-        for entry in held {
-            if !before.contains(entry) && !gained.contains(entry) {
-                gained.push(entry.clone());
-            }
-        }
-        Ok(gained)
+        Ok(gained(&before, held))
+    }
+
+    /// What of `held` apps did not hold at the last check (ID-12), in the order given,
+    /// as [`Store::swap_access`] would return it, without keeping anything.
+    pub fn access_gained(&self, held: &[(String, Access)]) -> Result<Vec<(String, Access)>> {
+        Ok(gained(&access_held(&lock(&self.conn))?, held))
     }
 
     /// Keep a firewall rule, replacing one about the same app and destination (CM-10),
@@ -1956,6 +1956,32 @@ fn insert_flow(tx: &Transaction<'_>, row: &FlowRow) -> Result<(i64, bool)> {
         ],
     )?;
     Ok((tx.last_insert_rowid(), new_app))
+}
+
+/// The special access apps held at the last check. Access this version cannot name
+/// counts as not held.
+fn access_held(conn: &Connection) -> Result<HashSet<(String, Access)>> {
+    let mut held = HashSet::new();
+    let mut rows = conn.prepare("SELECT app, access FROM app_access")?;
+    let rows = rows.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+    for row in rows {
+        let (app, access) = row?;
+        if let Some(access) = Access::from_name(&access) {
+            held.insert((app, access));
+        }
+    }
+    Ok(held)
+}
+
+/// What of `held` is not in `before`, in the order given, each once.
+fn gained(before: &HashSet<(String, Access)>, held: &[(String, Access)]) -> Vec<(String, Access)> {
+    let mut gained: Vec<(String, Access)> = Vec::new();
+    for entry in held {
+        if !before.contains(entry) && !gained.contains(entry) {
+            gained.push(entry.clone());
+        }
+    }
+    gained
 }
 
 fn update_flow(tx: &Transaction<'_>, id: i64, row: &FlowRow) -> Result<()> {

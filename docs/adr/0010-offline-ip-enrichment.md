@@ -22,7 +22,7 @@ The public data sets that allow this are listed in [LICENCE-REVIEW.md](../LICENC
 2. **Format version 1**, described in `crates/sentinel-enrich/src/format.rs`: four sorted range tables (network and country, IPv4 and IPv6) and a table of network owner names. The names of the sources and their dates travel inside the file, so the app can show where each answer comes from (DT-02).
 3. **Delivered as a data file in the signed feed** (ADR-0005), not bundled in the app or committed to this repository. The data changes every month; the feed already handles signatures, versions and expiry.
 4. **Checked on load even though the feed is signed:** counts are bounded by the bytes present and by a fixed maximum, entries must be in order, country codes must be two capital letters, texts must be UTF-8 and short. A damaged file is refused; it cannot make the app allocate without limit or crash.
-5. **Lookups never fail.** An unknown address gives empty answers. An IPv4 address written as IPv6 (`::ffff:a.b.c.d`) is looked up as IPv4. "Not routed" networks (AS 0) and DB-IP's unknown country ("ZZ") give no answer rather than a wrong one.
+5. **Lookups never fail.** An unknown address gives empty answers. An IPv4 address written as IPv6, mapped (`::ffff:a.b.c.d`) or through NAT64 (`64:ff9b::a.b.c.d`, audit A-23), is looked up as IPv4. "Not routed" networks (AS 0) and DB-IP's unknown country ("ZZ") give no answer rather than a wrong one.
 6. **Country is approximate:** it says where an address is registered or announced, not where a particular server stands. The app labels it so (DT-08).
 
 ## Verification

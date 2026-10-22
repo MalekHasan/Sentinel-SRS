@@ -21,7 +21,7 @@
    - the TLS server name of each TCP connection;
    - the address of each new connection.
 
-   A domain indicator matches its own name and every name below it, whatever the case and with or without a final dot. An address indicator matches only that address; an IPv4 address written as IPv6 (`::ffff:a.b.c.d`) counts as the IPv4 address.
+   A domain indicator matches its own name and every name below it, whatever the case and with or without a final dot. An address indicator matches only that address; an IPv4 address written as IPv6, mapped (`::ffff:a.b.c.d`) or through NAT64 (`64:ff9b::a.b.c.d`, audit A-23), counts as the IPv4 address, and an indicator written either way is refused.
 2. **Matching is a few hash lookups** (`sentinel_ioc::Matcher`). A name is looked up whole, then with one label fewer each time, down to two labels (a top-level domain alone is never an indicator). It allocates only when the name is not already in lower case. Matching happens on the engine thread in the existing hooks (`flow_started`, `hostname_seen`, `dns_query`).
 3. **Only the list in force is used, and the switch is immediate.**
    - The feed keeps the indicators of its bundle in force, from its last check, apart from the bundle's files. So a check or an install, which hashes every file, never makes the engine wait.
@@ -48,7 +48,7 @@
 - `sentinel-ioc` (`tests/matcher.rs`, 5 tests):
   - a domain matches itself and every name below it, whatever the case and with a final dot;
   - it does not match its parent, a name that only ends with the same letters, or a name with more after it;
-  - an address matches exactly, IPv4-mapped included;
+  - an address matches exactly, IPv4-mapped and NAT64 included;
   - names and addresses never cross, and package and certificate indicators are not kept;
   - a hit carries its source and provenance, and the first source to list an indicator wins.
 - `sentinel-detect` (4 tests):

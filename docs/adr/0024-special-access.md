@@ -26,7 +26,7 @@ Sentinel itself uses none of them. SRS §2.4 forbids it any accessibility servic
 2. **The allow list.**
    - **Apps that came with the phone are never reported.** These are apps on its system image, such as the screen reader or the launcher. Someone who can change the system image needs no special access.
    - **The user can allow any other app** from its alert (AL-05): the rule raises nothing more about that app. A High alert can be allowed; a Critical one cannot.
-3. **Reported once per grant.** The history keeps the access each app held at the last check (table `app_access`, schema 15). A check reports what is held now and was not then.
+3. **Reported once per grant.** The history keeps the access each app held at the last check (table `app_access`, schema 15). A check reports what is held now and was not then. What is held is kept only once its alerts are: an alert that cannot be kept leaves the last check as it was, so the next check reports the access again (audit A-35).
    - The first check reports everything already held, since stalkerware may predate Sentinel.
    - Access turned off and on again is reported again, unless its alert is still open.
    - The table is written only when something changed.
