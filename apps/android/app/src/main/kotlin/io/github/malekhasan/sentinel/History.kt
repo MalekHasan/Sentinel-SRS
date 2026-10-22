@@ -3,9 +3,11 @@ package io.github.malekhasan.sentinel
 
 import android.content.Context
 import android.util.Log
+import io.github.malekhasan.sentinel.core.HistoryException
 import io.github.malekhasan.sentinel.core.HistoryStore
 import io.github.malekhasan.sentinel.core.HuntReport
 import io.github.malekhasan.sentinel.core.KnownTraces
+import io.github.malekhasan.sentinel.core.setAsideHistory
 import io.github.malekhasan.sentinel.core.wipeHistory
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,7 +41,7 @@ object History {
                 // Every new alert may become a notification (AL-06).
                 opened.setAlertListener(AlertNotifier.Listener(context.applicationContext))
                 store = opened
-                // The old history is gone: say so in the new one (THREAT-MODEL-A T6).
+                // The old history cannot be read: say so in the new one (THREAT-MODEL-A T6).
                 if (anew) {
                     try {
                         opened.startedAnew()
@@ -104,18 +106,27 @@ object History {
         Heartbeat.forget(context.applicationContext)
     }
 
-    /** The history, and whether it had to be started anew because the old one cannot be read. */
+    /**
+     * The history, and whether it had to be started anew because the old one can never be
+     * read: its key is gone, or the key does not open it (THREAT-MODEL-A T4, T6). The old
+     * one is set aside with its key, not deleted, until the next wipe (audit A-06).
+     *
+     * Any other failure, such as a Keystore or disk error that may pass or a history from a
+     * newer Sentinel, is thrown, and the next [get] tries again. Starting anew would delete
+     * the history's evidence, firewall rules and isolation for good.
+     */
     private fun open(context: Context): Pair<HistoryStore, Boolean> {
         val path = path(context)
-        return try {
-            openWith(path, HistoryKey.load(context)) to false
-        } catch (e: Exception) {
-            // The key is gone (for example, the Keystore was reset) or the file is
-            // damaged: the old history can never be read. Start a new one.
-            Log.w(TAG, "the history cannot be opened; starting a new one", e)
-            deleteFiles(context)
-            openWith(path, HistoryKey.load(context)) to true
+        try {
+            return openWith(path, HistoryKey.load(context)) to false
+        } catch (e: HistoryKey.Lost) {
+            Log.w(TAG, "the history's key cannot be read; starting a new history", e)
+        } catch (e: HistoryException.WrongKey) {
+            Log.w(TAG, "the key does not open the history; starting a new one", e)
         }
+        setAsideHistory(path)
+        HistoryKey.setAside(context)
+        return openWith(path, HistoryKey.load(context)) to true
     }
 
     private fun openWith(path: String, key: ByteArray): HistoryStore =

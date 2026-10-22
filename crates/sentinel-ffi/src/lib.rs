@@ -41,7 +41,7 @@ pub use hardening::{
 };
 pub use history::{
     HistoryApp, HistoryAway, HistoryCompany, HistoryDestination, HistoryError, HistoryFlow,
-    HistoryGap, HistoryStore, wipe_history,
+    HistoryGap, HistoryStore, set_aside_history, wipe_history,
 };
 pub use hunt::{HuntReport, KnownTraces};
 pub use journal::{JournalEntry, JournalState, UndoResult};

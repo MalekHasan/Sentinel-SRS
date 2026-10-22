@@ -211,7 +211,7 @@
 
 #### A-06: أي خطأ في فتح التاريخ يمسحه كله، مع القواعد (§13، T4/T6)
 
-- [ ] تم الإصلاح
+- [x] تم الإصلاح: سجل جديد فقط عند `NOTADB` (مفتاح خاطئ أو ملف ليس قاعدة بيانات)، أو مفتاح Keystore ضائع، أو مفتاح مغلّف لا يجتاز فحصه. أي خطأ آخر (قاعدة مشغولة، I/O، `TooNew`، خطأ Keystore مؤقت) يُرمى ويُعاد المحاولة لاحقاً دون مسح. السجل القديم ومفتاحه يُنقلان جانباً (`.unreadable`) ويمسحهما المسح بضغطة ([ADR-0009](adr/0009-local-history-store.md))
 - **المكان:**
   - `apps/android/app/src/main/kotlin/io/github/malekhasan/sentinel/History.kt:92-104`: `catch (e: Exception)` ثم `deleteFiles`.
   - `crates/sentinel-store/src/lib.rs:367-373`: كل خطأ في الفحص يتحول إلى `WrongKey`.

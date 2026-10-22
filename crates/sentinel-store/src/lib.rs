@@ -318,7 +318,9 @@ pub struct AwayTotal {
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    /// The key does not open this database, or the file is not a Sentinel database.
+    /// The key does not open this database, or the file is not a database at all: SQLite
+    /// says "not a database". Other failures to open, such as a busy database or a disk
+    /// error, are not this one (audit A-06).
     #[error("the database cannot be opened with this key")]
     WrongKey,
     #[error("the database was written by a newer version of Sentinel (schema {0})")]
@@ -390,9 +392,14 @@ impl Store {
         }
         hex.push('\'');
         conn.pragma_update(None, "key", hex.as_str())?;
-        // The first real read fails if the key is wrong or the file is not ours.
+        // The first real read fails with "not a database" if the key is wrong or the file
+        // is not ours. Any other failure, busy or I/O, says nothing about the key: taking it
+        // for a wrong key would have the app start a new history (audit A-06).
         conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
-            .map_err(|_| StoreError::WrongKey)?;
+            .map_err(|e| match e.sqlite_error_code() {
+                Some(rusqlite::ErrorCode::NotADatabase) => StoreError::WrongKey,
+                _ => StoreError::Sqlite(e),
+            })?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         schema::migrate(&conn)?;
@@ -1504,23 +1511,66 @@ impl Store {
     }
 }
 
-/// Delete the database at `path` and its journal files (SRS §13.2 one-tap wipe). The
-/// caller deletes the key. Missing files are not an error.
+/// Delete the database at `path` and its journal files, and any set aside
+/// ([`set_aside`]) (SRS §13.2 one-tap wipe). The caller deletes the key. Missing files
+/// are not an error.
 pub fn wipe(path: &Path) -> Result<()> {
-    let mut names = vec![path.as_os_str().to_owned()];
-    for suffix in ["-wal", "-shm", "-journal"] {
-        let mut name = path.as_os_str().to_owned();
-        name.push(suffix);
-        names.push(name);
+    for name in files(path).into_iter().chain(set_aside_files(path)) {
+        remove(&name)?;
     }
-    for name in names {
-        match std::fs::remove_file(&name) {
+    Ok(())
+}
+
+/// Set the database at `path` and its journal files aside, renamed with
+/// [`SET_ASIDE`] at the end, so that a new one can start at `path` (audit A-06). For a
+/// database that can never be read with its key: it is kept, not deleted, in case it
+/// was taken for one by mistake. Only the last one set aside is kept; [`wipe`] deletes it.
+pub fn set_aside(path: &Path) -> Result<()> {
+    for name in set_aside_files(path) {
+        remove(&name)?;
+    }
+    for (name, aside) in files(path).into_iter().zip(set_aside_files(path)) {
+        match std::fs::rename(&name, &aside) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
     }
     Ok(())
+}
+
+/// What the name of a database set aside ends with.
+pub const SET_ASIDE: &str = ".unreadable";
+
+/// The database at `path` and its journal files.
+fn files(path: &Path) -> Vec<std::ffi::OsString> {
+    let mut names = vec![path.as_os_str().to_owned()];
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut name = path.as_os_str().to_owned();
+        name.push(suffix);
+        names.push(name);
+    }
+    names
+}
+
+/// The same files, set aside.
+fn set_aside_files(path: &Path) -> Vec<std::ffi::OsString> {
+    files(path)
+        .into_iter()
+        .map(|mut name| {
+            name.push(SET_ASIDE);
+            name
+        })
+        .collect()
+}
+
+/// Delete a file, if there is one.
+fn remove(name: &std::ffi::OsStr) -> Result<()> {
+    match std::fs::remove_file(name) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// The app's row id, and whether the history saw it for the first time and added it.
