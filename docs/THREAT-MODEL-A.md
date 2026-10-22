@@ -81,7 +81,7 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 | I1 | Payloads leak through logs or the database | Payloads are never stored; only the ClientHello is parsed for SNI, in memory | Done (engine) |
 | I2 | Cloud backup copies the history off the phone | `android:allowBackup="false"` | Done |
 | I3 | Another app reads our files | App-private no-backup storage plus SQLCipher with a random key wrapped by the Android Keystore (ADR-0009) | Done |
-| I4 | Someone with the unlocked phone browses the history | One-tap wipe (deletes database and key); optional app lock (SRS §15.2) | Wipe done. The app lock is not in Phase A's plan: open, for the owner to schedule (review finding F4) |
+| I4 | Someone with the unlocked phone browses the history | One-tap wipe (deletes database and key); retention: connections in detail for 30 days, or as few as 1 if the user chooses, other records for their SRS §13.2 time (ADR-0039); optional app lock (SRS §15.2) | Wipe done. The app lock is not in Phase A's plan: open, for the owner to schedule (review finding F4) |
 | I5 | The feed download reveals that this person uses Sentinel | No identifiers sent (tested: the request names no phone); download is optional; import from a folder works offline (ADR-0019) | Done |
 | I6 | Upstream connections from the engine reveal the device's real IP | Same as without Sentinel; we add no servers of our own | Accepted |
 | I7 | Notifications on the lock screen tell whoever holds the phone what Sentinel found | Alert notifications are secret: on a locked phone they sound but show nothing (ADR-0012) | Done |

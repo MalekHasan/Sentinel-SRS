@@ -342,6 +342,28 @@ pub const KEY_LEN: usize = 32;
 const PLATFORM: &str = "android";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
+/// How many days flows are kept before they are rolled up, unless the user chose
+/// otherwise, and the shortest and longest they may choose (SRS §13.2).
+pub const KEEP_FLOWS_DAYS: u32 = 30;
+pub const KEEP_FLOWS_DAYS_MIN: u32 = 1;
+pub const KEEP_FLOWS_DAYS_MAX: u32 = 365;
+/// Sensor uses and monitoring gaps: device events (SRS §13.2).
+pub const KEEP_EVENTS_DAYS: u32 = 90;
+/// Alerts and the action journal (SRS §13.2). Alerts still open, and those about known
+/// indicators, are kept longer: see [`Store::apply_retention`].
+pub const KEEP_ALERTS_DAYS: u32 = 365;
+
+/// What one pass of retention removed (SRS §13.2).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Retained {
+    /// Flows rolled up into daily totals, then deleted.
+    pub flows: usize,
+    pub sensor_uses: usize,
+    pub gaps: usize,
+    pub alerts: usize,
+    pub journal_entries: usize,
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
     /// Database rows of flows that have started and not ended, by (session, engine id).
@@ -1237,11 +1259,24 @@ impl Store {
         Ok(gaps.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Roll flows that started more than `keep_days` before `now` up into daily totals
-    /// per app, destination and protocol, then delete them (SRS §13.2). Returns the
-    /// number of flows rolled up.
-    pub fn apply_retention(&self, now: i64, keep_days: u32) -> Result<usize> {
+    /// Apply the retention periods of SRS §13.2 at `now`, in one transaction:
+    /// - flows that started more than `keep_days` before (clamped to
+    ///   [`KEEP_FLOWS_DAYS_MIN`]..=[`KEEP_FLOWS_DAYS_MAX`]) are rolled up into daily
+    ///   totals per app, destination and protocol, then deleted;
+    /// - sensor uses and monitoring gaps that ended more than [`KEEP_EVENTS_DAYS`]
+    ///   before are deleted; those still open are kept;
+    /// - journal entries made, and alerts raised, more than [`KEEP_ALERTS_DAYS`] before
+    ///   are deleted, except alerts still open, as what the user has not dealt with
+    ///   stays, and alerts about known indicators: they are how the checks against an
+    ///   indicator list know what they already reported (ID-13, MS-02), and the daily
+    ///   totals they are about are kept.
+    ///
+    /// Running it twice changes nothing. Returns what it removed.
+    pub fn apply_retention(&self, now: i64, keep_days: u32) -> Result<Retained> {
+        let keep_days = keep_days.clamp(KEEP_FLOWS_DAYS_MIN, KEEP_FLOWS_DAYS_MAX);
         let cutoff = now - i64::from(keep_days) * DAY_MS;
+        let events = now - i64::from(KEEP_EVENTS_DAYS) * DAY_MS;
+        let alerts = now - i64::from(KEEP_ALERTS_DAYS) * DAY_MS;
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
         tx.execute(
@@ -1259,9 +1294,49 @@ impl Store {
                  away_down = away_down + excluded.away_down",
             params![cutoff, DAY_MS],
         )?;
-        let removed = tx.execute("DELETE FROM flow WHERE started < ?1", [cutoff])?;
+        let retained = Retained {
+            flows: tx.execute("DELETE FROM flow WHERE started < ?1", [cutoff])?,
+            sensor_uses: tx.execute("DELETE FROM sensor_use WHERE ended < ?1", [events])?,
+            gaps: tx.execute("DELETE FROM monitoring_gap WHERE ended < ?1", [events])?,
+            // An entry kept whose alert goes keeps its record, unlinked (ON DELETE SET NULL).
+            journal_entries: tx.execute("DELETE FROM action_journal WHERE at < ?1", [alerts])?,
+            alerts: tx.execute(
+                "DELETE FROM alert WHERE created < ?1 AND state <> 'open' AND rule_id <> ?2",
+                params![alerts, Rule::KnownIndicator.id()],
+            )?,
+        };
         tx.commit()?;
-        Ok(removed)
+        Ok(retained)
+    }
+
+    /// How many days flows are kept before they are rolled up (SRS §13.2).
+    pub fn flow_keep_days(&self) -> Result<u32> {
+        let value: Option<i64> = lock(&self.conn)
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'keep_flows_days'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(value
+            .and_then(|v| u32::try_from(v).ok())
+            .filter(|days| (KEEP_FLOWS_DAYS_MIN..=KEEP_FLOWS_DAYS_MAX).contains(days))
+            .unwrap_or(KEEP_FLOWS_DAYS))
+    }
+
+    /// Keep flows `days` days from now on. Returns whether the choice was kept: it must
+    /// lie within [`KEEP_FLOWS_DAYS_MIN`]..=[`KEEP_FLOWS_DAYS_MAX`]. The next
+    /// [`Store::apply_retention`] applies it.
+    pub fn set_flow_keep_days(&self, days: u32) -> Result<bool> {
+        if !(KEEP_FLOWS_DAYS_MIN..=KEEP_FLOWS_DAYS_MAX).contains(&days) {
+            return Ok(false);
+        }
+        lock(&self.conn).execute(
+            "INSERT INTO meta (key, value) VALUES ('keep_flows_days', ?1)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            [i64::from(days)],
+        )?;
+        Ok(true)
     }
 
     /// What each app that sent at least [`sentinel_detect::MIN_SURGE_BYTES`] in the day

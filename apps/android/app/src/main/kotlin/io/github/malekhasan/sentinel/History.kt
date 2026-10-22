@@ -18,8 +18,8 @@ object History {
     private const val TAG = "SentinelHistory"
     private const val FILE = "history.db"
 
-    /** Flows older than this are rolled up into daily totals (SRS §13.2 default). */
-    const val KEEP_DAYS = 30u
+    /** How often the retention periods are applied while monitoring runs (ADR-0039). */
+    const val RETAIN_EVERY_MILLIS = 24 * 60 * 60 * 1000L
 
     @Volatile
     private var store: HistoryStore? = null
@@ -66,6 +66,22 @@ object History {
             Log.w(TAG, "the history could not be checked against the indicator list", e)
             null
         }
+    }
+
+    /**
+     * Apply the retention periods of SRS §13.2 (ADR-0039), on a thread of its own: flows
+     * kept past the user's choice are rolled up into daily totals, and older records of
+     * every other kind are deleted.
+     */
+    fun retain(history: HistoryStore) {
+        Thread({
+            try {
+                history.applyRetention(System.currentTimeMillis())
+            } catch (e: Exception) {
+                // HistoryException, or the history was closed by a wipe meanwhile.
+                Log.w(TAG, "retention failed", e)
+            }
+        }, "sentinel-retention").start()
     }
 
     /** What the history says about known traces (MS-15), or null if it cannot be read. */
