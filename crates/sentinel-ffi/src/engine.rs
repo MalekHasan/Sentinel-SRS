@@ -579,6 +579,88 @@ mod tests {
         engine.stop();
     }
 
+    /// Takes its time to say who owns a flow to port 9, as Android's binder call can on a
+    /// busy phone, and counts those it is answering.
+    #[derive(Default)]
+    struct SlowOwners {
+        answering: AtomicUsize,
+    }
+    impl FlowObserver for SlowOwners {
+        fn owner(&self, _: FlowProto, _: String, _: u16, _: String, port: u16) -> FlowOwner {
+            if port == 9 {
+                self.answering.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(SLOW_OWNER);
+            }
+            FlowOwner {
+                uid: OWNER,
+                app: Some(OWNER_APP.to_owned()),
+                installed_ms: None,
+                system: false,
+                packages: Vec::new(),
+            }
+        }
+        fn flows(&self, _: Vec<FlowRecord>) {}
+    }
+    const SLOW_OWNER: Duration = Duration::from_secs(4);
+
+    /// Audit A-52: while Android takes its time to name the owners of as many flows as
+    /// the engine has workers, another flow is still relayed at once.
+    #[test]
+    fn slow_owners_do_not_hold_up_other_flows() {
+        let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = echo.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            while let Ok((n, from)) = echo.recv_from(&mut buf) {
+                let _ = echo.send_to(&buf[..n], from);
+            }
+        });
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let flows = Arc::new(SlowOwners::default());
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            vec!["10.111.0.53".into()],
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            Arc::clone(&flows) as Arc<dyn FlowObserver>,
+            None,
+        )
+        .unwrap();
+
+        for (i, from) in (40_001..).take(WORKER_THREADS).enumerate() {
+            peer.send(&udp_packet_from(from, [127, 0, 0, 1], 9))
+                .unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while flows.answering.load(Ordering::SeqCst) <= i {
+                assert!(std::time::Instant::now() < deadline, "no owner asked");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        let asked = std::time::Instant::now();
+        peer.send(&udp_packet([127, 0, 0, 1], port)).unwrap();
+        let mut buf = vec![0u8; 2048];
+        let replied = loop {
+            if asked.elapsed() > SLOW_OWNER / 2 {
+                break false;
+            }
+            let Ok(n) = (&peer).read(&mut buf) else {
+                continue;
+            };
+            if let Ok(sliced) = etherparse::SlicedPacket::from_ip(&buf[..n])
+                && let Some(etherparse::TransportSlice::Udp(udp)) = sliced.transport
+                && udp.source_port() == port
+            {
+                break true;
+            }
+        };
+        assert!(replied, "the flow waited for the slow owners");
+        engine.stop();
+    }
+
     #[test]
     fn relays_through_a_protected_socket_and_stops_cleanly() {
         let echo = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();

@@ -216,8 +216,9 @@ private fun Advice() {
             try {
                 links.openUri(link)
             } catch (e: RuntimeException) {
-                // No browser: the address below can be typed elsewhere.
-                Log.w(TAG, "could not open $link", e)
+                // No browser: the address below can be typed elsewhere. Nothing is logged:
+                // the log, or the exception's text, would say the user sought help, and
+                // what can read the log may be what the user seeks help from (audit A-52).
             }
         }) { Text(stringResource(name)) }
         Text(isolate(link), style = MaterialTheme.typography.bodySmall)

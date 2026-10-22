@@ -375,6 +375,22 @@ async fn the_engine_reports_while_it_runs() {
     assert!(stopped >= Duration::from_millis(600), "{stopped:?}");
 }
 
+/// Audit A-52: a packet the stack cannot read is dropped, as a network drops it, and the
+/// engine goes on. Before, the first one stopped the whole engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_packet_the_stack_cannot_read_is_dropped() {
+    let h = start(Recorder::default());
+    // IPv4 claiming 100 bytes in 20, a header shorter than IPv4's, and no IP version.
+    let mut short = vec![0u8; 20];
+    short[0] = 0x45;
+    short[3] = 100;
+    for garbage in [short, vec![0x45; 8], vec![0x70; 40]] {
+        h.send(&garbage);
+    }
+    assert_udp_round_trip(&h, APP_V4.into(), udp_echo(Ipv4Addr::LOCALHOST.into())).await;
+    assert!(!h.engine.is_finished(), "the engine stopped");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn engine_ends_when_the_tunnel_closes() {
     let h = start(Recorder::default());

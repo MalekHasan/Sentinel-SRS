@@ -157,8 +157,8 @@ pub const LIVE_DESTINATIONS: usize = 5;
 pub trait FlowObserver: Send + Sync {
     /// The app that owns a new connection: on Android,
     /// `ConnectivityManager.getConnectionOwnerUid` and the package for that UID. Called
-    /// once per flow on an engine thread, before the upstream connection exists, so it
-    /// must be quick.
+    /// once per flow on an engine thread, before the upstream connection exists, so the
+    /// flow waits for it; other flows go on meanwhile.
     fn owner(
         &self,
         proto: FlowProto,
@@ -664,13 +664,18 @@ impl FlowEvents {
 
 impl Observer for FlowEvents {
     fn flow_started(&self, flow: &FlowInfo) -> Verdict {
-        let owner = self.foreign.owner(
-            proto(flow.proto),
-            flow.src.ip().to_string(),
-            flow.src.port(),
-            flow.dst.ip().to_string(),
-            flow.dst.port(),
-        );
+        // Android answers through a binder call, which waits while the system is busy.
+        // The engine has two workers: let its other tasks move to another meanwhile
+        // (audit A-52).
+        let owner = tokio::task::block_in_place(|| {
+            self.foreign.owner(
+                proto(flow.proto),
+                flow.src.ip().to_string(),
+                flow.src.port(),
+                flow.dst.ip().to_string(),
+                flow.dst.port(),
+            )
+        });
         if let (Some(app), Some(installed)) = (&owner.app, owner.installed_ms) {
             lock(&self.installed).insert(app.clone(), installed);
         }

@@ -120,8 +120,15 @@ pub async fn run(
         let mut buf = vec![0u8; mtu + 64];
         while let Ok(n) = dev_rx.read(&mut buf).await
             && n > 0
-            && stack_tx.send(buf[..n].to_vec()).await.is_ok()
-        {}
+        {
+            match stack_tx.send(buf[..n].to_vec()).await {
+                Ok(()) => {}
+                // A packet the stack cannot read is dropped, as a network drops it: one
+                // must not stop the engine (audit A-52).
+                Err(e) if e.kind() == io::ErrorKind::InvalidInput => {}
+                Err(_) => break,
+            }
+        }
         "tunnel reader"
     });
     tasks.spawn(async move {
