@@ -49,6 +49,11 @@ impl DnsForward {
     /// real resolver if `dst` is the tunnel's resolver address. Only DNS is served
     /// there; any other port is refused, so probes such as DNS-over-TLS on port 853 fail
     /// at once instead of waiting for a connect timeout.
+    /// Whether `dst` is the tunnel's own resolver: one of its addresses, port 53.
+    pub(crate) fn serves(&self, dst: SocketAddr) -> bool {
+        self.listen.contains(&dst.ip()) && dst.port() == DNS_PORT
+    }
+
     pub(crate) fn route(&self, dst: SocketAddr) -> io::Result<SocketAddr> {
         if !self.listen.contains(&dst.ip()) {
             return Ok(dst);
@@ -95,6 +100,13 @@ mod tests {
         );
         let err = forward.route(addr("10.111.0.53:853")).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::ConnectionRefused);
+
+        assert!(forward.serves(addr("10.111.0.53:53")));
+        assert!(!forward.serves(addr("10.111.0.53:853")));
+        assert!(
+            !forward.serves(addr("192.168.1.1:53")),
+            "a resolver the app chose"
+        );
 
         // A network change replaces the resolvers.
         forward.set_upstream(vec![addr("[2001:db8::2]:53")]);

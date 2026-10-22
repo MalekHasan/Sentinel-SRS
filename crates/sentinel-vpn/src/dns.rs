@@ -91,7 +91,8 @@ pub fn name_error_reply(query: &[u8]) -> Option<Vec<u8>> {
 ///
 /// Apps often keep using an address after its DNS TTL, so entries live at least
 /// [`DnsCache::MIN_KEEP`]. When several names share an address (CDNs), the most recent
-/// answer wins; SNI then gives the precise name for TLS flows.
+/// answer wins; SNI then gives the precise name for TLS flows. A full cache drops the
+/// entries closest to expiring, never all of them (audit A-05).
 pub struct DnsCache {
     entries: Mutex<HashMap<IpAddr, (String, Instant)>>,
     capacity: usize,
@@ -116,11 +117,26 @@ impl DnsCache {
         if map.len() + answer.ips.len() > self.capacity {
             map.retain(|_, (_, expires)| *expires > now);
             if map.len() + answer.ips.len() > self.capacity {
-                // Still full of live entries: drop everything rather than grow without bound.
-                map.clear();
+                // Still full of live entries: drop those closest to expiring, an eighth of
+                // the cache at a time so that this is rare. Dropping them all would let one
+                // large answer wipe every name (audit A-05).
+                let drop = (map.len() + answer.ips.len())
+                    .saturating_sub(self.capacity)
+                    .max(self.capacity / 8);
+                let mut by_expiry: Vec<(Instant, IpAddr)> = map
+                    .iter()
+                    .map(|(ip, (_, expires))| (*expires, *ip))
+                    .collect();
+                if drop < by_expiry.len() {
+                    by_expiry.select_nth_unstable(drop);
+                }
+                for (_, ip) in by_expiry.into_iter().take(drop) {
+                    map.remove(&ip);
+                }
             }
         }
-        for (ip, ttl) in &answer.ips {
+        // An answer larger than the whole cache keeps what fits.
+        for (ip, ttl) in answer.ips.iter().take(self.capacity) {
             let keep = Duration::from_secs(u64::from(*ttl)).clamp(Self::MIN_KEEP, Self::MAX_KEEP);
             map.insert(*ip, (answer.qname.clone(), now + keep));
         }
@@ -275,5 +291,39 @@ pub(crate) mod tests {
             });
             assert!(cache.len() <= 3);
         }
+    }
+
+    /// Audit A-05: a full cache drops the names closest to expiring, not every name, so
+    /// one large answer cannot wipe the names of everyone else's connections.
+    #[test]
+    fn a_full_cache_keeps_its_longest_lived_names() {
+        let cache = DnsCache::new(8);
+        let ip = |i: u8| IpAddr::V4(Ipv4Addr::new(198, 51, 100, i));
+        // Eight names, each kept ten minutes less than the one before.
+        for i in 0..8u8 {
+            cache.insert(&DnsAnswer {
+                qname: format!("n{i}.example"),
+                ips: vec![(ip(i), 86_400 - u32::from(i) * 600)],
+            });
+        }
+        cache.insert(&DnsAnswer {
+            qname: "new.example".into(),
+            ips: vec![(ip(100), 300)],
+        });
+        assert_eq!(cache.len(), 8);
+        assert_eq!(cache.lookup(&ip(100)).as_deref(), Some("new.example"));
+        assert_eq!(cache.lookup(&ip(0)).as_deref(), Some("n0.example"));
+        assert_eq!(
+            cache.lookup(&ip(7)),
+            None,
+            "the one closest to expiring goes"
+        );
+
+        // An answer larger than the cache keeps what fits.
+        cache.insert(&DnsAnswer {
+            qname: "big.example".into(),
+            ips: (0..20u8).map(|i| (ip(200 + i / 4), 300)).collect(),
+        });
+        assert!(cache.len() <= 8);
     }
 }

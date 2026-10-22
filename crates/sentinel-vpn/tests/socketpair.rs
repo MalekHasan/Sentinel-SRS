@@ -33,11 +33,13 @@ struct Recorder {
     /// Blocks every flow, new or open, while set.
     block_all: AtomicBool,
     rechecks: AtomicUsize,
+    started: Mutex<Vec<FlowInfo>>,
     ended: Mutex<Vec<(FlowInfo, FlowTotals)>>,
 }
 
 impl Observer for Recorder {
     fn flow_started(&self, flow: &FlowInfo) -> Verdict {
+        self.started.lock().unwrap().push(flow.clone());
         if Some(flow.dst.port()) == self.block_port || self.block_all.load(Ordering::SeqCst) {
             Verdict::Block
         } else {
@@ -804,6 +806,90 @@ async fn an_idle_connection_is_reset() {
     assert_eq!(
         h.recorder.ended.lock().unwrap()[0].1.verdict,
         Verdict::Allow
+    );
+    h.engine.abort();
+}
+
+/// A DNS server on loopback that answers every A query with `address`.
+fn dns_server(address: Ipv4Addr) -> SocketAddr {
+    use simple_dns::rdata::{A, RData};
+    use simple_dns::{CLASS, Packet, ResourceRecord};
+
+    let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let local = socket.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 2048];
+        while let Ok((n, from)) = socket.recv_from(&mut buf) {
+            let Ok(query) = Packet::parse(&buf[..n]) else {
+                continue;
+            };
+            let mut reply = Packet::new_reply(query.id());
+            reply.questions = query.questions.clone();
+            for question in &query.questions {
+                reply.answers.push(ResourceRecord::new(
+                    question.qname.clone(),
+                    CLASS::IN,
+                    300,
+                    RData::A(A::from(address)),
+                ));
+            }
+            let _ = socket.send_to(&reply.build_bytes_vec().unwrap(), from);
+        }
+    });
+    local
+}
+
+/// The name a flow to `to` started with, once it started.
+async fn started_name(h: &Harness, to: SocketAddr) -> Option<String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(flow) = h
+            .recorder
+            .started
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|f| f.dst == to)
+        {
+            return flow.hostname.clone();
+        }
+        assert!(std::time::Instant::now() < deadline, "no flow to {to}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Audit A-05: the tunnel resolver's answers name later connections. That answers from
+/// a server the app chose do not is checked in the relay's own tests, which need no
+/// server on port 53.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_tunnel_resolvers_answers_name_flows() {
+    let tunnel_dns = SocketAddr::new(Ipv4Addr::new(10, 111, 0, 53).into(), 53);
+    let forward = Arc::new(DnsForward::new(vec![tunnel_dns.ip()]));
+    let address = Ipv4Addr::new(127, 0, 0, 3);
+    forward.set_upstream(vec![dns_server(address)]);
+    let h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            dns_forward: Some(Arc::clone(&forward)),
+            ..EngineConfig::default()
+        },
+    );
+    h.send(&udp_packet_from(
+        SocketAddr::new(APP_V4.into(), 42_000),
+        tunnel_dns,
+        &dns_query(0x0a05, "real.example"),
+    ));
+    assert!(h.recv().await.is_some(), "the tunnel's resolver answers");
+    let server = udp_echo(address.into());
+    h.send(&udp_packet_from(
+        SocketAddr::new(APP_V4.into(), 42_001),
+        server,
+        b"x",
+    ));
+    assert!(h.recv().await.is_some());
+    assert_eq!(
+        started_name(&h, server).await.as_deref(),
+        Some("real.example")
     );
     h.engine.abort();
 }

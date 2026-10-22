@@ -25,7 +25,7 @@ Rejected alternative: advertise the real network's resolvers directly. A VPN's D
 Consequences:
 
 - DNS keeps working across network changes without rebuilding the tunnel.
-- Every lookup passes through the engine, which uses the answers to name later connections (CM-02).
+- Every lookup passes through the engine, which uses the answers to name later connections (CM-02). Only this resolver's answers name connections (audit A-05): an app that asks a server of its own choosing could have it answer anything, and so rename every other app's traffic. Its lookups are still watched (ID-13, DL-05). When the name cache is full, it drops the names closest to expiring, never all of them.
 - Other ports at the resolver address are refused at once. Android's opportunistic DNS-over-TLS probe to port 853 fails immediately and falls back, instead of waiting for a connect timeout.
 - With Private DNS set to a named provider, Android sends DNS-over-TLS through the tunnel to that provider. Sentinel then sees the provider's name (SNI) but not the questions. That is the user's choice, and it is shown as such in a later sprint.
 - Only the first resolver is used. If it stops answering, lookups fail until the network reports a change. Failover is Sprint 9 work.
