@@ -158,6 +158,59 @@ fn an_end_without_a_seen_start_is_stored_whole() {
     assert_eq!(flows[0].flow, row);
 }
 
+/// Audit A-29: a batch that fails changes nothing, not even which flows are open. The
+/// row id its flow had is given to the next flow, which that flow's end must then not
+/// overwrite.
+#[test]
+fn a_failed_batch_leaves_no_flow_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    store
+        .record_flows(1, &[event(1, flow("org.example.app", "a.example", NOW))])
+        .unwrap();
+
+    // Another connection makes the history refuse one connection, as a full disk would.
+    let other = rusqlite::Connection::open(&path).unwrap();
+    let hex: String = KEY.iter().map(|b| format!("{b:02X}")).collect();
+    other
+        .pragma_update(None, "key", format!("x'{hex}'"))
+        .unwrap();
+    other
+        .execute_batch(
+            "CREATE TRIGGER refuse BEFORE INSERT ON flow WHEN NEW.remote_ip = '192.0.2.9'
+             BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .unwrap();
+    let failed = flow("org.example.app", "b.example", NOW + 1);
+    let mut refused = flow("org.example.app", "c.example", NOW + 2);
+    refused.remote_ip = "192.0.2.9".to_owned();
+    assert!(
+        store
+            .record_flows(1, &[event(2, failed.clone()), event(3, refused)])
+            .is_err()
+    );
+    other.execute_batch("DROP TRIGGER refuse").unwrap();
+
+    let next = flow("org.example.app", "d.example", NOW + 3);
+    store.record_flows(1, &[event(4, next.clone())]).unwrap();
+    let mut ended = failed;
+    ended.ended = Some(NOW + 5_000);
+    ended.bytes_up = 10;
+    store.record_flows(1, &[event(2, ended.clone())]).unwrap();
+
+    let flows = store.recent_flows(10).unwrap();
+    let find = |host: &str| {
+        flows
+            .iter()
+            .find(|f| f.flow.hostname.as_deref() == Some(host))
+            .map(|f| f.flow.clone())
+    };
+    assert_eq!(find("d.example"), Some(next), "the next flow is its own");
+    assert_eq!(find("b.example"), Some(ended), "the end is stored whole");
+    assert_eq!(flows.len(), 3, "{flows:?}");
+}
+
 #[test]
 fn old_flows_are_rolled_up_into_daily_totals() {
     let dir = tempfile::tempdir().unwrap();

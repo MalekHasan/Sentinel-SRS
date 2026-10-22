@@ -13,6 +13,13 @@ fuzz_target!(|data: &[u8]| {
         assert!(!query.name.is_empty());
         assert!(!query.name.ends_with('.'));
         assert_eq!(query.name, query.name.to_ascii_lowercase());
+        // Presentation format (audit A-31): no line break, comma or direction mark.
+        assert!(
+            query
+                .name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_.\\".contains(&b))
+        );
         assert!(reply.is_some(), "a query that can be read can be answered");
     }
     if let Some(reply) = reply {

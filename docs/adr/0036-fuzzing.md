@@ -20,8 +20,8 @@ Sentinel parses no QUIC: a QUIC connection is relayed as UDP, and its server nam
 1. **Coverage-guided fuzzing with cargo-fuzz** (libFuzzer), in `fuzz/`, a workspace of its own: it needs nightly Rust and cargo-fuzz, and the rest of the build does not.
 2. **Four targets**, each checking what its parser promises as well as that it does not crash:
    - `tls_client_hello`: it never asks for fewer bytes than it has, or more than one record. A server name is a valid lower-case host name.
-   - `dns_query`: a query it can read, it can answer "no such name". That answer is neither a query nor an answer with addresses.
-   - `dns_response`: the name is lower-case without a trailing dot, and there are addresses.
+   - `dns_query`: a query it can read, it can answer "no such name". That answer is neither a query nor an answer with addresses. The name holds only lower-case letters, digits, `-`, `_`, `.` and `\` (audit A-31).
+   - `dns_response`: the name is lower-case without a trailing dot, holds only those characters, and there are addresses.
    - `dns_names`: lines of any text through the DNS-tunnel watch, the encrypted DNS and sharing-site checks.
 3. **Seeds** in `fuzz/seeds/`: one valid input per target. What a run grows (`corpus/`) and finds (`artifacts/`) is not kept in the repository.
 4. **CI runs each target for ten minutes** every Monday and on demand, and keeps an input that fails. It does not run on every push, which would add ten minutes of runner time to each.

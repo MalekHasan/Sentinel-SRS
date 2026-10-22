@@ -30,7 +30,7 @@ A phone keeps up to 30 days of connections, possibly hundreds of thousands, so a
    - Alert evidence and the journal's before and after states are exported as stored: JSON within JSON, or one quoted JSON cell in CSV. An alert this version cannot read is still exported.
    - Each alert also gets its app, as a column.
 4. **CSV follows RFC 4180:** cells with commas, quotes or line breaks are quoted, quotes are doubled, and lines end with CRLF.
-   - **CSV injection:** a text cell starting with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`, so that a spreadsheet shows it as text and does not run it. Host names come from the network and could be made to start like a formula.
+   - **CSV injection:** a text cell gets a leading `'` when its first character other than white space is `=`, `+`, `-` or `@`, or when it starts with a tab, a carriage return or a line feed. A spreadsheet then shows it as text and does not run it. Host names come from the network and could be made to start like a formula. Spreadsheets skip the spaces before a formula, so they count too (amended after audit A-31).
 5. **Nothing is sent.** The export is a document the user saves where they choose.
 6. **The Android screen** ("Export your history", from the main screen):
    - The user chooses what (connections, alerts or their actions), from when (the last 24 hours, the last 7 days, or everything kept) and the format (CSV for spreadsheets, JSON for programs).
@@ -44,7 +44,7 @@ A phone keeps up to 30 days of connections, possibly hundreds of thousands, so a
 
 - `sentinel-store` (unit):
   - times, including a leap day and before 1970;
-  - CSV cells: quoting, doubled quotes, line breaks, JSON, and formulas kept as text.
+  - CSV cells: quoting, doubled quotes, line breaks, JSON, and formulas kept as text, also behind spaces or a line break.
 - `sentinel-store` (against a real encrypted database): flows, an alert and an action are recorded, and a flow the next day is outside the range.
   - For each kind and format, pages of 1, 2, 3 and 7 records join into exactly the document one page gives. With 7 records and pages of 7, the last page holds only the end of the document.
   - The JSON parses and holds each field.

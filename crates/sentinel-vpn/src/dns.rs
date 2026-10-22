@@ -2,16 +2,17 @@
 //! DNS answers seen in the tunnel, used to put a name on later connections (CM-02).
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use simple_dns::rdata::RData;
-use simple_dns::{Packet, PacketFlag, RCODE};
+use simple_dns::{Name, Packet, PacketFlag, RCODE};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DnsAnswer {
-    /// The name the app asked for, lower-cased, without a trailing dot.
+    /// The name the app asked for, as [`presentation`] writes it.
     pub qname: String,
     pub ips: Vec<(IpAddr, u32)>,
 }
@@ -23,11 +24,7 @@ pub fn parse_dns_response(datagram: &[u8]) -> Option<DnsAnswer> {
     if !packet.has_flags(PacketFlag::RESPONSE) {
         return None;
     }
-    let qname = packet.questions.first()?.qname.to_string();
-    let qname = qname.trim_end_matches('.').to_ascii_lowercase();
-    if qname.is_empty() {
-        return None;
-    }
+    let qname = presentation(&packet.questions.first()?.qname)?;
     let ips: Vec<(IpAddr, u32)> = packet
         .answers
         .iter()
@@ -46,7 +43,7 @@ pub fn parse_dns_response(datagram: &[u8]) -> Option<DnsAnswer> {
 /// What a DNS query asks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DnsQuery {
-    /// Lower-cased, without the trailing dot.
+    /// As [`presentation`] writes it.
     pub name: String,
     /// The record type asked for, as numbered in the DNS (RFC 1035): 1 for A, 16 for
     /// TXT, 28 for AAAA.
@@ -61,12 +58,33 @@ pub fn parse_dns_query(datagram: &[u8]) -> Option<DnsQuery> {
         return None;
     }
     let question = packet.questions.first()?;
-    let name = question.qname.to_string();
-    let name = name.trim_end_matches('.').to_ascii_lowercase();
-    (!name.is_empty()).then(|| DnsQuery {
-        name,
+    Some(DnsQuery {
+        name: presentation(&question.qname)?,
         qtype: u16::from(question.qtype),
     })
+}
+
+/// A name as Sentinel keeps and shows it: lower case, without the trailing dot, in DNS
+/// presentation format (RFC 1035 §5.1). Any byte but a letter, a digit, `-` and `_` is
+/// written `\DDD`, a dot inside a label among them. A name from the network then holds
+/// no line break, comma or direction mark, and its labels are those on the wire, so a
+/// label `a.spy.example` is not taken for a name under `spy.example` (audit A-31).
+/// `None` for the root.
+pub fn presentation(name: &Name<'_>) -> Option<String> {
+    let mut text = String::new();
+    for label in name.iter() {
+        if !text.is_empty() {
+            text.push('.');
+        }
+        for &byte in label.as_ref() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+                text.push(char::from(byte.to_ascii_lowercase()));
+            } else {
+                let _ = write!(text, "\\{byte:03}");
+            }
+        }
+    }
+    (!text.is_empty()).then_some(text)
 }
 
 /// An answer to `query` saying that the name does not exist (NXDOMAIN): what a blocked
@@ -222,6 +240,29 @@ pub(crate) mod tests {
             None
         );
         assert_eq!(parse_dns_query(b"not dns"), None);
+    }
+
+    /// Audit A-31: a label may hold any byte. A name is kept with each byte that is not
+    /// a letter, digit, `-` or `_` written `\DDD`: no line break, comma or direction mark
+    /// gets through, and a dot inside a label does not make two labels.
+    #[test]
+    fn a_name_keeps_only_safe_characters_and_its_own_labels() {
+        // A query for one label, then "com", written by hand: no builder takes these.
+        let asked = |label: &[u8]| {
+            let mut packet = vec![0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
+            packet.push(u8::try_from(label.len()).unwrap());
+            packet.extend_from_slice(label);
+            packet.extend_from_slice(b"\x03com\x00\x00\x01\x00\x01");
+            parse_dns_query(&packet).unwrap().name
+        };
+        assert_eq!(asked(b"Spy.Example"), "spy\\046example.com");
+        assert_eq!(
+            asked("a\n,b\u{202e}".as_bytes()),
+            "a\\010\\044b\\226\\128\\174.com"
+        );
+        assert_eq!(asked(b"_dmarc-1"), "_dmarc-1.com");
+        let answer = response("x.example", &[Ipv4Addr::LOCALHOST], &[]);
+        assert_eq!(parse_dns_response(&answer).unwrap().qname, "x.example");
     }
 
     /// A blocked lookup gets "no such name" for its own question, with its own id.
