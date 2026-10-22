@@ -3,6 +3,7 @@
 - Status: **Accepted** (Sprint 9; `crates/sentinel-vpn`, `crates/sentinel-ffi`, `apps/android`)
 - Date: 2026-10-16
 - Implements SP-03 on Android: "each collector reports every 10 s; a missing heartbeat is logged as a monitoring gap and alerted". Builds on the gap log of Sprint 1 (NF-07) and the gap alert of Sprint 5 ([ADR-0012](0012-alerts.md)).
+- Amended 2026-10-22 for audit finding A-14 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): decision 1, the report passes through the loop that takes new connections, and batches are written apart from it.
 
 ## Context
 
@@ -25,6 +26,8 @@ On Android the collector that matters is the packet engine: the other watchers a
 
 1. **The engine reports every 10 s** (`EngineConfig::heartbeat`).
    - Its heartbeat is a task on the engine's runtime, beside the flows, in both stacks (smoltcp and ipstack). It runs only while the runtime can run tasks.
+   - On smoltcp, the default stack, a report counts only once the loop that takes new TCP connections has received it (audit A-14). That loop runs on the engine's own thread, not a worker: had it been held up, new connections would go unrelayed while the heartbeat beat on. Now either a stuck worker or a held-up loop stops the reports.
+   - **Writing batches to the history, and handing them to the app, runs as a task of its own on a worker thread**, no longer on the engine's own thread beside that loop (audit A-14). A batch waiting on a history held by a long export, retention pass or hunt, or on a slow app, held up every new TCP connection for that long. When the engine stops, the last batch is written before the flows still open are written as ended.
    - `EngineStats::since_heartbeat` says how long ago it last reported. The snapshot carries this as `heartbeat_age_ms`.
    - It is measured on the monotonic clock, which stands still while the phone sleeps. A phone asleep is not an engine gone silent.
 2. **The service checks every 10 s while monitoring runs.**
@@ -43,6 +46,7 @@ On Android the collector that matters is the packet engine: the other watchers a
 
 - `sentinel-vpn` (socketpair test): with a 100 ms heartbeat, the engine has reported within 500 ms after 1.5 s. Once it stops, the time since its last report grows. Without the heartbeat task the test fails.
 - `sentinel-ffi`: the snapshot of a running engine reports a recent heartbeat.
+- `sentinel-ffi` (`a_slow_batch_does_not_hold_up_new_connections`): while the app takes 4 s over a batch, a new TCP connection through the real engine is relayed and echoed at once. Before the change it waited for the batch.
 - On the Android 14 emulator:
   - `MonitoringTest`: while monitoring runs, the engine reported within 10 s and the service has written down a report made since the start.
   - `GapLogTest`:

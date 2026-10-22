@@ -96,12 +96,17 @@ pub async fn run(
         stats,
         next_id: AtomicU64::new(1),
     });
-    // SP-03: it reports on a worker thread, as the flows run, while the runtime can
-    // still run its tasks.
+    // SP-03: a beat is sent from a worker thread, as the flows run, and counted by the
+    // loop below, which takes new connections. The engine reports only while both run:
+    // a stuck worker, or a loop held up, stops the beats (audit A-14).
+    let (beat_tx, mut beats) = mpsc::channel::<()>(1);
     {
-        let (stats, period) = (Arc::clone(&ctx.stats), ctx.config.heartbeat);
+        let period = ctx.config.heartbeat;
         tasks.spawn(async move {
-            heartbeat(stats, period).await;
+            heartbeat(period, move || {
+                let _ = beat_tx.try_send(());
+            })
+            .await;
             "heartbeat"
         });
     }
@@ -230,6 +235,7 @@ pub async fn run(
                 let name = ended.unwrap_or("engine");
                 return Err(io::Error::other(format!("the engine's {name} task stopped")));
             }
+            Some(()) = beats.recv() => ctx.stats.beat(),
             accepted = tcp.next() => match accepted {
                 Some((stream, app, remote)) => {
                     relays.spawn(relay::tcp(Arc::clone(&ctx), stream, app, remote));
