@@ -391,7 +391,7 @@
     <string name="alert_sharing_site_upload_title">An app uploaded to a sharing site</string>
     <string name="alert_sharing_site_upload_text">It sent data to a place where anyone with the link can pick it up. Spyware can hand over what it took this way. It is not that site\'s own app.</string>
     <string name="alert_history_started_anew_title">Sentinel\'s history was started anew</string>
-    <string name="alert_history_started_anew_text">Sentinel could not read its history on this phone, so it started a new one. The connections, alerts and firewall rules it held before cannot be read; the old file is kept until you delete the history. Android can lose the key that opens the history, for example after some system updates. It also happens when someone changes the history file.</string>
+    <string name="alert_history_started_anew_text">Sentinel could not read its history on this phone, so it started a new one. It cannot read the connections, alerts and firewall rules it held before. The old file is kept until you delete the history. Android can lose the key that opens the history, for example after some system updates. It also happens when someone changes the history file.</string>
     <string name="alert_monitoring_keeps_stopping_title">Monitoring keeps stopping</string>
     <string name="alert_monitoring_keeps_stopping_text">Monitoring stopped again and again, though you had turned it on. While it is stopped, Sentinel sees none of your phone\'s traffic. The phone maker\'s battery settings often do this, and so can another app that takes over the VPN, or a fault in Sentinel. The steps that keep monitoring running can help.</string>
     <plurals name="alert_evidence_repeated_gaps">

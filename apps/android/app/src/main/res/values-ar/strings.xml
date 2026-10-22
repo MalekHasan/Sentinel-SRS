@@ -428,7 +428,7 @@
     <string name="alert_sharing_site_upload_title">في تطبيق رفع بيانات لموقع مشاركة</string>
     <string name="alert_sharing_site_upload_text">بعت بيانات لمكان أي حدا معه الرابط بيقدر ياخدها. برامج التجسس ممكن تسلّم اللي أخدته بهالطريقة. وهاد التطبيق مش تطبيق الموقع نفسه.</string>
     <string name="alert_history_started_anew_title">سجل Sentinel انبدأ من جديد</string>
-    <string name="alert_history_started_anew_text">ما قدر Sentinel يقرا سجلّه على هالموبايل، فبلّش سجل جديد. الاتصالات والتنبيهات وقواعد الجدار الناري اللي كانت فيه ما بتنقرا، والملف القديم بيضل محفوظ لحتى تمسح السجل. أندرويد ممكن يضيّع المفتاح اللي بيفتح السجل، مثلاً بعد بعض تحديثات النظام. وبيصير كمان إذا حدا غيّر ملف السجل.</string>
+    <string name="alert_history_started_anew_text">ما قدر Sentinel يقرا سجلّه على هالموبايل، فبلّش سجل جديد. ما بيقدر يقرا الاتصالات والتنبيهات وقواعد الجدار الناري اللي كانت فيه. الملف القديم بيضل محفوظ لحتى تمسح السجل. أندرويد ممكن يضيّع المفتاح اللي بيفتح السجل، مثلاً بعد بعض تحديثات النظام. وبيصير كمان إذا حدا غيّر ملف السجل.</string>
     <string name="alert_monitoring_keeps_stopping_title">المراقبة عم توقف كل شوي</string>
     <string name="alert_monitoring_keeps_stopping_text">المراقبة وقفت أكتر من مرة، مع إنك كنت مشغّلها. وهي واقفة، Sentinel ما بيشوف ولا اتصال من تلفونك. غالباً إعدادات البطارية من شركة التلفون هي السبب، وممكن كمان تطبيق تاني ياخد الـVPN، أو خلل بـSentinel. خطوات «خلّي المراقبة شغّالة» ممكن تساعد.</string>
     <plurals name="alert_evidence_repeated_gaps">
