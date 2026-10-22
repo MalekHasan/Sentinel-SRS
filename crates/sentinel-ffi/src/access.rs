@@ -3,6 +3,7 @@
 //! notification access, held by an app that did not come with the phone.
 
 use std::collections::BTreeSet;
+use std::sync::PoisonError;
 
 use sentinel_detect::special_access;
 
@@ -42,13 +43,20 @@ impl HistoryStore {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let gained = self.store.swap_access(&held)?;
+        // Kept once its alerts are: if one cannot be, the next check finds the access
+        // again, and what was raised is not raised twice while open (audit A-35).
+        let _checking = self
+            .checking_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let gained = self.store.access_gained(&held)?;
         let now = now_ms();
         for (app, access) in &gained {
             self.raise_unless_open(&special_access(now, app, *access), |new, open| {
                 new.evidence == open.evidence
             })?;
         }
+        self.store.swap_access(&held)?;
         Ok(AccessCheck {
             held: u32::try_from(held.len()).unwrap_or(u32::MAX),
             gained: u32::try_from(gained.len()).unwrap_or(u32::MAX),
@@ -207,6 +215,28 @@ mod tests {
         assert_eq!(
             reported(&history),
             [("com.example.watch".to_owned(), NotificationListener)]
+        );
+    }
+
+    /// Audit A-35: access whose alert could not be kept is not taken as seen, so the
+    /// next check reports it.
+    #[test]
+    fn access_whose_alert_was_not_kept_is_reported_at_the_next_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = history(dir.path());
+        let phone = vec![held(
+            "com.example.watch",
+            SpecialAccess::Accessibility,
+            false,
+        )];
+        let refused =
+            crate::history::testing::AlertsRefused::new(&dir.path().join("history.db"), 7);
+        assert!(history.check_access(phone.clone()).is_err());
+        drop(refused);
+        assert_eq!(history.check_access(phone).unwrap().gained, 1);
+        assert_eq!(
+            reported(&history),
+            [("com.example.watch".to_owned(), SpecialAccess::Accessibility)]
         );
     }
 }

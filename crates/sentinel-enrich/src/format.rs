@@ -18,7 +18,7 @@
 //! mean "nothing known" and fill the gaps between ranges. A text is a length (u32) and
 //! UTF-8 bytes.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 pub(crate) const MAGIC: &[u8; 8] = b"SNTLIPDB";
 pub(crate) const VERSION: u32 = 1;
@@ -129,9 +129,13 @@ impl IpDb {
     }
 
     pub fn lookup(&self, ip: IpAddr) -> IpInfo<'_> {
-        // An IPv4 address written as IPv6 (::ffff:a.b.c.d) is the IPv4 address.
+        // An IPv4 address written as IPv6 is the IPv4 address: mapped (::ffff:a.b.c.d)
+        // or through NAT64 (64:ff9b::a.b.c.d).
         let ip = match ip {
-            IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+            IpAddr::V6(v6) => v6
+                .to_ipv4_mapped()
+                .or_else(|| nat64(v6))
+                .map_or(ip, IpAddr::V4),
             v4 => v4,
         };
         let (asn, country) = match ip {
@@ -158,6 +162,15 @@ impl IpDb {
         let i = self.names.binary_search_by_key(&asn, |(a, _)| *a).ok()?;
         Some(&self.names[i].1)
     }
+}
+
+/// The IPv4 address an address of NAT64's well-known prefix stands for: `64:ff9b::/96`
+/// (RFC 6052), as on a network that reaches IPv4 only through NAT64 (audit A-23).
+fn nat64(v6: Ipv6Addr) -> Option<Ipv4Addr> {
+    let [a, b, c, d] = v6.octets()[12..] else {
+        return None;
+    };
+    (v6.segments()[..6] == [0x64, 0xff9b, 0, 0, 0, 0]).then(|| Ipv4Addr::new(a, b, c, d))
 }
 
 /// Range starts and the value from each start up to the next.

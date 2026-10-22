@@ -184,6 +184,12 @@ pub struct HistoryStore {
     firewall_changes: tokio::sync::watch::Sender<u64>,
     /// Held while the history is checked against an indicator list (MS-02).
     pub(crate) hunting: Mutex<()>,
+    /// Held while the firewall changes, in the history and then in force, so that two
+    /// changes at once cannot leave the older one in force (audit A-34).
+    changing_firewall: Mutex<()>,
+    /// Held while network settings, device settings or special access are compared with
+    /// those seen before: the new state is kept only once its alerts are (audit A-35).
+    pub(crate) checking_state: Mutex<()>,
 }
 
 /// What to export from the history (SRS §12.3).
@@ -235,6 +241,8 @@ impl HistoryStore {
             isolation: RwLock::new(isolation),
             firewall_changes: tokio::sync::watch::Sender::new(0),
             hunting: Mutex::new(()),
+            changing_firewall: Mutex::new(()),
+            checking_state: Mutex::new(()),
         };
         history.reload_rules()?;
         Ok(Arc::new(history))
@@ -250,6 +258,7 @@ impl HistoryStore {
         alert: Option<i64>,
     ) -> Result<String, HistoryError> {
         let rule = sentinel_detect::FirewallRule::try_from(rule)?;
+        let _changing = self.changing_firewall();
         let key = self.store.set_firewall_rule(&rule, now_ms(), alert)?;
         self.reload_rules()?;
         Ok(key)
@@ -257,6 +266,7 @@ impl HistoryStore {
 
     /// Remove the firewall rule with this key, journalled. Returns whether there was one.
     pub fn remove_firewall_rule(&self, key: String) -> Result<bool, HistoryError> {
+        let _changing = self.changing_firewall();
         let removed = self.store.remove_firewall_rule(&key, now_ms())?;
         self.reload_rules()?;
         Ok(removed)
@@ -271,6 +281,7 @@ impl HistoryStore {
             FirewallMode::Monitor => Mode::Monitor,
             FirewallMode::BlockUnknown => Mode::BlockUnknown { since: now },
         };
+        let _changing = self.changing_firewall();
         let mut in_force = self.mode.write().unwrap_or_else(PoisonError::into_inner);
         *in_force = self.store.set_firewall_mode(mode, now)?;
         drop(in_force);
@@ -293,6 +304,7 @@ impl HistoryStore {
             since: now,
             own_app,
         };
+        let _changing = self.changing_firewall();
         let mut in_force = self
             .isolation
             .write()
@@ -306,6 +318,7 @@ impl HistoryStore {
 
     /// End isolation: the rules and the mode decide again.
     pub fn end_isolation(&self) -> Result<(), HistoryError> {
+        let _changing = self.changing_firewall();
         let mut in_force = self
             .isolation
             .write()
@@ -331,6 +344,7 @@ impl HistoryStore {
     /// Undo the action `id` from the journal: put its setting back as it was before,
     /// if nothing changed it since, for connections from now on and open ones.
     pub fn undo_action(&self, id: i64) -> Result<UndoResult, HistoryError> {
+        let _changing = self.changing_firewall();
         let undone = self.store.undo(id, now_ms())?;
         if undone == Undo::Undone {
             self.reload_firewall()?;
@@ -532,11 +546,19 @@ impl HistoryStore {
             proxy: state.proxy,
         };
         let now = now_ms();
-        if let Some(before) = self.store.swap_network_state(&state, now)? {
+        // Kept once its alerts are: if one cannot be, the next check finds the change
+        // again (audit A-35). An alert raised before it may then be raised twice, which
+        // is better than none.
+        let _checking = self
+            .checking_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(before) = self.store.network_state()? {
             for alert in sentinel_detect::network_changes(now, &before, &state) {
                 self.raise(&alert)?;
             }
         }
+        self.store.swap_network_state(&state, now)?;
         Ok(())
     }
 
@@ -743,6 +765,14 @@ impl HistoryStore {
     }
 
     /// Read the rules, the mode and isolation again, after an undo changed one of them.
+    fn changing_firewall(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.changing_firewall
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Put in force what the history holds. Called with [`Self::changing_firewall`] held,
+    /// or before anyone else can see this history.
     fn reload_firewall(&self) -> Result<(), HistoryError> {
         *self.mode.write().unwrap_or_else(PoisonError::into_inner) = self.store.firewall_mode()?;
         *self
@@ -841,6 +871,39 @@ pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// While an [`testing::AlertsRefused`] is kept, the history at its path refuses every
+/// new alert, as a full disk would.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::path::Path;
+
+    pub(crate) struct AlertsRefused(rusqlite::Connection);
+
+    impl AlertsRefused {
+        /// For the history at `path`, encrypted with 32 bytes of `key`.
+        pub(crate) fn new(path: &Path, key: u8) -> Self {
+            let connection = rusqlite::Connection::open(path).unwrap();
+            let hex = format!("{key:02X}").repeat(32);
+            connection
+                .pragma_update(None, "key", format!("x'{hex}'"))
+                .unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TRIGGER refuse_alerts BEFORE INSERT ON alert
+                     BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+                )
+                .unwrap();
+            AlertsRefused(connection)
+        }
+    }
+
+    impl Drop for AlertsRefused {
+        fn drop(&mut self) {
+            let _ = self.0.execute_batch("DROP TRIGGER refuse_alerts");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1343,6 +1406,32 @@ mod tests {
         assert!(!history.set_feedback(9_999, None).unwrap());
     }
 
+    /// Audit A-35: a change of the network settings whose alert could not be kept is not
+    /// taken as seen, so the next check reports it.
+    #[test]
+    fn a_network_change_whose_alert_was_not_kept_is_reported_at_the_next_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db");
+        let history = HistoryStore::open(path.to_string_lossy().into_owned(), vec![1; 32]).unwrap();
+        let home = NetworkState {
+            network: Some("3:100".into()),
+            dns_servers: vec!["192.168.1.1".into()],
+            private_dns: None,
+            network_proxy: None,
+            proxy: None,
+        };
+        history.network_seen(home.clone()).unwrap();
+        let proxied = NetworkState {
+            proxy: Some("192.0.2.10:3128".into()),
+            ..home
+        };
+        let refused = testing::AlertsRefused::new(&path, 1);
+        assert!(history.network_seen(proxied.clone()).is_err());
+        drop(refused);
+        history.network_seen(proxied).unwrap();
+        assert_eq!(history.alerts(true, 10).unwrap().len(), 1);
+    }
+
     /// CM-07: each change of the network settings raises one Warning alert offering
     /// the network settings, also when it happened while Sentinel was not running; the
     /// first state seen raises nothing. A change names no app, so it cannot be allowed
@@ -1673,5 +1762,57 @@ mod tests {
         let history = HistoryStore::open(path, vec![1; 32]).unwrap();
         assert_eq!(history.journal(10).unwrap().len(), 4);
         assert_eq!(history.isolated_since_ms(), Some(began));
+    }
+
+    /// Audit A-34: firewall changes made at once, rules kept, removed and undone and the
+    /// mode switched, leave in force what the history holds.
+    #[test]
+    fn changes_made_at_once_leave_in_force_what_the_history_holds() {
+        use crate::firewall::{FirewallRule, RuleAction, RuleDestination};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        std::thread::scope(|threads| {
+            for thread in 0..4 {
+                let history = &history;
+                threads.spawn(move || {
+                    for i in 0..40 {
+                        let rule = FirewallRule {
+                            app: Some(format!("org.example.app{thread}")),
+                            destination: Some(RuleDestination::Domain {
+                                name: format!("d{i}.example"),
+                            }),
+                            action: RuleAction::Block,
+                        };
+                        let key = history.set_firewall_rule(rule, None).unwrap();
+                        match i % 4 {
+                            0 => {
+                                history.remove_firewall_rule(key).unwrap();
+                            }
+                            1 => {
+                                let last = history.journal(1).unwrap()[0].id;
+                                history.undo_action(last).unwrap();
+                            }
+                            2 => history
+                                .set_firewall_mode(if thread % 2 == 0 {
+                                    FirewallMode::BlockUnknown
+                                } else {
+                                    FirewallMode::Monitor
+                                })
+                                .unwrap(),
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        });
+        let stored = history.store.firewall_rules().unwrap();
+        let stored: Vec<_> = stored.into_iter().map(|stored| stored.rule).collect();
+        assert_eq!(history.rule_set().rules(), stored.as_slice());
+        assert_eq!(
+            history.mode_in_force(),
+            history.store.firewall_mode().unwrap()
+        );
     }
 }

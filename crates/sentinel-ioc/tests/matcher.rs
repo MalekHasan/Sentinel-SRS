@@ -109,6 +109,10 @@ fn an_address_matches_exactly() {
         matcher.address(ip("::ffff:198.51.100.7")).is_some(),
         "an IPv4 address written as IPv6"
     );
+    assert!(
+        matcher.address(ip("64:ff9b::198.51.100.7")).is_some(),
+        "an IPv4 address through NAT64 (audit A-23)"
+    );
     assert!(matcher.address(ip("2001:db8::7")).is_some());
     assert!(matcher.address(ip("2001:0db8:0:0::7")).is_some());
     for other in [

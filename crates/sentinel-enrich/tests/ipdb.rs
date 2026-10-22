@@ -76,6 +76,8 @@ fn looks_up_network_owner_and_country() {
     assert_eq!(google.country, Some("US"));
     // An IPv4 address written as IPv6 is looked up as IPv4.
     assert_eq!(db.lookup(ip("::ffff:8.8.8.8")), db.lookup(ip("8.8.8.8")));
+    // And through NAT64 (audit A-23).
+    assert_eq!(db.lookup(ip("64:ff9b::8.8.8.8")), db.lookup(ip("8.8.8.8")));
     // Unknown: "ZZ" in DB-IP, and addresses no source lists.
     let empty = IpInfo {
         asn: None,

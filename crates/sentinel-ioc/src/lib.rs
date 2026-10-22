@@ -18,7 +18,7 @@
 //! A [`Matcher`] holds the domain and address indicators of the list in force, to match
 //! the phone's traffic against.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use serde::Deserialize;
 
@@ -358,11 +358,22 @@ fn is_public_address(text: &str) -> bool {
                 || v6.is_loopback()
                 || v6.is_multicast()
                 || v6.to_ipv4_mapped().is_some()
+                // An IPv4 address through NAT64 is matched as IPv4 (audit A-23).
+                || nat64(v6).is_some()
                 // fc00::/7 unique local, fe80::/10 link-local.
                 || first & 0xfe00 == 0xfc00
                 || first & 0xffc0 == 0xfe80)
         }
     }
+}
+
+/// The IPv4 address an address of NAT64's well-known prefix stands for: `64:ff9b::/96`
+/// (RFC 6052), as on a network that reaches IPv4 only through NAT64 (audit A-23).
+pub(crate) fn nat64(v6: Ipv6Addr) -> Option<Ipv4Addr> {
+    let [a, b, c, d] = v6.octets()[12..] else {
+        return None;
+    };
+    (v6.segments()[..6] == [0x64, 0xff9b, 0, 0, 0, 0]).then(|| Ipv4Addr::new(a, b, c, d))
 }
 
 /// An Android package name: at least two dot-separated parts, each starting with a

@@ -180,6 +180,7 @@ fn values_must_be_what_their_kind_says() {
         ("address", "fe80::1"),
         ("address", "fd00::1"),
         ("address", "::ffff:203.0.113.7"),
+        ("address", "64:ff9b::cb00:7107"),
         ("address", "ff02::1"),
         ("package", "spyapp"),
         ("package", "com.1example.app"),

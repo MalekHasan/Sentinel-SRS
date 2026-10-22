@@ -103,14 +103,17 @@ impl Matcher {
         None
     }
 
-    /// The address indicator `address` is. An IPv4 address written as IPv6
-    /// (`::ffff:192.0.2.1`) is the IPv4 address.
+    /// The address indicator `address` is. An IPv4 address written as IPv6 is the IPv4
+    /// address: mapped (`::ffff:192.0.2.1`) or through NAT64 (`64:ff9b::192.0.2.1`).
     pub fn address(&self, address: IpAddr) -> Option<&Hit> {
         if self.addresses.is_empty() {
             return None;
         }
         let address = match address {
-            IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(address, IpAddr::V4),
+            IpAddr::V6(v6) => v6
+                .to_ipv4_mapped()
+                .or_else(|| crate::nat64(v6))
+                .map_or(address, IpAddr::V4),
             v4 => v4,
         };
         self.addresses.get(&address)

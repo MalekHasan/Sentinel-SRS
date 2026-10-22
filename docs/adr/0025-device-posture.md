@@ -25,7 +25,7 @@ The older `adb tcpip`, which makes ADB listen on a fixed port, leaves no setting
 1. **Two rules.**
    - `remote-access-exposed`: wireless debugging is on. Warning, like any remote-access service exposed (SRS §8.3). The rule id is general, for the services of other platforms (ID-03); its evidence names the service.
    - `new-root-certificate`: a certificate authority the user added. High, like a new root certificate (SRS §8.3). Its evidence is the certificate's SHA-256 and who it was issued to.
-2. **The device settings last seen are kept** (table `posture_state`, schema 16, JSON like the network settings). A check compares the settings now with those.
+2. **The device settings last seen are kept** (table `posture_state`, schema 16, JSON like the network settings). A check compares the settings now with those. The settings now are kept only once their alerts are, so a change whose alert could not be kept is reported at the next check (audit A-35).
    - Wireless debugging turned on, and each certificate not trusted before, raises an alert. Turned off and on again, or removed and added again, it raises another.
    - Unlike network settings, **the first state seen is reported too**: wireless debugging already on, or a certificate already trusted, is a risk however long it has been there.
 3. **When to check.** While monitoring runs: at once when the setting changes or Android announces a change to the trusted certificates (`DeviceWatch`). Also when monitoring starts and when Sentinel opens. A change made while monitoring was off is found at the next of these.

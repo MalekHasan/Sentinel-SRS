@@ -368,7 +368,8 @@
   - تم الإصلاح: `keys/**` صار ضمن `rustInputs()`
 - [x] **A-22:** تنزيل بطيء جداً (بايت كل 29 ثانية) يمسك قفل `updating` لساعات ويخفي زر الاستيراد من مجلد. المكان: `IndicatorFeed.kt:153` و `:236-237`، `IndicatorList.kt:78-85`. الإصلاح: مهلة كلية للتنزيل.
   - تم الإصلاح: التنزيل يتوقف إذا تأخّر: دقيقتان للـ manifest، ثم دقيقتان زائد ثانية لكل 8 KiB من أحجام الملفات المذكورة فيه. الأحجام من الـ manifest الموقّع، فالشبكة لا تستطيع إطالة الوقت. بعدها `updating` يتحرّر وزر الاستيراد من مجلد يظهر ([ADR-0019](adr/0019-indicator-feed-on-android.md) القرار 6)
-- [ ] **A-23:** عناوين NAT64 (`64:ff9b::/96`) لا تُحوَّل إلى IPv4. قواعد IPv4 ومؤشراته ومعلومات ASN والدولة لا تطابقها. المكان: `crates/sentinel-ioc/src/matcher.rs:108-117`، `crates/sentinel-detect/src/firewall.rs:401-406`، `crates/sentinel-enrich/src/format.rs:155-160`.
+- [x] **A-23:** عناوين NAT64 (`64:ff9b::/96`) لا تُحوَّل إلى IPv4. قواعد IPv4 ومؤشراته ومعلومات ASN والدولة لا تطابقها. المكان: `crates/sentinel-ioc/src/matcher.rs:108-117`، `crates/sentinel-detect/src/firewall.rs:401-406`، `crates/sentinel-enrich/src/format.rs:155-160`.
+  - تم الإصلاح: عناوين `64:ff9b::/96` (RFC 6052) تُعامل كعناوين IPv4 في الجدار الناري والمؤشرات و ASN والدولة. نطاق داخل البادئة يُرفض كقاعدة، ومؤشر مكتوب بها يُرفض، كما مع `::ffff:` ([ADR-0015](adr/0015-firewall-rules.md)، [ADR-0020](adr/0020-indicator-matching.md)، [ADR-0010](adr/0010-offline-ip-enrichment.md))
 - [x] **A-24:** "No known traces found" قد تظهر لقائمة فيها 0 مؤشرات. المكان: `IndicatorList.kt:112-118`، `crates/sentinel-ffi/src/hunt.rs:58-89`. الإصلاح: لا نتيجة إذا كان عدد المؤشرات 0.
   - تم الإصلاح: قائمة بلا مؤشرات لا تعطي نتيجة على الشاشة؛ "Known traces found" تبقى إذا وُجد تنبيه سابق ([ADR-0022](adr/0022-result-wording-and-advice.md))
 - [x] **A-25:** المطابقة الحية تُعلَّم "رُئيت" قبل أن يُحفظ التنبيه، فإذا فشل الحفظ لا تتكرر. المكان: `crates/sentinel-ffi/src/flows.rs:562` مقابل `:299`.
@@ -393,9 +394,12 @@
 
 **الكشف والجدار الناري**
 
-- [ ] **A-33:** مجموعة `DnsWatch.reported` تكبر بلا حدّ. المكان: `crates/sentinel-detect/src/dns_use.rs:101` و `:147` و `:172`.
-- [ ] **A-34:** `reload_rules` و `reload_firewall` يقرآن ويكتبان خارج القفل، فقد يختلف ما في الذاكرة عما في قاعدة البيانات. المكان: `crates/sentinel-ffi/src/history.rs:687-706`.
-- [ ] **A-35:** الحالة الجديدة تُحفظ قبل حفظ التنبيه، فإذا فشل الحفظ لا يُبلَّغ عن التغيير أبداً. المكان: `crates/sentinel-ffi/src/posture.rs:44-47`، `crates/sentinel-ffi/src/access.rs:44-50`، `crates/sentinel-ffi/src/history.rs:512-516`.
+- [x] **A-33:** مجموعة `DnsWatch.reported` تكبر بلا حدّ. المكان: `crates/sentinel-detect/src/dns_use.rs:101` و `:147` و `:172`.
+  - تم الإصلاح: `reported` صار بحدّ أقصى 1024 مثل باقي الخرائط، يُنسى الأقدم أولاً ([ADR-0032](adr/0032-unusual-dns-use.md))
+- [x] **A-34:** `reload_rules` و `reload_firewall` يقرآن ويكتبان خارج القفل، فقد يختلف ما في الذاكرة عما في قاعدة البيانات. المكان: `crates/sentinel-ffi/src/history.rs:687-706`.
+  - تم الإصلاح: كل تغيير على الجدار الناري (قاعدة، الوضع، العزل، التراجع) يتم واحداً واحداً تحت قفل واحد: في التاريخ ثم في الذاكرة. ملاحظة: نافذة السباق صغيرة جداً، والاختبار المتزامن لم يُظهرها حتى بدون الإصلاح؛ هو يثبت أن التغييرات المتزامنة متسقة وبلا deadlock ([ADR-0015](adr/0015-firewall-rules.md))
+- [x] **A-35:** الحالة الجديدة تُحفظ قبل حفظ التنبيه، فإذا فشل الحفظ لا يُبلَّغ عن التغيير أبداً. المكان: `crates/sentinel-ffi/src/posture.rs:44-47`، `crates/sentinel-ffi/src/access.rs:44-50`، `crates/sentinel-ffi/src/history.rs:512-516`.
+  - تم الإصلاح: الحالة الجديدة (إعدادات الشبكة، إعدادات الجهاز، الصلاحيات الخاصة) تُحفظ فقط بعد حفظ تنبيهاتها، تحت قفل. إذا فشل تنبيه، الفحص التالي يبلّغ عن التغيير ثانية ([ADR-0014](adr/0014-network-settings.md)، [ADR-0024](adr/0024-special-access.md)، [ADR-0025](adr/0025-device-posture.md))
 - [ ] **A-36:** خريطة UID إلى اسم الحزمة لا تُفرَّغ أثناء التشغيل. إذا أعاد أندرويد استخدام UID، يرث التطبيق الجديد صلاحيات القديم، ومنها السماح أثناء العزل. المكان: `AppNames.kt:18-33`.
 - [ ] **A-37:** تطبيق يُسمّى `uid N` لا يمكن حجبه، لأن `FirewallRule::new` يرفض المسافة. المكان: `crates/sentinel-detect/src/firewall.rs:230-236`.
 - [ ] **A-38:** السماح في ID-12 للتطبيق كله لا لنوع الصلاحية: السماح بوصول الإشعارات يُسكت accessibility لاحقاً. المكان: `crates/sentinel-ffi/src/access.rs:48`.

@@ -2,6 +2,8 @@
 //! Device settings that open the phone to someone else (ADR-0025): wireless debugging
 //! (ID-03) and certificate authorities the user added (ID-10).
 
+use std::sync::PoisonError;
+
 use crate::history::{HistoryError, HistoryStore, now_ms};
 
 /// The device settings Sentinel watches, as Android reports them.
@@ -41,10 +43,18 @@ impl HistoryStore {
                 .collect(),
         };
         let now = now_ms();
-        let before = self.store.swap_posture(&posture, now)?;
+        // Kept once its alerts are: if one cannot be, the next check finds the change
+        // again (audit A-35). An alert raised before it may then be raised twice, which
+        // is better than none.
+        let _checking = self
+            .checking_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let before = self.store.posture()?;
         for alert in sentinel_detect::posture_changes(now, before.as_ref(), &posture) {
             self.raise(&alert)?;
         }
+        self.store.swap_posture(&posture, now)?;
         Ok(())
     }
 }
@@ -130,5 +140,22 @@ mod tests {
             .unwrap();
         history.posture_seen(posture(true, &[work, proxy])).unwrap();
         assert_eq!(history.alerts(false, 100).unwrap().len(), 4);
+    }
+
+    /// Audit A-35: a change whose alert could not be kept is not taken as seen, so the
+    /// next check reports it.
+    #[test]
+    fn a_change_whose_alert_was_not_kept_is_reported_at_the_next_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = history(dir.path());
+        history.posture_seen(posture(false, &[])).unwrap();
+        let refused =
+            crate::history::testing::AlertsRefused::new(&dir.path().join("history.db"), 7);
+        assert!(history.posture_seen(posture(true, &[])).is_err());
+        drop(refused);
+        history.posture_seen(posture(true, &[])).unwrap();
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 1, "{alerts:?}");
+        assert_eq!(alerts[0].rule, AlertRule::RemoteAccessExposed);
     }
 }

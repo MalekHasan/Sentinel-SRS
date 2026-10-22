@@ -21,7 +21,7 @@ The engine sees every lookup sent to the tunnel's resolver with its app (ADR-001
      - is at least 24 characters, has at least 3 digits, and carries at least 3.5 bits per character (Shannon entropy, as encoded data does and words do not).
    - **The domain** is the name's last two labels, or three under a short second level of a two-letter country (`example.co.uk`). No public suffix list is used.
    - **TXT lookups.** At least 20 by one app.
-   - Each app and domain, and each app's TXT lookups, is reported once per monitoring run.
+   - Each app and domain, and each app's TXT lookups, is reported once per monitoring run. At most 1,024 reports are remembered, the oldest forgotten first (audit A-33); one forgotten may be reported again, which the history takes as the alert still open.
    - Memory is bounded: 1024 app and domain pairs at most; the one heard from least recently is forgotten first.
 3. **Encrypted DNS of the app's own** (`own-encrypted-dns`, **Info**), when an app connects to:
    - anything on port 853 (DNS over TLS or QUIC);
