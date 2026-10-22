@@ -408,6 +408,17 @@
     <string name="away_title">While the screen was off or locked, last 24 hours</string>
     <string name="away_app">%1$s: sent %2$s, received %3$s</string>
 
+    <string name="retention_title">Keep connections for</string>
+    <string name="retention_text">Older connections are kept only as daily totals per app and destination. Alerts and your actions are kept for a year, microphone and camera use and gaps in monitoring for 90 days. Open alerts stay until you deal with them, and alerts about known traces of spyware as long as the history.</string>
+    <plurals name="retention_days">
+        <item quantity="one">%d day</item>
+        <item quantity="other">%d days</item>
+    </plurals>
+    <string name="retention_shorter_title">Keep connections for %1$s?</string>
+    <string name="retention_shorter_text">Older connections become daily totals per app and destination now. Their details cannot be brought back.</string>
+    <string name="retention_shorter_change">Change</string>
+    <string name="retention_shorter_cancel">Cancel</string>
+
     <string name="wipe_action">Delete history</string>
     <string name="wipe_title">Delete the whole history?</string>
     <string name="wipe_text">This deletes every connection and gap recorded on this phone, and the key that protects them. It cannot be undone.</string>

@@ -141,6 +141,7 @@ class RtlTest {
                     onWipe = {},
                     firewallMode = FirewallMode.BLOCK_UNKNOWN,
                     isolatedSince = now,
+                    keepFlowsDays = 30u,
                 )
             }
         }
@@ -182,6 +183,14 @@ class RtlTest {
         compose.onNodeWithText(arabic.getString(R.string.firewall_mode_block_unknown), useUnmergedTree = true)
             .performScrollTo()
             .assertAtTheRight()
+
+        // How long the history keeps connections, and the rest (SRS §13.2).
+        compose.onNodeWithText(arabic.getString(R.string.retention_title)).performScrollTo().assertAtTheRight()
+        compose.onNodeWithText(
+            arabic.resources.getQuantityString(R.plurals.retention_days, 30, 30),
+            useUnmergedTree = true,
+        ).performScrollTo().assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.retention_text)).performScrollTo())
     }
 
     @Test
@@ -649,6 +658,17 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.stop_text)))
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.action_stop)))
         assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.stop_keep)))
+    }
+
+    /** SRS §13.2: the question a shorter time to keep connections asks, right to left
+     *  although it carries a number. */
+    @Test
+    fun shorterKeepQuestion() {
+        compose.setContent { InArabic { ShorterKeepQuestion(7u, onChange = {}, onCancel = {}) } }
+        val days = arabic.resources.getQuantityString(R.plurals.retention_days, 7, 7)
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.retention_shorter_title, days)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.retention_shorter_text)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.retention_shorter_change)))
     }
 
     /** SP-03: the steps that keep monitoring running, and a maker's own, right to left

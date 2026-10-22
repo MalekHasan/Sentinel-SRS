@@ -181,9 +181,9 @@ fn old_flows_are_rolled_up_into_daily_totals() {
     }
     store.record_flows(1, &events).unwrap();
 
-    assert_eq!(store.apply_retention(NOW, 30).unwrap(), 3);
+    assert_eq!(store.apply_retention(NOW, 30).unwrap().flows, 3);
     assert_eq!(
-        store.apply_retention(NOW, 30).unwrap(),
+        store.apply_retention(NOW, 30).unwrap().flows,
         0,
         "nothing left to roll up"
     );
@@ -234,6 +234,208 @@ fn old_flows_are_rolled_up_into_daily_totals() {
         .find(|t| t.destination == "x.example")
         .unwrap();
     assert_eq!((x.flows, x.bytes_up), (3, 115));
+}
+
+/// SRS §13.2: sensor uses and gaps go after 90 days, alerts and journal entries after a
+/// year; what is still open, alerts the user has not dealt with, and alerts about known
+/// indicators stay. A journal entry kept keeps its record when its alert goes.
+#[test]
+fn each_kind_of_record_is_kept_for_its_own_time() {
+    use sentinel_detect::{
+        Attribution, Destination, FirewallRule, IndicatorMatch, RuleAction, Sensor, Sighting,
+        Threat, known_indicator, monitoring_interrupted,
+    };
+    use sentinel_store::{KEEP_ALERTS_DAYS, KEEP_EVENTS_DAYS, Retained};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let events = NOW - i64::from(KEEP_EVENTS_DAYS) * DAY;
+    let alerts = NOW - i64::from(KEEP_ALERTS_DAYS) * DAY;
+
+    // Sensor uses: one ended past the period, one ended within it, one still open.
+    let gone = store
+        .sensor_started(
+            Sensor::Microphone,
+            events - 10,
+            None,
+            Attribution::Unknown,
+            true,
+        )
+        .unwrap();
+    store.sensor_ended(gone, events - 1).unwrap();
+    let kept = store
+        .sensor_started(
+            Sensor::Camera,
+            events - 10,
+            None,
+            Attribution::Unknown,
+            true,
+        )
+        .unwrap();
+    store.sensor_ended(kept, events).unwrap();
+    store
+        .sensor_started(
+            Sensor::Microphone,
+            events - 10,
+            None,
+            Attribution::Unknown,
+            true,
+        )
+        .unwrap();
+
+    // Gaps: one ended past the period, one ended within it, one still open.
+    store.open_gap(Some(events - 10), "old").unwrap();
+    store.close_gap(events - 1).unwrap();
+    store.open_gap(Some(events - 10), "recent").unwrap();
+    store.close_gap(events).unwrap();
+    store.open_gap(Some(events - 10), "open").unwrap();
+
+    // Alerts: an old one dismissed, an old one still open, a recent one dismissed.
+    let old_dismissed = store
+        .record_alert(&monitoring_interrupted(alerts - 1, None, "old"))
+        .unwrap();
+    store
+        .set_alert_state(old_dismissed, AlertState::Dismissed)
+        .unwrap();
+    let old_open = store
+        .record_alert(&monitoring_interrupted(alerts - 1, None, "old, open"))
+        .unwrap();
+    let recent = store
+        .record_alert(&monitoring_interrupted(alerts, None, "recent"))
+        .unwrap();
+    store
+        .set_alert_state(recent, AlertState::Dismissed)
+        .unwrap();
+    // An old one about a known indicator, dismissed: what the list checks reported.
+    let indicator = store
+        .record_alert(&known_indicator(
+            alerts - 1,
+            Some("org.example.chat"),
+            IndicatorMatch {
+                indicator: "bad.example".to_owned(),
+                seen: "bad.example".to_owned(),
+                sighting: Sighting::DnsQuery,
+                family: "Hermit".to_owned(),
+                threat: Threat::Spyware,
+                source: "Example lab".to_owned(),
+                date: "2022-06-23".to_owned(),
+                report: "https://example.org/report".to_owned(),
+            },
+        ))
+        .unwrap();
+    store
+        .set_alert_state(indicator, AlertState::Dismissed)
+        .unwrap();
+
+    // Journal: an old entry, and a recent one taken from the old dismissed alert.
+    let block = |host: &str| {
+        FirewallRule::new(
+            None,
+            Some(Destination::domain(host).unwrap()),
+            RuleAction::Block,
+        )
+        .unwrap()
+    };
+    store
+        .set_firewall_rule(&block("old.example"), alerts - 1, None)
+        .unwrap();
+    store
+        .set_firewall_rule(&block("recent.example"), alerts, Some(old_dismissed))
+        .unwrap();
+
+    let removed = store.apply_retention(NOW, 30).unwrap();
+    assert_eq!(
+        removed,
+        Retained {
+            flows: 0,
+            sensor_uses: 1,
+            gaps: 1,
+            alerts: 1,
+            journal_entries: 1,
+        }
+    );
+    assert_eq!(
+        store.apply_retention(NOW, 30).unwrap(),
+        Retained::default(),
+        "running it again removes nothing"
+    );
+
+    let uses = store.recent_sensor_uses(10).unwrap();
+    assert_eq!(uses.len(), 2);
+    assert!(uses.iter().all(|u| u.id != gone), "ended past the period");
+    assert!(uses.iter().any(|u| u.ended.is_none()), "open: kept");
+
+    let gaps = store.recent_gaps(10).unwrap();
+    assert_eq!(
+        gaps.iter().map(|g| g.reason.as_str()).collect::<Vec<_>>(),
+        ["open", "recent"]
+    );
+
+    let mut ids = store
+        .alerts(false, 10)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.id)
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        [old_open, recent, indicator],
+        "the open one and the known indicator stay, however old"
+    );
+
+    let journal = store.journal(10).unwrap();
+    assert_eq!(journal.len(), 1);
+    assert_eq!(journal[0].at, alerts);
+    assert_eq!(journal[0].alert, None, "its alert is gone, the entry stays");
+    assert_eq!(
+        store.firewall_rules().unwrap().len(),
+        2,
+        "rules stay in force when their journal entries go"
+    );
+}
+
+/// SRS §13.2: flows are kept 30 days unless the user chose between 1 and 365; the choice
+/// survives reopening, and retention keeps to the range whatever it is given.
+#[test]
+fn how_long_flows_are_kept_is_a_setting_within_its_range() {
+    use sentinel_store::{KEEP_FLOWS_DAYS, KEEP_FLOWS_DAYS_MAX, KEEP_FLOWS_DAYS_MIN};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.flow_keep_days().unwrap(), KEEP_FLOWS_DAYS);
+    assert!(!store.set_flow_keep_days(0).unwrap());
+    assert!(!store.set_flow_keep_days(KEEP_FLOWS_DAYS_MAX + 1).unwrap());
+    assert_eq!(
+        store.flow_keep_days().unwrap(),
+        KEEP_FLOWS_DAYS,
+        "unchanged"
+    );
+    assert!(store.set_flow_keep_days(KEEP_FLOWS_DAYS_MIN).unwrap());
+    assert!(store.set_flow_keep_days(7).unwrap());
+    drop(store);
+    let store = Store::open(&path, &KEY).unwrap();
+    assert_eq!(store.flow_keep_days().unwrap(), 7);
+
+    // A flow from two days ago, and one from 400 days ago.
+    let mut events = Vec::new();
+    for (i, at) in [NOW - 2 * DAY, NOW - 400 * DAY].into_iter().enumerate() {
+        let mut row = flow("org.example.a", "x.example", at);
+        row.ended = Some(at + 1_000);
+        events.push(event(i as u64, row));
+    }
+    store.record_flows(1, &events).unwrap();
+    assert_eq!(
+        store.apply_retention(NOW, 1_000).unwrap().flows,
+        1,
+        "more than the longest keeps the longest"
+    );
+    assert_eq!(
+        store.apply_retention(NOW, 0).unwrap().flows,
+        1,
+        "less than the shortest keeps the shortest"
+    );
 }
 
 #[test]
@@ -1044,7 +1246,7 @@ fn first_connections_and_first_names_are_reported_once() {
     );
 
     // Rolled up and reopened, the history still knows both apps and their names.
-    assert_eq!(store.apply_retention(NOW + 40 * DAY, 30).unwrap(), 6);
+    assert_eq!(store.apply_retention(NOW + 40 * DAY, 30).unwrap().flows, 6);
     drop(store);
     let store = Store::open(&db(&dir), &KEY).unwrap();
     let back = flow("org.example.chat", "chat.example", NOW + 41 * DAY);
@@ -1127,7 +1329,7 @@ fn past_destinations_cover_kept_flows_and_rolled_up_days() {
         .map(|(i, row)| event(i as u64, row))
         .collect();
     store.record_flows(1, &events).unwrap();
-    assert_eq!(store.apply_retention(NOW, 30).unwrap(), 3);
+    assert_eq!(store.apply_retention(NOW, 30).unwrap().flows, 3);
 
     let mut past = store.past_destinations().unwrap();
     past.sort_by(|a, b| (a.first, &a.app).cmp(&(b.first, &b.app)));
@@ -2017,7 +2219,7 @@ fn uploads_are_totalled_for_the_last_day_and_the_fortnight_before() {
         both,
         "the quiet app sent too little to look at"
     );
-    assert!(store.apply_retention(NOW, 1).unwrap() > 0);
+    assert!(store.apply_retention(NOW, 1).unwrap().flows > 0);
     assert_eq!(totals(&store), both, "rolled-up days count");
 
     let surges: Vec<_> = both

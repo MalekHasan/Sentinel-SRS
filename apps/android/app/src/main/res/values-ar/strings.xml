@@ -449,6 +449,21 @@
     <string name="away_title">لما كانت الشاشة مطفية أو مقفولة، آخر 24 ساعة</string>
     <string name="away_app">%1$s: بعت %2$s واستلم %3$s</string>
 
+    <string name="retention_title">قديش نحتفظ بالاتصالات</string>
+    <string name="retention_text">الاتصالات الأقدم بيضل منها بس مجموع كل يوم لكل تطبيق ووجهة. التنبيهات وتغييراتك بنحتفظ فيها سنة، واستعمال المايك والكاميرا والفترات اللي ما كانت فيها المراقبة شغّالة 90 يوم. التنبيهات المفتوحة بتضل لحتى تتعامل معها، وتنبيهات الآثار المعروفة لبرامج التجسس بتضل طول ما السجل موجود.</string>
+    <plurals name="retention_days">
+        <item quantity="zero">%d يوم</item>
+        <item quantity="one">يوم واحد</item>
+        <item quantity="two">يومين</item>
+        <item quantity="few">%d أيام</item>
+        <item quantity="many">%d يوم</item>
+        <item quantity="other">%d يوم</item>
+    </plurals>
+    <string name="retention_shorter_title">نحتفظ بالاتصالات %1$s؟</string>
+    <string name="retention_shorter_text">الاتصالات الأقدم بتصير هلأ مجموع لكل يوم لكل تطبيق ووجهة، وتفاصيلها ما بترجع.</string>
+    <string name="retention_shorter_change">غيّر</string>
+    <string name="retention_shorter_cancel">إلغاء</string>
+
     <string name="wipe_action">امسح السجل</string>
     <string name="wipe_title">بدك تمسح السجل كله؟</string>
     <string name="wipe_text">هاد بيمسح كل الاتصالات والفجوات المسجّلة على هالموبايل، والمفتاح اللي بيحميهم. ما في رجعة.</string>

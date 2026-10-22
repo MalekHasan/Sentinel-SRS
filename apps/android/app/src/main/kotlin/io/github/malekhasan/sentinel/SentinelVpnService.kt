@@ -24,6 +24,7 @@ import io.github.malekhasan.sentinel.core.FlowObserver
 import io.github.malekhasan.sentinel.core.FlowOwner
 import io.github.malekhasan.sentinel.core.FlowProto
 import io.github.malekhasan.sentinel.core.FlowRecord
+import io.github.malekhasan.sentinel.core.HistoryStore
 import io.github.malekhasan.sentinel.core.SocketProtector
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -48,6 +49,7 @@ class SentinelVpnService : VpnService() {
     private var installWatch: InstallWatch? = null
     private var deviceWatch: DeviceWatch? = null
     private var sensorWatch: SensorWatch? = null
+    private var history: HistoryStore? = null
 
     // A new indicator list came into force, or the one in force was removed.
     private val feedChanged: () -> Unit = { main.post { engine?.let(::loadFeedData) } }
@@ -57,6 +59,22 @@ class SentinelVpnService : VpnService() {
         override fun run() {
             Thread({ IndicatorFeed.recheck(this@SentinelVpnService) }, "sentinel-feed-recheck").start()
             main.postDelayed(this, IndicatorFeed.RECHECK_EVERY_MILLIS)
+        }
+    }
+
+    // Applies the retention periods once a day while monitoring runs, and when it starts
+    // (SRS §13.2, ADR-0039). Handler time stands still while the phone sleeps, so it looks
+    // every hour whether a day has passed on the clock.
+    private var retainedAt = 0L
+    private val retain = object : Runnable {
+        override fun run() {
+            val now = System.currentTimeMillis()
+            // A clock set back also counts as a day passed.
+            if (now - retainedAt !in 0 until History.RETAIN_EVERY_MILLIS) {
+                history?.let(History::retain)
+                retainedAt = now
+            }
+            main.postDelayed(this, RETAIN_CHECK_EVERY_MILLIS)
         }
     }
 
@@ -150,6 +168,7 @@ class SentinelVpnService : VpnService() {
         }
         engine = started
         this.listener = listener
+        this.history = history
         // Changes to DNS, Private DNS and proxies raise alerts (CM-07).
         val watch = history?.let { NetworkWatch(this, it).also(NetworkWatch::start) }
         networkWatch = watch
@@ -185,16 +204,7 @@ class SentinelVpnService : VpnService() {
         IndicatorFeed.addListener(feedChanged)
         main.postDelayed(recheckFeed, IndicatorFeed.RECHECK_EVERY_MILLIS)
         FeedUpdateJob.schedule(this)
-        if (history != null) {
-            // Roll old flows into daily totals (SRS §13.2), off the main thread.
-            Thread({
-                try {
-                    history.applyRetention(System.currentTimeMillis(), History.KEEP_DAYS)
-                } catch (e: Exception) {
-                    Log.w(TAG, "retention failed", e)
-                }
-            }, "sentinel-retention").start()
-        }
+        main.post(retain)
     }
 
     /**
@@ -281,6 +291,8 @@ class SentinelVpnService : VpnService() {
         IndicatorFeed.removeListener(feedChanged)
         main.removeCallbacks(recheckFeed)
         main.removeCallbacks(checkHeartbeat)
+        main.removeCallbacks(retain)
+        history = null
         underlyingDns?.stop()
         underlyingDns = null
         networkWatch?.stop()
@@ -426,5 +438,8 @@ class SentinelVpnService : VpnService() {
         const val TUNNEL_V6 = "fd00:5e17:173::1"
         /** The resolver address apps see; DNS sent here is forwarded by the engine. */
         const val TUNNEL_DNS = "10.215.173.53"
+
+        /** How often, in handler time, the service looks whether retention is due. */
+        private const val RETAIN_CHECK_EVERY_MILLIS = 60 * 60 * 1000L
     }
 }

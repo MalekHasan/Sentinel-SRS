@@ -327,10 +327,11 @@ fun MonitorScreen(
     var usageAccess by remember { mutableStateOf(true) }
     var mode by remember { mutableStateOf<FirewallMode?>(null) }
     var isolated by remember { mutableStateOf<Long?>(null) }
+    var keepFlowsDays by remember { mutableStateOf<UInt?>(null) }
     val names = remember(context) { AppNames(context) }
     val scope = rememberCoroutineScope()
     var confirmWipe by remember { mutableStateOf(false) }
-    // Bumped after a wipe so the lists reload.
+    // Bumped after a wipe, or retention, so the lists reload.
     var generation by remember { mutableIntStateOf(0) }
 
     // Opening the feed checks the list in force (SP-04).
@@ -347,6 +348,7 @@ fun MonitorScreen(
             usageAccess = UsageAccess.granted(context)
             mode = withContext(Dispatchers.IO) { firewallMode(context) }
             isolated = withContext(Dispatchers.IO) { isolatedSince(context) }
+            keepFlowsDays = withContext(Dispatchers.IO) { flowKeepDays(context) }
         }
         snapshot = null
         reload()
@@ -429,6 +431,16 @@ fun MonitorScreen(
                 }
             }
         },
+        keepFlowsDays = keepFlowsDays,
+        onKeepFlowsDays = { chosen ->
+            scope.launch {
+                keepFlowsDays = withContext(Dispatchers.IO) {
+                    setFlowKeepDays(context, chosen)
+                    flowKeepDays(context)
+                }
+                generation++
+            }
+        },
     )
 }
 
@@ -464,6 +476,8 @@ fun MonitorContent(
     onCheckFeed: () -> Unit = {},
     onImportFeed: () -> Unit = {},
     traces: KnownTraces? = null,
+    keepFlowsDays: UInt? = null,
+    onKeepFlowsDays: (UInt) -> Unit = {},
 ) {
     val context = LocalContext.current
     val names = remember(context) { AppNames(context) }
@@ -605,6 +619,9 @@ fun MonitorContent(
             Text(stringResource(R.string.gaps_text), style = MaterialTheme.typography.bodySmall)
             gaps.forEach { gap -> Text(describeGap(gap), style = MaterialTheme.typography.bodySmall) }
         }
+
+        // How long the history keeps each kind of record (SRS §13.2).
+        KeepFlowsChoice(keepFlowsDays, onKeepFlowsDays)
 
         // The engine writes to the history while it runs, so it can only be deleted
         // while monitoring is off.

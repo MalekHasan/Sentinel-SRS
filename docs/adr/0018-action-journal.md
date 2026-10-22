@@ -59,7 +59,7 @@ The decision the firewall takes for each connection is not an action in this sen
 
 ## Consequences
 
-- **The journal grows with every change.** SRS §13.2 keeps alerts and the journal for a year; neither has a retention step yet (Sprint 9).
+- **The journal grows with every change**, for a year: SRS §13.2 keeps alerts and the journal that long ([ADR-0039](0039-retention.md)). An entry deleted can no longer be undone; the setting it made stays in force.
 - **A rule restored by undo counts as new**: its creation time is when it was restored, so it moves to the top of the list of rules.
 - **Undo restores the setting, not the connections.** A connection that a block ended stays ended; the app's next connection gets through.
 - **Only firewall actions exist on Android so far.** Later actions (RA-09, restoring DNS or proxy settings; RA-10, closing network ADB) will be journalled the same way, as new kinds of settings. Any that cannot be undone will have no `undo`.

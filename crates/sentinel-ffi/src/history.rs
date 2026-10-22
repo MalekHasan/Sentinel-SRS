@@ -646,10 +646,31 @@ impl HistoryStore {
         })
     }
 
-    /// Roll flows older than `keep_days` into daily totals (SRS §13.2). Returns how
-    /// many flows were rolled up.
-    pub fn apply_retention(&self, now_ms: i64, keep_days: u32) -> Result<u64, HistoryError> {
-        Ok(self.store.apply_retention(now_ms, keep_days)? as u64)
+    /// Apply the retention periods of SRS §13.2 at `now_ms`: flows older than
+    /// [`HistoryStore::flow_keep_days`] are rolled up into daily totals; sensor uses and
+    /// gaps go after 90 days, journal entries and alerts the user dealt with after a
+    /// year, except those about known indicators. Returns how many records it removed.
+    pub fn apply_retention(&self, now_ms: i64) -> Result<u64, HistoryError> {
+        let removed = self
+            .store
+            .apply_retention(now_ms, self.store.flow_keep_days()?)?;
+        Ok((removed.flows
+            + removed.sensor_uses
+            + removed.gaps
+            + removed.alerts
+            + removed.journal_entries) as u64)
+    }
+
+    /// How many days flows are kept before they are rolled up (SRS §13.2): 30 unless
+    /// the user chose otherwise.
+    pub fn flow_keep_days(&self) -> Result<u32, HistoryError> {
+        Ok(self.store.flow_keep_days()?)
+    }
+
+    /// Keep flows `days` days from now on, from 1 to 365. Returns false, and keeps the
+    /// setting as it was, for any other number. The next retention applies it.
+    pub fn set_flow_keep_days(&self, days: u32) -> Result<bool, HistoryError> {
+        Ok(self.store.set_flow_keep_days(days)?)
     }
 }
 
@@ -821,6 +842,64 @@ mod tests {
         ));
         wipe_history(path).unwrap();
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// SRS §13.2: retention keeps flows as long as the setting says, and the setting
+    /// keeps to 1 to 365 days.
+    #[test]
+    fn retention_follows_the_setting() {
+        use sentinel_store::{FlowEvent, FlowRow, Proto};
+
+        const DAY: i64 = 24 * 60 * 60 * 1000;
+        const NOW: i64 = 1_791_979_200_000;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.db").to_string_lossy().into_owned();
+        let history = HistoryStore::open(path, vec![1; 32]).unwrap();
+        assert_eq!(history.flow_keep_days().unwrap(), 30);
+        assert!(!history.set_flow_keep_days(0).unwrap());
+        assert!(!history.set_flow_keep_days(366).unwrap());
+        assert!(history.set_flow_keep_days(7).unwrap());
+        assert_eq!(history.flow_keep_days().unwrap(), 7);
+
+        let events = [NOW - 2 * DAY, NOW - 10 * DAY]
+            .into_iter()
+            .enumerate()
+            .map(|(i, started)| FlowEvent {
+                engine_id: i as u64,
+                flow: FlowRow {
+                    app: Some("org.example.app".to_owned()),
+                    proto: Proto::Tcp,
+                    local_ip: "10.215.173.1".to_owned(),
+                    local_port: 40_000,
+                    remote_ip: "203.0.113.9".to_owned(),
+                    remote_port: 443,
+                    hostname: None,
+                    hostname_src: None,
+                    started,
+                    ended: Some(started + 1_000),
+                    bytes_up: 1,
+                    bytes_down: 1,
+                    bytes_up_away: 0,
+                    bytes_down_away: 0,
+                    blocked: false,
+                },
+                destination: None,
+            })
+            .collect::<Vec<_>>();
+        history.store.record_flows(1, &events).unwrap();
+        history
+            .open_gap(Some(NOW - 100 * DAY), "old".into())
+            .unwrap();
+        history.close_gap(NOW - 95 * DAY).unwrap();
+
+        assert_eq!(
+            history.apply_retention(NOW).unwrap(),
+            2,
+            "the flow from ten days ago and the gap"
+        );
+        assert_eq!(history.apply_retention(NOW).unwrap(), 0);
+        assert_eq!(history.store.recent_flows(10).unwrap().len(), 1);
+        assert!(history.recent_gaps(10).unwrap().is_empty());
     }
 
     /// DL-02: an app that sends ten times its usual day raises one Warning; not again
