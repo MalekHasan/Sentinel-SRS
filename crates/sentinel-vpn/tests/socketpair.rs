@@ -32,6 +32,8 @@ struct Recorder {
     block_name: Option<&'static str>,
     /// Blocks every flow, new or open, while set.
     block_all: AtomicBool,
+    /// How long deciding a new flow takes, as a slow observer would.
+    slow_start: Duration,
     rechecks: AtomicUsize,
     started: Mutex<Vec<FlowInfo>>,
     ended: Mutex<Vec<(FlowInfo, FlowTotals)>>,
@@ -39,6 +41,7 @@ struct Recorder {
 
 impl Observer for Recorder {
     fn flow_started(&self, flow: &FlowInfo) -> Verdict {
+        std::thread::sleep(self.slow_start);
         self.started.lock().unwrap().push(flow.clone());
         if Some(flow.dst.port()) == self.block_port || self.block_all.load(Ordering::SeqCst) {
             Verdict::Block
@@ -225,24 +228,97 @@ async fn udp_round_trip_over_ipv6() {
     h.engine.abort();
 }
 
+/// A blocked UDP flow is not relayed. Audit A-12: it is remembered, so the app's next
+/// datagrams to the same place are dropped without a flow each, decided and recorded
+/// once rather than once each. After the idle time the next datagram is decided again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn blocked_flow_gets_no_reply() {
     let server = udp_echo(Ipv4Addr::LOCALHOST.into());
-    let h = start(Recorder {
-        block_port: Some(server.port()),
-        ..Recorder::default()
-    });
-    h.send(&udp_packet(APP_V4.into(), server, b"secret"));
+    let h = start_with(
+        Recorder {
+            block_port: Some(server.port()),
+            ..Recorder::default()
+        },
+        EngineConfig {
+            udp_idle_timeout: Duration::from_secs(1),
+            ..EngineConfig::default()
+        },
+    );
+    // A datagram every 50 ms, as a call or a game sends them: each after the first
+    // was decided.
+    for _ in 0..10 {
+        h.send(&udp_packet(APP_V4.into(), server, b"secret"));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     assert!(
         h.recv().await.is_none(),
         "a blocked flow must not be relayed"
     );
+    h.ended(1).await;
+    assert_eq!(h.recorder.started.lock().unwrap().len(), 1, "decided once");
+    assert_eq!(h.stats.flows_total(), 1);
     assert_eq!(h.stats.flows_blocked(), 1);
-    let ended = h.recorder.ended.lock().unwrap();
+    let ended = h.recorder.ended.lock().unwrap().clone();
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0].1.verdict, Verdict::Block);
     assert_eq!(ended[0].1.bytes_up, 0);
-    drop(ended);
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    h.send(&udp_packet(APP_V4.into(), server, b"later"));
+    h.ended(2).await;
+    assert_eq!(h.recorder.started.lock().unwrap().len(), 2, "decided again");
+    h.engine.abort();
+}
+
+/// Audit A-12: a blocked flow is decided again at the next datagram once the firewall
+/// changes, so that allowing the app takes effect at once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_blocked_flow_is_decided_again_when_the_firewall_changes() {
+    let (changes, watched) = tokio::sync::watch::channel(0u64);
+    let h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            firewall_changes: Some(watched),
+            ..EngineConfig::default()
+        },
+    );
+    let server = udp_echo(Ipv4Addr::LOCALHOST.into());
+    h.recorder.block_all.store(true, Ordering::SeqCst);
+    h.send(&udp_packet(APP_V4.into(), server, b"blocked"));
+    h.ended(1).await;
+    h.recorder.block_all.store(false, Ordering::SeqCst);
+    h.send(&udp_packet(APP_V4.into(), server, b"still blocked"));
+    assert!(
+        h.recv().await.is_none(),
+        "blocked until the firewall changes"
+    );
+    assert_eq!(h.recorder.started.lock().unwrap().len(), 1);
+
+    changes.send_modify(|version| *version += 1);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_udp_round_trip(&h, APP_V4.into(), server).await;
+    assert_eq!(h.recorder.started.lock().unwrap().len(), 2);
+    h.engine.abort();
+}
+
+/// Audit A-13: datagrams the flow cannot take yet, while it is still being decided, are
+/// dropped. A second flow to the same place would reach the server from a new source
+/// port, and be decided and recorded twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_full_flow_drops_datagrams_rather_than_opening_another() {
+    let server = udp_echo(Ipv4Addr::LOCALHOST.into());
+    let h = start(Recorder {
+        slow_start: Duration::from_millis(500),
+        ..Recorder::default()
+    });
+    for i in 0..600u32 {
+        h.send(&udp_packet(APP_V4.into(), server, &i.to_be_bytes()));
+    }
+    // The first flow is decided, and its queued datagrams echoed.
+    assert!(h.recv().await.is_some(), "relayed once decided");
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(h.recorder.started.lock().unwrap().len(), 1, "one flow");
+    assert_eq!(h.stats.flows_total(), 1);
     h.engine.abort();
 }
 
