@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -21,7 +22,8 @@ import org.junit.runner.RunWith
 /**
  * Audit A-17: Sentinel's windows, its dialogs' too, drop a touch made while another
  * app's window covers them, and on Android 14 are data-sensitive, so that accessibility
- * services that are not tools can neither read them nor press their buttons.
+ * services that are not tools can neither read them nor press their buttons. Audit A-42:
+ * they are kept out of screenshots and the recent apps.
  */
 @RunWith(AndroidJUnit4::class)
 class WindowGuardTest {
@@ -70,6 +72,9 @@ class WindowGuardTest {
 
     private fun assertGuarded(window: View) {
         assertTrue("touches under another window are dropped", window.filterTouchesWhenObscured)
+        // Audit A-42: kept out of screenshots, screen recordings and the recent apps.
+        val flags = (window.layoutParams as WindowManager.LayoutParams).flags
+        assertTrue("kept out of screenshots", (flags and WindowManager.LayoutParams.FLAG_SECURE) != 0)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             assertTrue("hidden from accessibility services that are not tools", window.isAccessibilityDataSensitive)
         }

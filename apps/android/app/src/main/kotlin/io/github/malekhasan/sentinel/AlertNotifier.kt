@@ -6,6 +6,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -40,6 +41,17 @@ object AlertNotifier {
 
     /** Extra of the intent a notification opens: the alert to show. */
     const val EXTRA_ALERT_ID = "io.github.malekhasan.sentinel.ALERT_ID"
+
+    /**
+     * The way into Sentinel that opens an alert: [MainActivity] under a name no other app
+     * can open (the manifest's `OpenAlert`). Otherwise any app could open Sentinel at an
+     * alert of its choosing, with its buttons under the user's thumb (audit A-41).
+     */
+    const val OPEN_ALERT = "io.github.malekhasan.sentinel.OpenAlert"
+
+    /** What tapping alert [id]'s notification opens. */
+    fun openAlert(context: Context, id: Long): Intent =
+        Intent().setComponent(ComponentName(context, OPEN_ALERT)).putExtra(EXTRA_ALERT_ID, id)
 
     /** Open alerts counted for "more like this". */
     private const val COUNTED = 100u
@@ -207,8 +219,7 @@ object AlertNotifier {
         val open = PendingIntent.getActivity(
             context,
             alert.id.toInt(),
-            Intent(context, MainActivity::class.java)
-                .putExtra(EXTRA_ALERT_ID, alert.id)
+            openAlert(context, alert.id)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

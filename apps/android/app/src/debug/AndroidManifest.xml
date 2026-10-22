@@ -7,5 +7,17 @@
         <activity
             android:name=".ThemeProbeActivity"
             android:exported="false" />
+
+        <!-- SystemScreenTest: a screen that claims the name of one of Android's, as spyware
+             could (audit A-40). Sentinel must never open it for Android's. -->
+        <activity-alias
+            android:name=".ClaimsTrustedCredentials"
+            android:exported="true"
+            android:targetActivity=".ThemeProbeActivity">
+            <intent-filter>
+                <action android:name="com.android.settings.TRUSTED_CREDENTIALS_USER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
     </application>
 </manifest>

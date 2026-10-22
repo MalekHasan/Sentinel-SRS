@@ -146,18 +146,19 @@ class MainActivity : ComponentActivity() {
                                             requestStart()
                                         }
                                         is AlertAction.OpenApp -> openApp = action.app
+                                        // Android's screens, in apps that came with the phone (audit A-40).
                                         is AlertAction.OpenNetworkSettings ->
-                                            startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+                                            startSystemScreen(Intent(Settings.ACTION_WIRELESS_SETTINGS))
                                         is AlertAction.AllowApp -> scope.launch { allow(action.app, alert) }
                                         is AlertAction.BlockApp -> scope.launch { block(action.app, alert) }
                                         is AlertAction.OpenAccessSettings ->
-                                            startActivity(AccessGrants.settings(action.access))
+                                            startSystemScreen(AccessGrants.settings(action.access))
                                         is AlertAction.OpenDeveloperSettings ->
-                                            startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+                                            startSystemScreen(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
                                         is AlertAction.OpenCertificateSettings ->
                                             Posture.openCertificates(this@MainActivity)
                                         is AlertAction.OpenPrivacySettings ->
-                                            startActivity(Intent(Settings.ACTION_PRIVACY_SETTINGS))
+                                            startSystemScreen(Intent(Settings.ACTION_PRIVACY_SETTINGS))
                                         is AlertAction.OpenKeepRunning -> {
                                             openAlert = null
                                             showKeepRunning = true
@@ -242,8 +243,13 @@ class MainActivity : ComponentActivity() {
         showRequestedAlert(intent)
     }
 
+    /**
+     * Shows the alert [intent] asks for, if it came the way only Sentinel's own
+     * notifications come (audit A-41).
+     */
     private fun showRequestedAlert(intent: Intent?) {
-        val id = intent?.getLongExtra(AlertNotifier.EXTRA_ALERT_ID, -1L) ?: -1L
+        val id = intent?.takeIf { it.component?.className == AlertNotifier.OPEN_ALERT }
+            ?.getLongExtra(AlertNotifier.EXTRA_ALERT_ID, -1L) ?: -1L
         if (id >= 0) requestedAlert.value = id
     }
 
@@ -421,7 +427,7 @@ fun MonitorScreen(
         alerts = alerts,
         sensorUses = sensorUses,
         usageAccess = usageAccess,
-        onUsageAccess = { context.startActivity(UsageAccess.settings()) },
+        onUsageAccess = { context.startSystemScreen(UsageAccess.settings()) },
         onStart = onStart,
         onStop = onStop,
         onShowLive = onShowLive,

@@ -44,14 +44,15 @@ object Posture {
     /**
      * Android's trusted certificates, on the user's tab, where one can be removed. Not
      * every phone opens that screen by name, so security settings are the fallback.
+     * Either opens only in an app that came with the phone (audit A-40).
      */
     fun openCertificates(context: Context) {
         try {
-            context.startActivity(Intent(TRUSTED_CREDENTIALS_USER))
+            context.startSystemScreen(Intent(TRUSTED_CREDENTIALS_USER))
         } catch (e: ActivityNotFoundException) {
-            context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
+            context.startSystemScreen(Intent(Settings.ACTION_SECURITY_SETTINGS))
         } catch (e: SecurityException) {
-            context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
+            context.startSystemScreen(Intent(Settings.ACTION_SECURITY_SETTINGS))
         }
     }
 
@@ -73,5 +74,5 @@ object Posture {
             .joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 
     /** The Settings app's screen of trusted certificates, on the user's tab. */
-    private const val TRUSTED_CREDENTIALS_USER = "com.android.settings.TRUSTED_CREDENTIALS_USER"
+    const val TRUSTED_CREDENTIALS_USER = "com.android.settings.TRUSTED_CREDENTIALS_USER"
 }

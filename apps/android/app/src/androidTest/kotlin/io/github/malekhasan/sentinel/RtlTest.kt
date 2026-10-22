@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.icu.text.ListFormatter
 import android.text.format.Formatter
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalConfiguration
@@ -291,6 +292,19 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(said))
         compose.onNodeWithText(arabic.getString(R.string.journal_from_alert)).assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.journal_undo)).assertAtTheRight()
+    }
+
+    /**
+     * Audit A-43: a name cannot leave its isolate. One that holds an isolate's end and an
+     * override loses both, and the Arabic sentence it starts stays right to left.
+     */
+    @Test
+    fun aNameCannotTurnTheSentenceAround() {
+        val hostile = "Bad\u2069\u202Eppa"
+        assertEquals("\u2068Badppa\u2069", isolate(hostile))
+        val said = arabic.getString(R.string.flow_open, isolate(hostile), isolate(HOST))
+        compose.setContent { InArabic { Text(said) } }
+        assertRightToLeft(compose.onNodeWithText(said))
     }
 
     @Test

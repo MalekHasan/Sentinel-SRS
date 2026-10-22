@@ -3,7 +3,12 @@ package io.github.malekhasan.sentinel
 
 import android.app.Notification
 import android.app.NotificationManager
+import android.content.Intent
 import android.media.RingtoneManager
+import android.os.SystemClock
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.AlertRule
@@ -17,6 +22,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -26,6 +32,9 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class AlertNotificationTest {
+    @get:Rule
+    val compose = createEmptyComposeRule()
+
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val manager = context.getSystemService(NotificationManager::class.java)
 
@@ -140,6 +149,33 @@ class AlertNotificationTest {
         // Android takes a notification back a moment after it is asked to.
         waitFor("the alert notification to go", 5_000) {
             manager.activeNotifications.none { it.id == AlertNotifier.NOTIFICATION_ID }
+        }
+    }
+
+    /**
+     * Audit A-41: an alert opens the way its notification opens it, which only Sentinel
+     * can use. Asked for the same alert the way any app can open Sentinel, it shows its
+     * main screen and no alert.
+     */
+    @Test
+    fun onlySentinelsOwnNotificationsOpenAnAlert() {
+        GapLog.open(context, System.currentTimeMillis(), "test reason")
+        val id = History.get(context).alerts(true, 10u).single().id
+        fun showing(text: String) = try {
+            compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+        } catch (e: IllegalStateException) {
+            false // No Compose screen yet.
+        }
+        val dismiss = context.getString(R.string.alert_dismiss)
+
+        val anyApp = Intent(context, MainActivity::class.java).putExtra(AlertNotifier.EXTRA_ALERT_ID, id)
+        ActivityScenario.launch<MainActivity>(anyApp).use {
+            compose.waitUntil(10_000) { showing(context.getString(R.string.app_name)) }
+            SystemClock.sleep(500)
+            assertFalse("an alert opened as another app asked", showing(dismiss))
+        }
+        ActivityScenario.launch<MainActivity>(AlertNotifier.openAlert(context, id)).use {
+            compose.waitUntil(10_000) { showing(dismiss) }
         }
     }
 

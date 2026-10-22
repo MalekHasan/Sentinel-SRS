@@ -104,10 +104,11 @@ object KeepRunning {
     /** Sentinel's own page in Android's settings, where makers put their battery settings. */
     fun openAppSettings(context: Context) = open(context, listOf(appSettings(context)))
 
+    /** The first of [screens] that opens, in an app that came with the phone (audit A-40). */
     private fun open(context: Context, screens: List<Intent>) {
         for (screen in screens + Intent(Settings.ACTION_SETTINGS)) {
             try {
-                context.startActivity(screen)
+                context.startSystemScreen(screen)
                 return
             } catch (e: ActivityNotFoundException) {
                 // Try the next one.

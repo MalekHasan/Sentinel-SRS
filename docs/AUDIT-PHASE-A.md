@@ -129,7 +129,7 @@
 | مدة الاحتفاظ §13.2 | ⚠️ | ⚠️ | 4 | الاتصالات فقط (A-07) |
 | المسح بضغطة | ✅ | ⚠️ | 6 | A-27، A-28، A-32 |
 | التصدير JSON/CSV §12.3 | ✅ | ✅ | 9 | الحماية من حقن الصيغ موجودة |
-| العربية و RTL (§12.4، NF-14) | ✅ | ✅ | 8 | محارف bidi لا تُنظَّف (A-43). مراجعة المتحدث الأصلي لم تتم |
+| العربية و RTL (§12.4، NF-14) | ✅ | ✅ | 8 | محارف bidi لا تُنظَّف (A-43، تم الإصلاح). مراجعة المتحدث الأصلي لم تتم |
 | TalkBack والخط الكبير والتباين (§12.4) | ✅ | ✅ | 9 | اختبار متذبذب (A-50) |
 
 ## 4. قائمة المشاكل للعمل عليها
@@ -335,7 +335,7 @@
 
 #### A-17: واجهة Sentinel غير محمية من الأتمتة والـ overlays (tapjacking)
 
-- [x] تم الإصلاح: نوافذ Sentinel وحواراته تُسقط اللمسة التي تحدث تحت نافذة تطبيق آخر، وتُخفي overlays التطبيقات الأخرى من Android 12، ومن Android 14 هي data-sensitive فلا تقرأها ولا تضغط أزرارها خدمات accessibility التي ليست أدوات (TalkBack وأمثاله تبقى تعمل) ([ADR-0037](adr/0037-accessibility.md)، THREAT-MODEL-A E7). يبقى A-41: `MainActivity` تقبل `EXTRA_ALERT_ID` من أي تطبيق
+- [x] تم الإصلاح: نوافذ Sentinel وحواراته تُسقط اللمسة التي تحدث تحت نافذة تطبيق آخر، وتُخفي overlays التطبيقات الأخرى من Android 12، ومن Android 14 هي data-sensitive فلا تقرأها ولا تضغط أزرارها خدمات accessibility التي ليست أدوات (TalkBack وأمثاله تبقى تعمل) ([ADR-0037](adr/0037-accessibility.md)، THREAT-MODEL-A E7). وتم إصلاح A-41 بعده: `MainActivity` كانت تقبل `EXTRA_ALERT_ID` من أي تطبيق
 - **المكان:** لا `filterTouchesWhenObscured` ولا `setHideOverlayWindows` ولا `accessibilityDataSensitive` في `apps/android/app/src/main`. الأزرار الحساسة في `Alerts.kt` و `MainActivity.kt`: Allow، Undo، Wipe، إنهاء العزل، تغيير الوضع.
 - **السيناريو:** تطبيق حصل على accessibility (وهذا ما ينبّه عليه ID-12) يفتح Sentinel ويضغط "Allow" على تنبيهه، أو ينهي العزل. يساعده أن `MainActivity` تقبل `EXTRA_ALERT_ID` من أي تطبيق (`MainActivity.kt:234`).
 - **اتجاه الإصلاح:**
@@ -411,10 +411,14 @@
 
 **تطبيق Android**
 
-- [ ] **A-40:** intents ضمنية لشاشات Settings غير عامة، يقدر تطبيق آخر يستولي عليها ويعرض شاشة مزيفة. المكان: `Posture.kt:50` و `:76`، `Hardening.kt:74` و `:101`. الإصلاح: `setPackage("com.android.settings")`.
-- [ ] **A-41:** `MainActivity` المُصدَّرة تقبل `EXTRA_ALERT_ID` من أي تطبيق. المكان: `MainActivity.kt:234`.
-- [ ] **A-42:** لا `FLAG_SECURE` على شاشات التاريخ والتنبيهات، فلقطات الشاشة وصورة Recents تكشف الأسماء.
-- [ ] **A-43:** `isolate()` لا ينظّف محارف U+2069 و U+202E الموجودة داخل أسماء التطبيقات، فيقدر الاسم يخرج من العزل ويعيد ترتيب الجملة. المكان: `Bidi.kt:10`.
+- [x] **A-40:** intents ضمنية لشاشات Settings غير عامة، يقدر تطبيق آخر يستولي عليها ويعرض شاشة مزيفة. المكان: `Posture.kt:50` و `:76`، `Hardening.kt:74` و `:101`. الإصلاح: `setPackage("com.android.settings")`.
+  - تم الإصلاح: كل شاشة من شاشات Settings يفتحها Sentinel (من التنبيهات، وقائمة التحصين، و"Keep monitoring running"، وusage access) يُبحث عنها بين التطبيقات التي أتت مع الهاتف فقط (`MATCH_SYSTEM_ONLY`) وتُفتح باسمها الدقيق، لا لاسم `com.android.settings` وحده، لأن بعض الشركات تضع الشاشات في تطبيق آخر. اختبار على المحاكي: نسخة debug تدّعي شاشة الشهادات كما قد يفعل برنامج تجسس، و Sentinel لا يفتحها ([ADR-0040](adr/0040-other-apps-and-sentinels-screens.md))
+- [x] **A-41:** `MainActivity` المُصدَّرة تقبل `EXTRA_ALERT_ID` من أي تطبيق. المكان: `MainActivity.kt:234`.
+  - تم الإصلاح: إشعار التنبيه يفتح الشاشة الرئيسية باسم ثانٍ غير مُصدَّر (`OpenAlert`، activity-alias)، والشاشة لا تعرض التنبيه المطلوب إلا إذا فُتحت بهذا الاسم. اختبار على المحاكي: الطلب نفسه بالطريق المفتوح لكل التطبيقات لا يعرض تنبيهاً ([ADR-0040](adr/0040-other-apps-and-sentinels-screens.md))
+- [x] **A-42:** لا `FLAG_SECURE` على شاشات التاريخ والتنبيهات، فلقطات الشاشة وصورة Recents تكشف الأسماء.
+  - تم الإصلاح: `FLAG_SECURE` على كل نوافذ Sentinel وحواراته، ضمن حماية النوافذ (A-17). الثمن: المستخدم لا يقدر يصوّر شاشة Sentinel أو يشاركها في مكالمة، والتصدير هو طريق المشاركة ([ADR-0040](adr/0040-other-apps-and-sentinels-screens.md))
+- [x] **A-43:** `isolate()` لا ينظّف محارف U+2069 و U+202E الموجودة داخل أسماء التطبيقات، فيقدر الاسم يخرج من العزل ويعيد ترتيب الجملة. المكان: `Bidi.kt:10`.
+  - تم الإصلاح: `isolate()` يحذف كل محارف التحكم بالاتجاه من الاسم قبل عزله (U+061C، U+200E، U+200F، U+202A إلى U+202E، U+2066 إلى U+2069). اختبار RTL: اسم فيه U+2069 و U+202E يفقدهما، والجملة العربية تبقى من اليمين لليسار
 - [ ] **A-44:** لا إعادة تشغيل بعد crash (SP-02، و F3 في THREAT-MODEL-A). `Engine.stop()` ينتظر thread المحرّك على main thread، فقد يسبب ANR. المكان: `SentinelVpnService.kt:102` (`START_NOT_STICKY`)، `crates/sentinel-ffi/src/engine.rs:200`. **إعادة التشغيل تمت في PR #14** ([ADR-0038](adr/0038-restart-after-a-crash.md)). يبقى `Engine.stop()` على main thread.
 - [ ] **A-45:** تنزيل القائمة إجباري بلا خيار إيقاف، و THREAT-MODEL I5 يقول "optional". ولا certificate pinning، بينما §14.3 يطلبه. الأثر على الخصوصية فقط، لأن السلامة يضمنها التوقيع.
 - [ ] **A-46:** لا `dataExtractionRules`. من Android 12، `allowBackup=false` لا تمنع النقل من جهاز لجهاز. الأثر محدود على `shared_prefs`.

@@ -49,7 +49,7 @@ On the Android 14 emulator (`AccessibilityTest`):
 
 Spyware often holds accessibility access, which ID-12 reports, and with it can read any screen and press its buttons: Allow on its own alert, End isolation, Wipe. From Android 14, Sentinel's windows and dialogs are data-sensitive (`setAccessibilityDataSensitive`): only accessibility services that declare themselves tools (`isAccessibilityTool`), as TalkBack and Switch Access do, can read and act on them. Other services see nothing of them. On every version, a touch made while another app's window covers Sentinel's is dropped (`filterTouchesWhenObscured`), and from Android 12 other apps' overlays are hidden while Sentinel's window shows (`setHideOverlayWindows`, with `HIDE_OVERLAY_WINDOWS`). `WindowGuardTest` checks both windows and dialogs, and that a tap marked as under another window does nothing.
 
-A helper that is not a tool, such as a screen reader that does not declare itself one, can no longer read Sentinel from Android 14. Before Android 14 the guard is touches and overlays only.
+A helper that is not a tool, such as a screen reader that does not declare itself one, can no longer read Sentinel from Android 14. Before Android 14 the guard is touches and overlays only. The guard also keeps Sentinel's screens out of screenshots and screen recordings ([ADR-0040](0040-other-apps-and-sentinels-screens.md), audit A-42).
 
 ## Consequences
 

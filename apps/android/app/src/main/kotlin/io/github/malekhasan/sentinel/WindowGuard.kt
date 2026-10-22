@@ -5,6 +5,7 @@ import android.app.Activity
 import android.os.Build
 import android.view.View
 import android.view.Window
+import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalView
@@ -21,6 +22,10 @@ import androidx.compose.ui.window.DialogWindowProvider
  * - From Android 14, Sentinel's screens are data-sensitive: accessibility services that
  *   are not accessibility tools, as spyware's are not, can neither read them nor press
  *   their buttons. TalkBack, Switch Access and other tools still can (SRS §12.4).
+ * - They are kept out of screenshots, screen recordings and the recent apps' pictures
+ *   (`FLAG_SECURE`, audit A-42): spyware that records the screen would see the apps and
+ *   places Sentinel names, and anyone looking at the recent apps would too. The export
+ *   is the way to share what Sentinel shows.
  */
 fun Activity.guardWindow() = window.guard()
 
@@ -32,6 +37,7 @@ fun GuardDialogWindow() {
 }
 
 private fun Window.guard() {
+    addFlags(WindowManager.LayoutParams.FLAG_SECURE)
     decorView.filterTouchesWhenObscured = true
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         setHideOverlayWindows(true)
