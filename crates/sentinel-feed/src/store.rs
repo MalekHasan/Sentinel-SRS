@@ -4,11 +4,15 @@
 //! `<root>/current` holds the version in force, and `<root>/bundle-<version>/` its
 //! manifest and files. An update is staged elsewhere, verified, moved file by file into a
 //! new bundle directory, checked again there, and only then made current by replacing
-//! `current` in one rename. A crash at any point leaves either the old bundle or the new
-//! one in force, never a mix of the two.
+//! `current` in one rename. Every file and directory reaches the disk before the rename
+//! that depends on it (audit A-20). A crash or a power cut at any point leaves either the
+//! old bundle or the new one in force, never a mix of the two.
+//!
+//! `<root>/floor` holds the highest version that was in force: what an update must be
+//! newer than, even after the bundle in force was removed (audit A-19).
 
 use std::fs;
-use std::io::Write as _;
+use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
 
 use crate::verify::read_envelope;
@@ -22,6 +26,7 @@ use crate::{
 pub const MAX_CLOCK_SKEW: u64 = 60 * 60;
 
 const CURRENT: &str = "current";
+const FLOOR: &str = "floor";
 const BUNDLE_PREFIX: &str = "bundle-";
 
 /// Where the installed bundles of one feed live.
@@ -64,9 +69,15 @@ impl BundleStore {
     }
 
     /// Check the bundle in force again, signature and every file (at start and every
-    /// hour, SRS SP-04), with `check` for what the files hold. A bundle that fails is
-    /// removed, so that nothing uses it, and the error says why. `None` when no bundle
-    /// is installed.
+    /// hour, SRS SP-04), with `check` for what the files hold. `None` when no bundle is
+    /// installed. A bundle that fails is not used, and the error says why:
+    /// - a file that cannot be read, but is there, is a disk that may come back: the
+    ///   bundle stays, and the next check tries again (audit A-19);
+    /// - a signature no trusted key made, as once an app update drops a leaked key: the
+    ///   bundle is removed, and a good bundle of any version may install (ADR-0019);
+    /// - anything else, such as a file changed or gone: the bundle is removed, and only
+    ///   its own version or a newer one may install. Were any version allowed, a bundle
+    ///   removed this way would open the door to older ones (audit A-19).
     pub fn installed(
         &self,
         trust: &TrustRoot,
@@ -85,12 +96,26 @@ impl BundleStore {
             });
         match checked {
             Ok(verified) => Ok(Some(Installed { dir, verified })),
+            Err(FeedError::Io { path, source }) if source.kind() != ErrorKind::NotFound => {
+                Err(FeedError::Io { path, source })
+            }
             Err(e) => {
+                if matches!(e, FeedError::Signatures { .. }) {
+                    let _ = fs::remove_file(self.root.join(FLOOR));
+                } else {
+                    let _ = self.raise_floor(version);
+                }
                 let _ = fs::remove_file(self.root.join(CURRENT));
                 let _ = fs::remove_dir_all(&dir);
                 Err(e)
             }
         }
+    }
+
+    /// The highest version that was in force, if it is still the floor.
+    fn floor(&self) -> Option<u64> {
+        let text = fs::read_to_string(self.root.join(FLOOR)).ok()?;
+        text.trim().parse().ok()
     }
 
     /// Check a downloaded manifest, before fetching any file it lists: signed by trusted
@@ -99,7 +124,7 @@ impl BundleStore {
     pub fn offer(&self, envelope: &[u8], trust: &TrustRoot, now: u64) -> Result<Offer, FeedError> {
         match verify_update(envelope, trust, &self.policy(now)) {
             Ok(verified) => Ok(Offer::Update(verified)),
-            Err(FeedError::Rollback { installed, found }) if found == installed => {
+            Err(FeedError::Rollback { found, .. }) if Some(found) == self.current_version() => {
                 Ok(Offer::UpToDate)
             }
             Err(e) => Err(e),
@@ -134,9 +159,20 @@ impl BundleStore {
             let verified = verify_update(&read_envelope(&incoming)?, trust, &self.policy(now))?;
             verified.check_dir(&incoming)?;
             check(&incoming, &verified)?;
+            // On the disk before anything points at it (audit A-20).
+            sync(&incoming.join(MANIFEST_FILE))?;
+            for entry in &verified.manifest().files {
+                sync(&incoming.join(&entry.path))?;
+                let mut parent = incoming.join(&entry.path);
+                while parent.pop() && parent != incoming {
+                    sync(&parent)?;
+                }
+            }
+            sync(&incoming)?;
             let dir = self.bundle_dir(version);
             let _ = fs::remove_dir_all(&dir);
             fs::rename(&incoming, &dir).map_err(|e| io(&dir, e))?;
+            sync(&self.root)?;
             self.set_current(version)?;
             Ok(Installed { dir, verified })
         })();
@@ -148,10 +184,17 @@ impl BundleStore {
         result
     }
 
+    /// What an update must be newer than: the bundle in force, and the floor. With
+    /// none in force, the version that was in force may come back, but no older one.
     fn policy(&self, now: u64) -> UpdatePolicy {
+        let floor = self.floor();
+        let installed_version = match self.current_version() {
+            Some(current) => Some(floor.map_or(current, |floor| floor.max(current))),
+            None => floor.and_then(|floor| floor.checked_sub(1)),
+        };
         UpdatePolicy {
             feed: self.feed.clone(),
-            installed_version: self.current_version(),
+            installed_version,
             now,
             max_clock_skew: MAX_CLOCK_SKEW,
         }
@@ -161,14 +204,32 @@ impl BundleStore {
         self.root.join(format!("{BUNDLE_PREFIX}{version}"))
     }
 
-    /// Replace `current` in one rename, after its contents reached the disk.
+    /// Make `version` current, then the floor if it is higher. A power cut between the
+    /// two leaves the floor below `current`, which [`Self::policy`] allows for, and
+    /// [`Self::installed`] raises the floor before it removes a bundle.
     fn set_current(&self, version: u64) -> Result<(), FeedError> {
-        let next = self.root.join(format!("{CURRENT}.next"));
+        self.replace(CURRENT, version)?;
+        self.raise_floor(version)
+    }
+
+    /// Make `version` the floor if it is higher.
+    fn raise_floor(&self, version: u64) -> Result<(), FeedError> {
+        if self.floor().is_none_or(|floor| floor < version) {
+            self.replace(FLOOR, version)?;
+        }
+        Ok(())
+    }
+
+    /// Replace the file `name` with `version` in one rename, after its contents reached
+    /// the disk, and the rename after it.
+    fn replace(&self, name: &str, version: u64) -> Result<(), FeedError> {
+        let next = self.root.join(format!("{name}.next"));
         let mut file = fs::File::create(&next).map_err(|e| io(&next, e))?;
         file.write_all(format!("{version}\n").as_bytes())
             .and_then(|()| file.sync_all())
             .map_err(|e| io(&next, e))?;
-        fs::rename(&next, self.root.join(CURRENT)).map_err(|e| io(&next, e))
+        fs::rename(&next, self.root.join(name)).map_err(|e| io(&next, e))?;
+        sync(&self.root)
     }
 
     /// Remove every bundle directory but the one in force, and leftovers of updates
@@ -204,6 +265,13 @@ fn move_file(from: &Path, to: &Path, path: &str) -> Result<(), FeedError> {
         fs::copy(&source, &target).map_err(|e| io(&source, e))?;
     }
     Ok(())
+}
+
+/// Waits until `path`, a file or a directory, has reached the disk.
+fn sync(path: &Path) -> Result<(), FeedError> {
+    fs::File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|e| io(path, e))
 }
 
 fn io(path: &Path, source: std::io::Error) -> FeedError {

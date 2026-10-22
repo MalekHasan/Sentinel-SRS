@@ -6,7 +6,7 @@
 //! it lists is fetched. A staged bundle comes into force only once its signature,
 //! version, expiry, every file's SHA-256, every indicator's provenance and the data files
 //! all pass where they will be used. The bundle in force is checked again at start and
-//! every hour, and removed if it fails.
+//! every hour, and not used if it fails; it is removed unless a file could not be read.
 //!
 //! The engine matches traffic against the indicators of the bundle in force
 //! ([`Feed::matcher`]): a new bundle is matched against as soon as it is installed, and
@@ -167,8 +167,8 @@ impl Feed {
     }
 
     /// Check the bundle in force again, signature and every file (at start and every
-    /// hour, SP-04). `None` when there is none. A bundle that fails is removed, and the
-    /// error says why.
+    /// hour, SP-04). `None` when there is none. A bundle that fails is not used, and the
+    /// error says why; [`BundleStore::installed`] says when it is removed.
     pub fn recheck(&self) -> Result<Option<FeedStatus>, FeedFailure> {
         let mut in_force = self.lock();
         *in_force = None;

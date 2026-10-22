@@ -91,7 +91,7 @@ fn an_installed_bundle_is_in_force_and_checked_again() {
         !installed.dir.join("unlisted.txt").exists(),
         "only what the manifest lists is installed"
     );
-    assert_eq!(names(&root), ["bundle-3", "current"]);
+    assert_eq!(names(&root), ["bundle-3", "current", "floor"]);
 
     let again = store.installed(&trust(), accept).unwrap().unwrap();
     assert_eq!(again.verified.manifest().version, 3);
@@ -144,7 +144,7 @@ fn an_update_replaces_the_bundle_and_an_older_one_is_refused() {
     assert_eq!(store.current_version(), Some(4));
     assert_eq!(
         names(&root),
-        ["bundle-4", "current"],
+        ["bundle-4", "current", "floor"],
         "the older bundle is gone"
     );
     assert!(matches!(
@@ -203,12 +203,13 @@ fn a_bad_update_changes_nothing() {
     ));
 
     assert_eq!(store.current_version(), Some(1));
-    assert_eq!(names(&root), ["bundle-1", "current"]);
+    assert_eq!(names(&root), ["bundle-1", "current", "floor"]);
     assert_eq!(fs::read(root.join("bundle-1/a.json")).unwrap(), b"one");
 }
 
-/// SP-04: a bundle in force that no longer passes its checks is removed, and then any
-/// good bundle can be installed, even one with a lower version.
+/// SP-04: a bundle in force that no longer passes its checks is removed. Once its
+/// signer is no longer trusted, any good bundle can be installed, even one with a lower
+/// version (ADR-0019).
 #[test]
 fn a_bundle_that_fails_its_check_again_is_removed() {
     let tmp = tempfile::tempdir().unwrap();
@@ -223,7 +224,7 @@ fn a_bundle_that_fails_its_check_again_is_removed() {
         Err(FeedError::DigestMismatch(_))
     ));
     assert_eq!(store.current_version(), None);
-    assert!(names(&root).is_empty());
+    assert_eq!(names(&root), ["floor"]);
     assert!(store.installed(&trust(), accept).unwrap().is_none());
 
     // A key that is no longer trusted, as after a leaked key is dropped.
@@ -242,4 +243,70 @@ fn a_bundle_that_fails_its_check_again_is_removed() {
     fs::remove_dir_all(root.join("bundle-2")).unwrap();
     assert!(store.installed(&new_trust, accept).is_err());
     assert_eq!(store.current_version(), None);
+}
+
+/// Audit A-19: a bundle removed because a file changed or went keeps its version as the
+/// floor: that version may come back, an older one may not. Otherwise removing a bundle
+/// would let an older list in, one that misses what was added since.
+#[test]
+fn a_removed_bundles_version_stays_the_floor() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("feed");
+    let store = BundleStore::new(&root, FEED);
+    let v5 = stage(tmp.path(), 5, &[("a.json", b"five")], &key(1));
+    store.install(&v5, &trust(), NOW, accept).unwrap();
+    // As after a power cut between making 5 current and raising the floor.
+    fs::write(root.join("floor"), "1\n").unwrap();
+    fs::write(root.join("bundle-5/a.json"), b"FIVE").unwrap();
+    assert!(store.installed(&trust(), accept).is_err());
+    assert_eq!(store.current_version(), None);
+
+    let manifest = |dir: &Path| fs::read(dir.join(MANIFEST_FILE)).unwrap();
+    let v4 = stage(tmp.path(), 4, &[("a.json", b"four")], &key(1));
+    assert!(matches!(
+        store.offer(&manifest(&v4), &trust(), NOW),
+        Err(FeedError::Rollback { .. })
+    ));
+    assert!(matches!(
+        store.install(&v4, &trust(), NOW, accept),
+        Err(FeedError::Rollback { .. })
+    ));
+    let again = stage(tmp.path(), 5, &[("a.json", b"five")], &key(1));
+    let five = manifest(&again);
+    assert!(matches!(
+        store.offer(&five, &trust(), NOW).unwrap(),
+        Offer::Update(_)
+    ));
+    store.install(&again, &trust(), NOW, accept).unwrap();
+    assert_eq!(store.current_version(), Some(5));
+    assert!(matches!(
+        store.offer(&five, &trust(), NOW).unwrap(),
+        Offer::UpToDate
+    ));
+}
+
+/// Audit A-19: a file in force that cannot be read, though it is there, is a disk that
+/// may come back. The check fails, but the bundle stays, and the next check uses it.
+#[test]
+fn a_file_that_cannot_be_read_keeps_the_bundle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("feed");
+    let store = BundleStore::new(&root, FEED);
+    let v3 = stage(tmp.path(), 3, &[("a.json", b"three")], &key(1));
+    store.install(&v3, &trust(), NOW, accept).unwrap();
+
+    let manifest = root.join("bundle-3").join(MANIFEST_FILE);
+    let kept = fs::read(&manifest).unwrap();
+    fs::remove_file(&manifest).unwrap();
+    fs::create_dir(&manifest).unwrap();
+    assert!(matches!(
+        store.installed(&trust(), accept),
+        Err(FeedError::Io { .. })
+    ));
+    assert_eq!(store.current_version(), Some(3));
+
+    fs::remove_dir(&manifest).unwrap();
+    fs::write(&manifest, kept).unwrap();
+    let back = store.installed(&trust(), accept).unwrap().unwrap();
+    assert_eq!(back.verified.manifest().version, 3);
 }

@@ -26,9 +26,13 @@
    - Each installed version has its own directory, `bundle-<version>`, and a file `current` names the one in force.
    - An update is staged in a separate directory, then moved file by file into a new bundle directory. Only the manifest and the files it lists are moved.
    - There it is checked again, signature, every file's size and SHA-256 and every file's contents, so nothing can change on the way.
+   - Every file and directory of the new bundle reaches the disk before the rename that depends on it (audit A-20).
    - Only then is `current` replaced, in one rename after its contents reached the disk, and older bundles are removed.
-   - A crash at any point leaves either the old list or the new one in force, never a mix. A refused update leaves nothing behind.
-5. **The list in force is checked again** when the app first opens it and every hour while monitoring runs (SP-04): signature, every file, every indicator's provenance. A list that fails is removed at once. After that, a good bundle of any version installs. This is how a bundle signed with a leaked key goes away once an app update drops that key (FEED-SIGNING.md).
+   - A crash or a power cut at any point leaves either the old list or the new one in force, never a mix. A refused update leaves nothing behind.
+5. **The list in force is checked again** when the app first opens it and every hour while monitoring runs (SP-04): signature, every file, every indicator's provenance. A list that fails is no longer used, at once. What follows depends on why it failed (amended after audit A-19):
+   - **No trusted key signed it**, as once an app update drops a leaked key: the list is removed, and a good bundle of any version installs. This is how a bundle signed with a leaked key goes away (FEED-SIGNING.md).
+   - **A file changed, went or was refused**: the list is removed, but its version stays the floor, in the file `floor`. That version or a newer one installs; an older one does not. Were any version allowed here, removing a list would let in an older one, which misses the indicators added since.
+   - **A file is there but cannot be read**: the list stays, unused, and the next check tries it again. A disk error that passes does not cost the phone its list.
 6. **Delivery on Android** (`IndicatorFeed`):
    - The newest bundle is published as the assets of the GitHub release with the tag `feed`: the manifest and its files side by side, at fixed links.
    - The app fetches them over HTTPS when it opens if the last check is more than six hours old, every six hours from a job that needs a network (whether monitoring runs or not), and when the user taps "Check for a new list". Weekly lists and urgent same-day ones are then picked up within hours.
@@ -57,11 +61,13 @@
   - unknown kinds and threats are skipped and counted;
   - another schema, unknown fields and oversized files are refused;
   - indicator files are known by name.
-- `sentinel-feed` (`tests/store.rs`, 4 tests):
+- `sentinel-feed` (`tests/store.rs`, 6 tests):
   - only listed files are installed; an update replaces the old bundle;
   - offers are judged before fetching: up to date, newer, older, unsigned, expired;
   - a tampered, incomplete, wrongly signed or refused bundle changes nothing and leaves nothing behind;
-  - a bundle that fails its re-check is removed, after which an older good bundle installs, as after a key is dropped; a pointer to a missing bundle is cleared.
+  - a bundle that fails its re-check is removed; after a changed file, its own version installs again and an older one is refused, both at the offer and at install, also when a power cut left the floor behind; after a key is dropped, an older good bundle installs; a pointer to a missing bundle is cleared;
+  - a file that is there but cannot be read fails the check and keeps the bundle, which the next check uses again.
+  - Writing to the disk before each rename (A-20) is not tested: no test here can cut the power.
 - `sentinel-ffi` (`feed` tests, 5):
   - offer, install, status with sources, licences and counts, files given only from the checked list, re-check after reopening;
   - refused for an indicator without its report, an indicator file named after another source, and a broken IP database or tracker list;
