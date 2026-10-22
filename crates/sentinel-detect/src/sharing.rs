@@ -24,68 +24,76 @@ pub enum SharingSite {
 /// page view sends a few kilobytes.
 pub const SHARING_UPLOAD_BYTES: u64 = 16 * 1024;
 
-/// A sharing service: its domain (and the names under it), what it is for, and the name
-/// an app of its own would carry in its package name.
+/// A sharing service: its domain (and the names under it), what it is for, and the
+/// package names of its own apps, which upload to it as a matter of course.
 struct Service {
     domain: &'static str,
     site: SharingSite,
-    brand: &'static str,
+    apps: &'static [&'static str],
 }
 
-const fn service(domain: &'static str, site: SharingSite, brand: &'static str) -> Service {
-    Service {
-        domain,
-        site,
-        brand,
-    }
+const fn service(
+    domain: &'static str,
+    site: SharingSite,
+    apps: &'static [&'static str],
+) -> Service {
+    Service { domain, site, apps }
 }
+
+/// The services' own apps, by exact package name (audit A-15). A name that only contains
+/// the service's, such as `com.x.telegramsync`, is anyone's: the app's maker chooses it.
+const NO_APP: &[&str] = &[];
+const TELEGRAM: &[&str] = &[
+    "org.telegram.messenger",
+    "org.telegram.messenger.web",
+    "org.thunderdog.challegram",
+];
+const MEGA: &[&str] = &["mega.privacy.android.app"];
+const WETRANSFER: &[&str] = &["com.wetransfer.app.live"];
+const MEDIAFIRE: &[&str] = &["com.mediafire.android"];
 
 /// The category list (DL-06): well-known services by what they are for.
 const SERVICES: &[Service] = &[
-    service("pastebin.com", SharingSite::Paste, "pastebin"),
-    service("paste.ee", SharingSite::Paste, "pasteee"),
-    service("hastebin.com", SharingSite::Paste, "hastebin"),
-    service("ghostbin.co", SharingSite::Paste, "ghostbin"),
-    service("paste.rs", SharingSite::Paste, "pasters"),
-    service("dpaste.org", SharingSite::Paste, "dpaste"),
-    service("dpaste.com", SharingSite::Paste, "dpaste"),
-    service("rentry.co", SharingSite::Paste, "rentry"),
-    service("rentry.org", SharingSite::Paste, "rentry"),
-    service("privatebin.net", SharingSite::Paste, "privatebin"),
-    service("termbin.com", SharingSite::Paste, "termbin"),
-    service("controlc.com", SharingSite::Paste, "controlc"),
-    service("justpaste.it", SharingSite::Paste, "justpaste"),
-    service("transfer.sh", SharingSite::FileSharing, "transfersh"),
-    service("file.io", SharingSite::FileSharing, "fileio"),
-    service("gofile.io", SharingSite::FileSharing, "gofile"),
-    service("wetransfer.com", SharingSite::FileSharing, "wetransfer"),
-    service("we.tl", SharingSite::FileSharing, "wetransfer"),
-    service("sendspace.com", SharingSite::FileSharing, "sendspace"),
-    service("mediafire.com", SharingSite::FileSharing, "mediafire"),
-    service("mega.nz", SharingSite::FileSharing, "mega"),
-    service("mega.io", SharingSite::FileSharing, "mega"),
-    service("filebin.net", SharingSite::FileSharing, "filebin"),
-    service("catbox.moe", SharingSite::FileSharing, "catbox"),
-    service("0x0.st", SharingSite::FileSharing, "0x0"),
-    service("temp.sh", SharingSite::FileSharing, "tempsh"),
-    service("bashupload.com", SharingSite::FileSharing, "bashupload"),
-    service("uguu.se", SharingSite::FileSharing, "uguu"),
-    service("ngrok.io", SharingSite::AnonymousDrop, "ngrok"),
-    service("ngrok-free.app", SharingSite::AnonymousDrop, "ngrok"),
-    service("ngrok.app", SharingSite::AnonymousDrop, "ngrok"),
-    service(
-        "trycloudflare.com",
-        SharingSite::AnonymousDrop,
-        "trycloudflare",
-    ),
-    service("loca.lt", SharingSite::AnonymousDrop, "localtunnel"),
-    service("serveo.net", SharingSite::AnonymousDrop, "serveo"),
-    service("localhost.run", SharingSite::AnonymousDrop, "localhostrun"),
-    service("webhook.site", SharingSite::AnonymousDrop, "webhooksite"),
-    service("pipedream.net", SharingSite::AnonymousDrop, "pipedream"),
-    service("requestbin.net", SharingSite::AnonymousDrop, "requestbin"),
-    service("api.telegram.org", SharingSite::AnonymousDrop, "telegram"),
-    service("telegra.ph", SharingSite::AnonymousDrop, "telegra"),
+    service("pastebin.com", SharingSite::Paste, NO_APP),
+    service("paste.ee", SharingSite::Paste, NO_APP),
+    service("hastebin.com", SharingSite::Paste, NO_APP),
+    service("ghostbin.co", SharingSite::Paste, NO_APP),
+    service("paste.rs", SharingSite::Paste, NO_APP),
+    service("dpaste.org", SharingSite::Paste, NO_APP),
+    service("dpaste.com", SharingSite::Paste, NO_APP),
+    service("rentry.co", SharingSite::Paste, NO_APP),
+    service("rentry.org", SharingSite::Paste, NO_APP),
+    service("privatebin.net", SharingSite::Paste, NO_APP),
+    service("termbin.com", SharingSite::Paste, NO_APP),
+    service("controlc.com", SharingSite::Paste, NO_APP),
+    service("justpaste.it", SharingSite::Paste, NO_APP),
+    service("transfer.sh", SharingSite::FileSharing, NO_APP),
+    service("file.io", SharingSite::FileSharing, NO_APP),
+    service("gofile.io", SharingSite::FileSharing, NO_APP),
+    service("wetransfer.com", SharingSite::FileSharing, WETRANSFER),
+    service("we.tl", SharingSite::FileSharing, WETRANSFER),
+    service("sendspace.com", SharingSite::FileSharing, NO_APP),
+    service("mediafire.com", SharingSite::FileSharing, MEDIAFIRE),
+    service("mega.nz", SharingSite::FileSharing, MEGA),
+    service("mega.io", SharingSite::FileSharing, MEGA),
+    service("filebin.net", SharingSite::FileSharing, NO_APP),
+    service("catbox.moe", SharingSite::FileSharing, NO_APP),
+    service("0x0.st", SharingSite::FileSharing, NO_APP),
+    service("temp.sh", SharingSite::FileSharing, NO_APP),
+    service("bashupload.com", SharingSite::FileSharing, NO_APP),
+    service("uguu.se", SharingSite::FileSharing, NO_APP),
+    service("ngrok.io", SharingSite::AnonymousDrop, NO_APP),
+    service("ngrok-free.app", SharingSite::AnonymousDrop, NO_APP),
+    service("ngrok.app", SharingSite::AnonymousDrop, NO_APP),
+    service("trycloudflare.com", SharingSite::AnonymousDrop, NO_APP),
+    service("loca.lt", SharingSite::AnonymousDrop, NO_APP),
+    service("serveo.net", SharingSite::AnonymousDrop, NO_APP),
+    service("localhost.run", SharingSite::AnonymousDrop, NO_APP),
+    service("webhook.site", SharingSite::AnonymousDrop, NO_APP),
+    service("pipedream.net", SharingSite::AnonymousDrop, NO_APP),
+    service("requestbin.net", SharingSite::AnonymousDrop, NO_APP),
+    service("api.telegram.org", SharingSite::AnonymousDrop, TELEGRAM),
+    service("telegra.ph", SharingSite::AnonymousDrop, TELEGRAM),
 ];
 
 /// The sharing service `hostname` belongs to, if it is one: its domain and what it is
@@ -102,18 +110,12 @@ pub fn sharing_site(hostname: &str) -> Option<(&'static str, SharingSite)> {
         .map(|service| (service.domain, service.site))
 }
 
-/// Whether `app` is the service's own: its package name carries the service's name,
-/// ignoring dots, dashes and underscores (`nz.mega.android` for mega.nz).
+/// Whether `app` is one of the service's own apps, by its exact package name.
 fn own_app(app: &str, domain: &str) -> bool {
-    let app: String = app
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_ascii_lowercase();
     SERVICES
         .iter()
         .filter(|service| service.domain == domain)
-        .any(|service| app.contains(service.brand))
+        .any(|service| service.apps.contains(&app))
 }
 
 /// DL-06: `app` sent `bytes_up` in one connection to `hostname`. An alert if that is an
@@ -200,18 +202,30 @@ mod tests {
         assert!(sharing_site_upload(7, APP, "pastebin.com", SHARING_UPLOAD_BYTES).is_some());
     }
 
+    /// A site's own apps are known by their exact package names. A name that only
+    /// carries the service's, which any app's maker can choose, is flagged (audit A-15).
     #[test]
     fn a_sites_own_app_is_not_flagged() {
         for (app, host) in [
-            ("nz.mega.android", "g.api.mega.co.nz.mega.nz"),
+            ("mega.privacy.android.app", "g.api.mega.co.nz.mega.nz"),
             ("com.wetransfer.app.live", "we.tl"),
             ("com.mediafire.android", "www.mediafire.com"),
             ("org.telegram.messenger", "api.telegram.org"),
+            ("org.thunderdog.challegram", "telegra.ph"),
         ] {
             assert_eq!(sharing_site_upload(7, app, host, 1_000_000), None, "{app}");
         }
-        assert!(
-            sharing_site_upload(7, "com.example.mega_fan", "pastebin.com", 1_000_000).is_some()
-        );
+        for (app, host) in [
+            ("com.x.telegramsync", "api.telegram.org"),
+            ("org.telegram.messenger.sync", "api.telegram.org"),
+            ("nz.mega.backup", "mega.nz"),
+            ("com.example.mega_fan", "mega.nz"),
+            ("org.telegram.messenger", "pastebin.com"),
+        ] {
+            assert!(
+                sharing_site_upload(7, app, host, 1_000_000).is_some(),
+                "{app}"
+            );
+        }
     }
 }

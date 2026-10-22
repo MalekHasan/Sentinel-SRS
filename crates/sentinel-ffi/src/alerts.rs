@@ -444,7 +444,8 @@ pub enum AlertDelivery {
     Notify,
     /// Do Not Disturb is on and the alert is below High: it waits in the app.
     HeldForDoNotDisturb,
-    /// The app it is about already had three non-critical notifications this hour.
+    /// The app it is about already had three non-critical notifications as severe or
+    /// more this hour.
     HeldForRateLimit,
     /// The user said alerts like it are not useful.
     HeldForFeedback,

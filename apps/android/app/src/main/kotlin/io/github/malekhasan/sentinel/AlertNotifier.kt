@@ -24,7 +24,8 @@ import io.github.malekhasan.sentinel.core.HistoryStore
 /**
  * Alerts as notifications (AL-06). Each severity has its own channel, with its own
  * importance, sound and vibration (AL-01). The core decides whether an alert is
- * notified now: at most three non-critical notifications an hour per app (AL-03), and
+ * notified now: at most three non-critical notifications an hour per app at each
+ * severity, a less severe one never keeping a more severe one quiet (AL-03), and
  * Info and Warning wait in the app while Do Not Disturb is on (AL-04). Repeated alerts
  * of one kind share one notification, which says how many more are open (AL-03). On a
  * locked phone a notification makes its sound but shows nothing (ADR-0012). An alert

@@ -16,8 +16,8 @@ pub enum Delivery {
     Notify,
     /// Do Not Disturb is on and the alert is below High: keep it in the app (AL-04).
     HoldForDoNotDisturb,
-    /// The app already had [`RATE_LIMIT`] non-critical notifications in the last hour:
-    /// keep it in the app (AL-03).
+    /// The app already had [`RATE_LIMIT`] non-critical notifications as severe or more
+    /// in the last hour: keep it in the app (AL-03).
     HoldForRateLimit,
     /// The user said alerts like this are not useful: keep it in the app (AL-05).
     HoldForFeedback,
@@ -38,6 +38,11 @@ pub struct Sent {
 /// useful". Critical alerts always notify; High alerts notify through Do Not Disturb but
 /// count against the rate limit; Info and Warning alerts wait in the app while Do Not
 /// Disturb is on.
+///
+/// The rate limit counts only notifications as severe as the alert or more: an app that
+/// raised three cheap Info alerts must not keep its High alert, such as accessibility
+/// access gained, from being notified (audit A-16). One app can therefore have three
+/// notifications an hour at each non-critical severity, as its alerts grow more severe.
 pub fn delivery(
     alert: &Alert,
     now: i64,
@@ -58,6 +63,7 @@ pub fn delivery(
     let recent = sent
         .iter()
         .filter(|s| s.severity != Severity::Critical && s.at > since && s.at <= now)
+        .filter(|s| s.severity >= alert.severity)
         .filter(|s| s.app.as_deref() == alert.app())
         .count();
     if recent >= RATE_LIMIT {
@@ -127,9 +133,9 @@ mod tests {
             Delivery::HoldForRateLimit
         );
         assert_eq!(
-            delivery(&alert(Severity::High, chat), NOW, false, &three, false),
+            delivery(&alert(Severity::Info, chat), NOW, false, &three, false),
             Delivery::HoldForRateLimit,
-            "High counts as non-critical"
+            "less severe"
         );
         assert_eq!(
             delivery(&alert(Severity::Critical, chat), NOW, false, &three, false),
@@ -165,6 +171,38 @@ mod tests {
             ),
             Delivery::Notify
         );
+    }
+
+    /// Audit A-16: notifications less severe than an alert do not use up its allowance,
+    /// so three cheap Info alerts cannot keep an app's High alert quiet. High ones still
+    /// count against each other.
+    #[test]
+    fn less_severe_notifications_do_not_use_up_a_more_severe_alerts_allowance() {
+        let app = Some("org.example.spy");
+        let infos: Vec<Sent> = (1..=3)
+            .map(|i| sent(NOW - i * 60_000, Severity::Info, app))
+            .collect();
+        assert_eq!(
+            delivery(&alert(Severity::Info, app), NOW, false, &infos, false),
+            Delivery::HoldForRateLimit
+        );
+        for severity in [Severity::Warning, Severity::High] {
+            assert_eq!(
+                delivery(&alert(severity, app), NOW, false, &infos, false),
+                Delivery::Notify,
+                "{severity:?}"
+            );
+        }
+        let highs: Vec<Sent> = (1..=3)
+            .map(|i| sent(NOW - i * 60_000, Severity::High, app))
+            .collect();
+        for severity in [Severity::Info, Severity::Warning, Severity::High] {
+            assert_eq!(
+                delivery(&alert(severity, app), NOW, false, &highs, false),
+                Delivery::HoldForRateLimit,
+                "{severity:?}"
+            );
+        }
     }
 
     #[test]
