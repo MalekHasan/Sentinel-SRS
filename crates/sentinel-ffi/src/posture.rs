@@ -77,7 +77,8 @@ mod tests {
     }
 
     /// ID-03, ID-10: what is on and trusted is reported when first seen, then only what
-    /// is turned on or added since; an allowed rule raises nothing more (AL-05).
+    /// is turned on or added since. These alerts name no app, so they cannot be allowed
+    /// (AL-05, audit A-08).
     #[test]
     fn wireless_debugging_and_added_certificates_are_reported() {
         let dir = tempfile::tempdir().unwrap();
@@ -117,16 +118,17 @@ mod tests {
         history.posture_seen(posture(true, &[work, proxy])).unwrap();
         assert_eq!(history.alerts(true, 100).unwrap().len(), 3);
 
-        // Allowed, then turned off and on again: nothing more.
+        // It cannot be allowed: turned off and on again, it is reported again.
+        assert!(!debugging.can_allow);
         assert!(
             history
                 .set_feedback(debugging.id, Some(AlertFeedback::Allowed))
-                .unwrap()
+                .is_err()
         );
         history
             .posture_seen(posture(false, &[work, proxy]))
             .unwrap();
         history.posture_seen(posture(true, &[work, proxy])).unwrap();
-        assert_eq!(history.alerts(false, 100).unwrap().len(), 3);
+        assert_eq!(history.alerts(false, 100).unwrap().len(), 4);
     }
 }

@@ -255,8 +255,7 @@ pub struct StoredAlert {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AllowedEntry {
     pub rule: Rule,
-    /// `None` for alerts about Sentinel itself.
-    pub app: Option<String>,
+    pub app: String,
     /// Unix milliseconds.
     pub created: i64,
 }
@@ -760,7 +759,7 @@ impl Store {
             return Ok(false);
         };
         let stored = stored_alert(row)?;
-        if feedback.is_some_and(|f| !f.allowed_for(stored.alert.severity)) {
+        if feedback.is_some_and(|f| !f.allowed_on(&stored.alert)) {
             return Err(StoreError::FeedbackNotAllowed(id));
         }
         let rule = stored.alert.rule.id();
@@ -791,25 +790,62 @@ impl Store {
         Ok(true)
     }
 
-    /// Whether the user allowed `rule` for `app` (`None`: Sentinel itself), so that it
-    /// raises no alerts about it (AL-05).
+    /// Whether the user allowed `rule` for `app`, so that it raises no alerts about it
+    /// (AL-05). Never for no app.
     pub fn is_allowed(&self, rule: Rule, app: Option<&str>) -> Result<bool> {
+        // An alert about no app is never allowed. What an older version allowed for none
+        // silenced the rule for the whole phone, and no longer counts (audit A-08).
+        let Some(app) = app else {
+            return Ok(false);
+        };
         let found: Option<i64> = lock(&self.conn)
             .query_row(
                 "SELECT 1 FROM allowed WHERE rule_id = ?1 AND subject = ?2",
-                params![rule.id(), app.unwrap_or_default()],
+                params![rule.id(), app],
                 |r| r.get(0),
             )
             .optional()?;
         Ok(found.is_some())
     }
 
+    /// Take back what the user allowed for `app` and `rule`: its alerts come again, and
+    /// the alerts it was allowed from no longer say it is allowed. They stay dismissed.
+    /// Returns whether it was allowed.
+    pub fn take_back(&self, rule: Rule, app: &str) -> Result<bool> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        let removed = tx.execute(
+            "DELETE FROM allowed WHERE rule_id = ?1 AND subject = ?2",
+            params![rule.id(), app],
+        )?;
+        let mut stmt = tx.prepare(&format!(
+            "{ALERT_COLUMNS} WHERE rule_id = ?1 AND user_feedback = ?2"
+        ))?;
+        let rows = stmt
+            .query_map(params![rule.id(), Feedback::Allowed.as_str()], alert_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+        for row in rows {
+            let allowed_from = stored_alert(row)?;
+            if allowed_from.alert.app() == Some(app) {
+                tx.execute(
+                    "UPDATE alert SET user_feedback = NULL WHERE id = ?1",
+                    [allowed_from.id],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(removed > 0)
+    }
+
     /// Everything the user allowed, newest first. Entries for rules this version does
-    /// not know are left out.
+    /// not know are left out, and so are those for no app, which no longer count.
     pub fn allowed(&self) -> Result<Vec<AllowedEntry>> {
         let conn = lock(&self.conn);
-        let mut stmt =
-            conn.prepare("SELECT rule_id, subject, created FROM allowed ORDER BY created DESC")?;
+        let mut stmt = conn.prepare(
+            "SELECT rule_id, subject, created FROM allowed WHERE subject <> ''
+             ORDER BY created DESC",
+        )?;
         let rows = stmt
             .query_map([], |r| {
                 Ok((
@@ -824,7 +860,7 @@ impl Store {
             .filter_map(|(rule, subject, created)| {
                 Some(AllowedEntry {
                     rule: Rule::from_id(&rule)?,
-                    app: (!subject.is_empty()).then_some(subject),
+                    app: subject,
                     created,
                 })
             })

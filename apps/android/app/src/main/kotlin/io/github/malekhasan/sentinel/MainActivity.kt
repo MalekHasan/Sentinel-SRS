@@ -103,6 +103,7 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             var showLive by rememberSaveable { mutableStateOf(false) }
             var showJournal by rememberSaveable { mutableStateOf(false) }
+            var showAllowed by rememberSaveable { mutableStateOf(false) }
             var showHardening by rememberSaveable { mutableStateOf(false) }
             var showKeepRunning by rememberSaveable { mutableStateOf(false) }
             var showExport by rememberSaveable { mutableStateOf(false) }
@@ -115,6 +116,7 @@ class MainActivity : ComponentActivity() {
                     openApp = null
                     showLive = false
                     showJournal = false
+                    showAllowed = false
                     showHardening = false
                     showKeepRunning = false
                     showExport = false
@@ -167,6 +169,10 @@ class MainActivity : ComponentActivity() {
                             BackHandler { showJournal = false }
                             JournalScreen(onBack = { showJournal = false })
                         }
+                        showAllowed -> {
+                            BackHandler { showAllowed = false }
+                            AllowedScreen(onBack = { showAllowed = false })
+                        }
                         showHardening -> {
                             BackHandler { showHardening = false }
                             HardeningScreen(visible = visible.value, onBack = { showHardening = false })
@@ -194,6 +200,7 @@ class MainActivity : ComponentActivity() {
                             onStop = ::stopMonitoring,
                             onShowLive = { showLive = true },
                             onShowJournal = { showJournal = true },
+                            onShowAllowed = { showAllowed = true },
                             onShowHardening = { showHardening = true },
                             onShowKeepRunning = { showKeepRunning = true },
                             onShowExport = { showExport = true },
@@ -308,6 +315,7 @@ fun MonitorScreen(
     onOpenApp: (String) -> Unit,
     onOpenAlert: (Long) -> Unit,
     onShowJournal: () -> Unit,
+    onShowAllowed: () -> Unit,
     onImportFeed: () -> Unit,
     onShowHardening: () -> Unit,
     onShowKeepRunning: () -> Unit,
@@ -415,6 +423,7 @@ fun MonitorScreen(
             }
         },
         onShowJournal = onShowJournal,
+        onShowAllowed = onShowAllowed,
         onShowHardening = onShowHardening,
         onShowKeepRunning = onShowKeepRunning,
         onShowExport = onShowExport,
@@ -466,6 +475,7 @@ fun MonitorContent(
     onIsolate: () -> Unit = {},
     onEndIsolation: () -> Unit = {},
     onShowJournal: () -> Unit = {},
+    onShowAllowed: () -> Unit = {},
     onShowHardening: () -> Unit = {},
     onShowKeepRunning: () -> Unit = {},
     onShowExport: () -> Unit = {},
@@ -557,6 +567,8 @@ fun MonitorContent(
         FirewallModeChoice(firewallMode, onFirewallMode)
         // Every change to the firewall, with Undo (SRS §9).
         OutlinedButton(onClick = onShowJournal) { Text(stringResource(R.string.journal_action)) }
+        // Every alert the user allowed, with Take back (AL-05, audit A-08).
+        OutlinedButton(onClick = onShowAllowed) { Text(stringResource(R.string.allowed_action)) }
         // Steps that make the phone harder to spy on (MS-12).
         OutlinedButton(onClick = onShowHardening) { Text(stringResource(R.string.hardening_action)) }
         // Battery settings that keep monitoring running, by phone maker (SP-03).

@@ -32,7 +32,7 @@ The older `adb tcpip`, which makes ADB listen on a fixed port, leaves no setting
 4. **What the alert offers.**
    - Wireless debugging: Android's developer options, where it is turned off.
    - A certificate: Android's list of trusted certificates on the user's tab, where it can be removed. Phones that do not open that screen by name get the security settings.
-5. **Allowing.** These alerts are about the phone, not an app. Allowing one (AL-05) stops its rule for good: no more alerts about wireless debugging, or about any certificate added later. That is what allowing does for network settings too.
+5. **No allowing.** These alerts are about the phone, not an app, so they cannot be allowed (AL-05, ADR-0012): allowing one would stop its rule for good, with no more alerts about wireless debugging, or about any certificate added later (audit A-08). They can be dismissed or marked not useful.
 
 ## Verification
 
@@ -44,7 +44,7 @@ The older `adb tcpip`, which makes ADB listen on a fixed port, leaves no setting
 - `sentinel-ffi`:
   - a certificate is reported when first seen, with its fingerprint in lower case;
   - wireless debugging and a second certificate are reported when they appear, and not again while they stay;
-  - an allowed rule raises nothing more.
+  - wireless debugging cannot be allowed, and turned off and on again it is reported again.
 - On the Android 14 emulator (`PostureTest`):
   - with monitoring on, the probe app is made device owner and adds a test certificate authority, whose key was deleted once it was made; a High alert names its subject and fingerprint within 5 s, and checking again raises nothing more;
   - wireless debugging is read as `settings` reports it, and raises an alert only when on.
@@ -55,5 +55,5 @@ The older `adb tcpip`, which makes ADB listen on a fixed port, leaves no setting
 
 - **Wireless debugging is not turned on in the device tests.** On a Wi-Fi network it was never paired on, Android turns it straight back off and asks the user, which would block the other tests. Reporting it is tested in the core; on the device, the test checks that the setting can be read and that nothing is raised while it is off.
 - **`adb tcpip` is not found.** It needs a computer on USB first, and ends at the next restart. USB debugging itself belongs to the hardening checklist (MS-12).
-- **A certificate added through a work profile or by a device owner is reported like any other.** On work phones that is expected, and the user can allow it. Allowing stops later certificate alerts too; the feedback screen does not yet say so (a settings screen listing what was allowed is planned with AL-05's list).
+- **A certificate added through a work profile or by a device owner is reported like any other.** On work phones that is expected, and the user can dismiss it. It cannot be allowed, as that would stop every later certificate alert too (audit A-08); a certificate added later is reported again.
 - **Android may stop letting apps read `adb_wifi_enabled`.** It is a hidden setting. If it closes, wireless debugging would read as off; the device test would then fail, rather than the check failing silently.

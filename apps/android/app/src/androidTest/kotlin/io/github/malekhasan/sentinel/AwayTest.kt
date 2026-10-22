@@ -95,6 +95,7 @@ class AwayTest {
                     onOpenApp = {},
                     onOpenAlert = {},
                     onShowJournal = {},
+                    onShowAllowed = {},
                     onImportFeed = {},
                     onShowHardening = {},
                     onShowKeepRunning = {},

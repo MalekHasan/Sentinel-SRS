@@ -995,31 +995,65 @@ fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
         .unwrap();
     assert!(store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
     assert!(!store.is_allowed(Rule::MonitoringInterrupted, None).unwrap());
+    // An alert about no app cannot be allowed: it would silence the rule for the whole
+    // phone (audit A-08). It can be marked not useful.
     let own = raise(None, Severity::Warning);
-    store
-        .set_feedback(own, Some(Feedback::Allowed), NOW + 2)
-        .unwrap();
+    assert!(matches!(
+        store.set_feedback(own, Some(Feedback::Allowed), NOW + 2),
+        Err(StoreError::FeedbackNotAllowed(id)) if id == own
+    ));
+    assert!(
+        store
+            .set_feedback(own, Some(Feedback::NotUseful), NOW + 2)
+            .unwrap()
+    );
     assert_eq!(
         store.allowed().unwrap(),
-        vec![
-            sentinel_store::AllowedEntry {
-                rule: Rule::MonitoringInterrupted,
-                app: None,
-                created: NOW + 2,
-            },
-            sentinel_store::AllowedEntry {
-                rule: Rule::MonitoringInterrupted,
-                app: chat.map(str::to_owned),
-                created: NOW + 1,
-            },
-        ]
+        vec![sentinel_store::AllowedEntry {
+            rule: Rule::MonitoringInterrupted,
+            app: "org.example.chat".to_owned(),
+            created: NOW + 1,
+        }]
     );
     // Changing the feedback from allowed takes the app off the list.
     store
         .set_feedback(allow, Some(Feedback::NotUseful), NOW)
         .unwrap();
     assert!(!store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
-    assert!(store.is_allowed(Rule::MonitoringInterrupted, None).unwrap());
+    // So does taking it back from the list. The alert it was allowed from no longer says
+    // so, and stays dismissed; another app's stays allowed.
+    store
+        .set_feedback(allow, Some(Feedback::Allowed), NOW + 3)
+        .unwrap();
+    let mail = Some("org.example.mail");
+    let mail_allowed = raise(mail, Severity::Warning);
+    store
+        .set_feedback(mail_allowed, Some(Feedback::Allowed), NOW + 3)
+        .unwrap();
+    assert!(
+        store
+            .take_back(Rule::MonitoringInterrupted, "org.example.chat")
+            .unwrap()
+    );
+    assert!(!store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
+    let taken_back = store.alert(allow).unwrap().unwrap();
+    assert_eq!(taken_back.feedback, None);
+    assert_eq!(taken_back.state, AlertState::Dismissed);
+    assert_eq!(
+        store.alert(mail_allowed).unwrap().unwrap().feedback,
+        Some(Feedback::Allowed)
+    );
+    assert!(
+        !store
+            .take_back(Rule::MonitoringInterrupted, "org.example.chat")
+            .unwrap()
+    );
+    assert!(
+        store
+            .take_back(Rule::MonitoringInterrupted, "org.example.mail")
+            .unwrap()
+    );
+    assert!(store.allowed().unwrap().is_empty());
 
     // A Critical alert cannot be allowed; it can be marked not useful.
     assert!(matches!(
@@ -1033,9 +1067,12 @@ fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
     );
 
     // It all stays in the encrypted history.
+    store
+        .set_feedback(allow, Some(Feedback::Allowed), NOW + 4)
+        .unwrap();
     drop(store);
     let store = Store::open(&db(&dir), &KEY).unwrap();
-    assert!(store.is_allowed(Rule::MonitoringInterrupted, None).unwrap());
+    assert!(store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
     assert_eq!(
         store.alert(first).unwrap().unwrap().state,
         AlertState::Dismissed
@@ -1088,6 +1125,34 @@ fn gaps_are_counted_from_when_they_began() {
     assert_eq!(store.gaps_since(NOW - 2_000, NOW).unwrap(), 3);
     assert_eq!(store.gaps_since(NOW - 20_000, NOW).unwrap(), 4);
     assert_eq!(store.gaps_since(NOW + 1, NOW).unwrap(), 0);
+}
+
+/// Audit A-08: what an older version allowed for no app silenced the rule for the whole
+/// phone. It no longer counts, and is not listed.
+#[test]
+fn an_allowance_for_no_app_no_longer_counts() {
+    use sentinel_detect::Rule;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    drop(Store::open(&path, &KEY).unwrap());
+    // As an older version kept it.
+    let older = rusqlite::Connection::open(&path).unwrap();
+    let hex: String = KEY.iter().map(|b| format!("{b:02X}")).collect();
+    older
+        .pragma_update(None, "key", format!("x'{hex}'"))
+        .unwrap();
+    older
+        .execute(
+            "INSERT INTO allowed (rule_id, subject, created) VALUES (?1, '', 1)",
+            [Rule::SensorWhileAway.id()],
+        )
+        .unwrap();
+    drop(older);
+
+    let store = Store::open(&path, &KEY).unwrap();
+    assert!(!store.is_allowed(Rule::SensorWhileAway, None).unwrap());
+    assert!(store.allowed().unwrap().is_empty());
 }
 
 /// Audit A-06: only a key that cannot read the file is a wrong key. A database busy in

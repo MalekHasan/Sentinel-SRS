@@ -226,7 +226,8 @@ private fun Advice() {
 
 /**
  * What the user thinks of the alert (AL-05): not useful, or fine to allow from now on,
- * and how to take it back. A Critical alert cannot be allowed (ADR-0012).
+ * and how to take it back. Only an alert about an app, and not a Critical one, can be
+ * allowed: the core says which (ADR-0012, audit A-08).
  */
 @Composable
 private fun Feedback(alert: HistoryAlert, onFeedback: (AlertFeedback?) -> Unit) {
@@ -240,7 +241,7 @@ private fun Feedback(alert: HistoryAlert, onFeedback: (AlertFeedback?) -> Unit) 
             OutlinedButton(onClick = { onFeedback(AlertFeedback.NOT_USEFUL) }) {
                 Text(stringResource(R.string.alert_feedback_not_useful))
             }
-            if (alert.severity != AlertSeverity.CRITICAL) {
+            if (alert.canAllow) {
                 OutlinedButton(onClick = { onFeedback(AlertFeedback.ALLOWED) }) {
                     Text(stringResource(R.string.alert_feedback_allow))
                 }

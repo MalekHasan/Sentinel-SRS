@@ -61,7 +61,7 @@ Android 12 and later show their own privacy indicator and dashboard. The dashboa
 ## Consequences
 
 - **Attribution is a guess.** A recorder in the background while the user reads the news is reported with the news app as the guess. The wording says so everywhere.
-- **Calls do not count as away.** During a call the proximity sensor turns the screen off but the phone stays interactive, so this is not flagged. A voice memo recorded in a pocket is flagged. Its alert can be dismissed or allowed.
-- **Allowing this alert stops it for good.** It is about no app, so allowing it (AL-05) stops `sensor-while-away` entirely, as for other alerts about the phone itself.
+- **Calls do not count as away.** During a call the proximity sensor turns the screen off but the phone stays interactive, so this is not flagged. A voice memo recorded in a pocket is flagged. Its alert can be dismissed or marked not useful.
+- **This alert cannot be allowed.** It names no app for certain, so allowing it (AL-05) would stop `sensor-while-away` for good, for every app (audit A-08). It can be marked not useful, which keeps the next ones in the app without a notification.
 - **Hotword detection is not seen**, as Android runs it outside normal recordings, and neither is anything on a phone without monitoring on.
 - **Spike 3 still has to run on real phones** (Samsung, Xiaomi, a recent Pixel). It must confirm the callbacks, the 2 s timing, the guess, and whether the ADB path gives exact attribution (the Should item).

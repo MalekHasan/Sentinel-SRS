@@ -434,7 +434,7 @@ pub enum Feedback {
     /// instead of notifying. Critical alerts still notify.
     NotUseful,
     /// Allow what the alert was about: no more alerts from this rule about the same app.
-    /// Not offered for Critical alerts (see [`Feedback::allowed_for`]).
+    /// Only for an alert about an app, and not a Critical one (see [`Feedback::allowed_on`]).
     Allowed,
 }
 
@@ -452,11 +452,13 @@ impl Feedback {
             .find(|f| f.as_str() == name)
     }
 
-    /// Whether this feedback may be given on an alert of `severity`. A Critical alert
-    /// cannot be allowed: someone else holding the phone could otherwise silence what
-    /// it found for good.
-    pub fn allowed_for(self, severity: Severity) -> bool {
-        self != Feedback::Allowed || severity < Severity::Critical
+    /// Whether this feedback may be given on `alert`. Allowing silences one rule's alerts
+    /// about one app for good, so it is refused for a Critical alert, which someone else
+    /// holding the phone could otherwise silence, and for an alert about no app, which
+    /// would silence the rule for the whole phone: the microphone used while the screen
+    /// is off, a gap, a certificate added (audit A-08).
+    pub fn allowed_on(self, alert: &Alert) -> bool {
+        self != Feedback::Allowed || (alert.severity < Severity::Critical && alert.app().is_some())
     }
 }
 
@@ -654,14 +656,31 @@ mod tests {
         assert!(evidence_from_json("not json").is_err());
     }
 
+    /// AL-05: feedback is stored by name. Only an alert about an app, and not a Critical
+    /// one, can be allowed (audit A-08); any can be marked not useful.
     #[test]
-    fn feedback_is_named_and_critical_alerts_cannot_be_allowed() {
+    fn feedback_is_named_and_only_an_apps_alerts_below_critical_can_be_allowed() {
+        let about = |app: Option<&str>, severity| Alert {
+            rule: Rule::SensorWhileAway,
+            severity,
+            created: 0,
+            evidence: app
+                .map(|package| Evidence::App {
+                    package: package.to_owned(),
+                })
+                .into_iter()
+                .collect(),
+        };
         for feedback in [Feedback::NotUseful, Feedback::Allowed] {
             assert_eq!(Feedback::from_name(feedback.as_str()), Some(feedback));
-            assert!(feedback.allowed_for(Severity::High));
+            assert!(feedback.allowed_on(&about(Some("org.example.app"), Severity::High)));
         }
-        assert!(Feedback::NotUseful.allowed_for(Severity::Critical));
-        assert!(!Feedback::Allowed.allowed_for(Severity::Critical));
+        assert!(!Feedback::Allowed.allowed_on(&about(Some("org.example.app"), Severity::Critical)));
+        assert!(
+            !Feedback::Allowed.allowed_on(&about(None, Severity::High)),
+            "no app"
+        );
+        assert!(Feedback::NotUseful.allowed_on(&about(None, Severity::Critical)));
         assert_eq!(Feedback::from_name("useful"), None);
     }
 

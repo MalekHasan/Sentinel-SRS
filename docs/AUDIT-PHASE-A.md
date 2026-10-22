@@ -241,7 +241,7 @@
 
 #### A-08: السماح بتنبيه بلا تطبيق يُسكت القاعدة على كل الهاتف للأبد (AL-05)
 
-- [ ] تم الإصلاح
+- [x] تم الإصلاح: لا يُسمح إلا بتنبيه عن تطبيق، وليس Critical. النواة تقرر (`Feedback::allowed_on`) وتخبر التطبيق مع كل تنبيه (`can_allow`)، وترفض الباقي. ما سُمح به سابقاً بلا تطبيق لم يعد يُحسب. وشاشة جديدة "Alerts you allowed" تعرض كل ما سُمح به مع "Take back" ([ADR-0012](adr/0012-alerts.md)، القراران 14 و 15). يبقى A-38 (السماح في ID-12 للتطبيق كله لا لنوع الصلاحية)
 - **المكان:**
   - `crates/sentinel-store/src/lib.rs:736-750`: `subject = ""`.
   - `crates/sentinel-store/src/lib.rs:767`: `is_allowed`.
@@ -405,6 +405,7 @@
 - [ ] **A-49:** الـ fuzzing الأسبوعي في CI لم يشتغل ولا مرة. ولا targets لـ parsers القائمة (manifest، ملفات المؤشرات، `ip.db`، `trackers.db`) ولا لـ stack الحزم.
 - [x] **A-50:** (تم: أندرويد قد يعيد إنشاء الشاشة عند تغيير التباين، والشاشة التي وضع الاختبار محتواها ترجع فارغة. صار الاختبار يستخدم شاشة تضع محتواها بنفسها، `ThemeProbeActivity`، في نسخة debug فقط.) اختبار متذبذب: `AccessibilityTest.androidsContrastSettingSwitchesToHighContrast` فشل عند دمج #11، ونجح على نفس الكود في فرعه وعلى `6204460`.
 - [ ] **A-51:** `StringsTest` يبحث عن كلمات قليلة: لا يشمل "سليم" ولا "أمان" ولا "بأمان" ولا "safely" ولا "safety". ولا اختبار يضمن أن `test-key.pub` غير موجود في release، ولا يوجد CODEOWNERS لـ `keys/feed`.
+- [ ] **A-53:** اختبار متذبذب: `KeepMonitoringJobTest.startsMonitoringThatIsWantedButDoesNotRun` أوقف عملية الاختبارات مرة واحدة بـ `ForegroundServiceDidNotStartInTimeException` (run 39727734772 على PR #21)، ونجح في التشغيل التالي، والتغيير بينهما نصوص فقط. أندرويد يطلب `startForeground()` خلال وقت محدد بعد `startForegroundService()`. `onStartCommand` لا يستدعيه في مسارين: `ACTION_STOP`، والخدمة التي تعمل أصلاً (`engine != null`). المكان: `KeepMonitoringJob.kt:34`، `SentinelVpnService.kt:106-135`. الإصلاح: تحقق أي مسار حصل، واستدعِ `startForeground()` في كل مسار يصل إليه `startForegroundService()`.
 
 ### ملاحظات (Info)
 

@@ -34,9 +34,12 @@ import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.FirewallMode
 import io.github.malekhasan.sentinel.core.HistoryAlert
+import io.github.malekhasan.sentinel.core.HistoryException
 import io.github.malekhasan.sentinel.core.IndicatorSighting
 import io.github.malekhasan.sentinel.core.IndicatorThreat
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -192,32 +195,34 @@ class AlertsTest {
         assertTrue(dismissed)
     }
 
-    /** AL-05: allowing a gap alert stops the next gaps from raising one, until undone. */
+    /**
+     * AL-05, audit A-08: a gap names no app, so it cannot be allowed: that would silence
+     * every later gap for good. The next gap raises an alert again.
+     */
     @Test
-    fun allowingAnAlertStopsTheNextOnesLikeIt() {
+    fun anAlertAboutNoAppCannotBeAllowed() {
         History.wipe(context)
         val history = History.get(context)
         GapLog.open(context, 1_000L, "first")
         GapLog.closeOpen(context, 2_000L)
         val first = history.alerts(true, 10u).single()
-        assertTrue(history.setFeedback(first.id, AlertFeedback.ALLOWED))
-        assertTrue("allowing dismisses it", history.alerts(true, 10u).isEmpty())
+        assertFalse(first.canAllow)
+        assertThrows(HistoryException::class.java) { history.setFeedback(first.id, AlertFeedback.ALLOWED) }
+        history.dismissAlert(first.id)
         GapLog.open(context, 3_000L, "second")
         GapLog.closeOpen(context, 4_000L)
-        assertEquals("no alert for an allowed kind", 1, history.alerts(false, 10u).size)
-
-        assertTrue(history.setFeedback(first.id, null))
-        GapLog.open(context, 5_000L, "third")
-        GapLog.closeOpen(context, 6_000L)
-        assertEquals("alerts again once undone", 1, history.alerts(true, 10u).size)
+        assertEquals("the next gap alerts again", 1, history.alerts(true, 10u).size)
         History.wipe(context)
     }
 
-    /** AL-05: feedback on the screen, its result, and undo; a Critical alert cannot be allowed. */
+    /**
+     * AL-05: feedback on the screen, its result, and undo. An alert the core says cannot
+     * be allowed (Critical, or about no app) offers no Allow.
+     */
     @Test
     fun feedbackCanBeGivenAndTakenBack() {
         val given = mutableListOf<AlertFeedback?>()
-        var shown by mutableStateOf(alert())
+        var shown by mutableStateOf(alert().copy(canAllow = true))
         compose.setContent {
             SentinelTheme {
                 AlertDetail(AlertDetails(shown, emptyMap()), {}, {}, {}, onFeedback = { given += it })
