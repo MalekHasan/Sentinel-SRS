@@ -21,7 +21,17 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          [tls_client_hello, dns_query, dns_response, dns_names, feed_manifest, indicator_file, ip_db, tracker_db]
+          [
+            tls_client_hello,
+            dns_query,
+            dns_response,
+            dns_names,
+            feed_manifest,
+            indicator_file,
+            ip_db,
+            tracker_db,
+            packet_stack,
+          ]
     steps:
       - uses: actions/checkout@v5
       # cargo-fuzz needs nightly; the rest of the build stays on the pinned toolchain.

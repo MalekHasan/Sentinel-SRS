@@ -13,12 +13,15 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
+futures = "0.3.34"
 libfuzzer-sys = "0.4"
+netstack-smoltcp = "0.2.4"
 sentinel-detect = { path = "../crates/sentinel-detect" }
 sentinel-enrich = { path = "../crates/sentinel-enrich" }
 sentinel-feed = { path = "../crates/sentinel-feed" }
 sentinel-ioc = { path = "../crates/sentinel-ioc" }
 sentinel-vpn = { path = "../crates/sentinel-vpn" }
+tokio = { version = "1.53.3", features = ["rt", "time"] }
 
 [workspace]
 members = ["."]
@@ -79,6 +82,13 @@ bench = false
 [[bin]]
 name = "tracker_db"
 path = "fuzz_targets/tracker_db.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packet_stack"
+path = "fuzz_targets/packet_stack.rs"
 test = false
 doc = false
 bench = false
