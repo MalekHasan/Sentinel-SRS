@@ -152,6 +152,14 @@ impl Engine {
                 .name("sentinel-engine-main".into())
                 .spawn(move || {
                     let observer = Arc::clone(&events);
+                    // Batches go to the history and the app from a task of their own, on a
+                    // worker thread. This thread runs the loop that takes new connections:
+                    // a batch waiting on a busy history, or on a slow app, must not hold
+                    // it up (audit A-14).
+                    let delivery = {
+                        let events = Arc::clone(&events);
+                        runtime.spawn(async move { events.deliver().await })
+                    };
                     let outcome = runtime.block_on(async {
                         tokio::select! {
                             result = sentinel_vpn::run(
@@ -164,10 +172,12 @@ impl Engine {
                                 Ok(()) => Some("the engine stopped unexpectedly".to_owned()),
                                 Err(e) => Some(e.to_string()),
                             },
-                            () = events.deliver() => None,
                             _ = stop_rx => None,
                         }
                     });
+                    // Its last batch is written before the flows ended below.
+                    delivery.abort();
+                    let _ = runtime.block_on(delivery);
                     // The relays are gone: report the flows they left open as ended now,
                     // so the app never keeps a flow open forever.
                     events.close_all(now_ms());
@@ -435,6 +445,138 @@ mod tests {
             flows,
             batches,
         }
+    }
+
+    /// Takes its time over the first batch, as a busy history or a slow app would, and
+    /// says when it has begun.
+    #[derive(Default)]
+    struct SlowFlows {
+        slowed: AtomicBool,
+        began: AtomicBool,
+    }
+    impl FlowObserver for SlowFlows {
+        fn owner(&self, _: FlowProto, _: String, _: u16, _: String, _: u16) -> FlowOwner {
+            FlowOwner {
+                uid: OWNER,
+                app: Some(OWNER_APP.to_owned()),
+                installed_ms: None,
+                system: false,
+                packages: Vec::new(),
+            }
+        }
+        fn flows(&self, _: Vec<FlowRecord>) {
+            if !self.slowed.swap(true, Ordering::SeqCst) {
+                self.began.store(true, Ordering::SeqCst);
+                std::thread::sleep(SLOW_BATCH);
+            }
+        }
+    }
+    const SLOW_BATCH: Duration = Duration::from_secs(4);
+
+    /// One TCP segment from the app at 10.111.0.1:`from` to 127.0.0.1:`to`.
+    fn tcp_segment(from: u16, to: u16, seq: u32, ack: Option<u32>, payload: &[u8]) -> Vec<u8> {
+        let mut builder = etherparse::PacketBuilder::ipv4([10, 111, 0, 1], [127, 0, 0, 1], 64)
+            .tcp(from, to, seq, 64_240);
+        match ack {
+            Some(ack) => builder = builder.ack(ack).psh(),
+            None => builder = builder.syn(),
+        }
+        let mut packet = Vec::new();
+        builder.write(&mut packet, payload).unwrap();
+        packet
+    }
+
+    /// The next TCP segment the engine sends to the app's `port` within `within`: whether
+    /// it is a SYN, its sequence number and its payload.
+    fn next_segment(peer: &Socket, port: u16, within: Duration) -> Option<(bool, u32, Vec<u8>)> {
+        let deadline = std::time::Instant::now() + within;
+        let mut buf = vec![0u8; 65_536];
+        while std::time::Instant::now() < deadline {
+            let Ok(n) = (&*peer).read(&mut buf) else {
+                continue;
+            };
+            let Ok(sliced) = etherparse::SlicedPacket::from_ip(&buf[..n]) else {
+                continue;
+            };
+            if let Some(etherparse::TransportSlice::Tcp(tcp)) = sliced.transport
+                && tcp.destination_port() == port
+            {
+                return Some((tcp.syn(), tcp.sequence_number(), tcp.payload().to_vec()));
+            }
+        }
+        None
+    }
+
+    /// Audit A-14: telling the history and the app about flows runs apart from the loop
+    /// that takes new TCP connections. While one batch takes seconds, as a history held
+    /// by a long export would, a new connection is relayed at once.
+    #[test]
+    fn a_slow_batch_does_not_hold_up_new_connections() {
+        let server = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = server.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut stream in server.incoming().flatten() {
+                std::thread::spawn(move || {
+                    use std::io::Write;
+                    let mut buf = [0u8; 512];
+                    while let Ok(n) = stream.read(&mut buf)
+                        && n > 0
+                        && stream.write_all(&buf[..n]).is_ok()
+                    {}
+                });
+            }
+        });
+        let (tun, peer) = Socket::pair(Domain::UNIX, Type::SEQPACKET, None).unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let (tx, _stopped) = mpsc::channel();
+        let flows = Arc::new(SlowFlows::default());
+        let engine = Engine::start(
+            OwnedFd::from(tun).into_raw_fd(),
+            vec!["10.111.0.53".into()],
+            Arc::new(CountingProtector(AtomicUsize::new(0))),
+            Arc::new(ChannelListener(Mutex::new(tx))),
+            Arc::clone(&flows) as Arc<dyn FlowObserver>,
+            None,
+        )
+        .unwrap();
+
+        // A first flow, whose batch is slow.
+        peer.send(&udp_packet([127, 0, 0, 1], 9)).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !flows.began.load(Ordering::SeqCst) {
+            assert!(std::time::Instant::now() < deadline, "no batch");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let asked = std::time::Instant::now();
+        const APP_PORT: u16 = 41_000;
+        const ISN: u32 = 1_000;
+        peer.send(&tcp_segment(APP_PORT, port, ISN, None, b""))
+            .unwrap();
+        let (syn, server_isn, _) =
+            next_segment(&peer, APP_PORT, Duration::from_secs(2)).expect("no SYN-ACK");
+        assert!(syn);
+        peer.send(&tcp_segment(
+            APP_PORT,
+            port,
+            ISN + 1,
+            Some(server_isn.wrapping_add(1)),
+            b"ping",
+        ))
+        .unwrap();
+        let echoed = loop {
+            let left = (asked + Duration::from_secs(3))
+                .saturating_duration_since(std::time::Instant::now());
+            match next_segment(&peer, APP_PORT, left) {
+                Some((_, _, payload)) if payload == b"ping" => break true,
+                Some(_) => {}
+                None => break false,
+            }
+        };
+        assert!(echoed, "the new connection waited for the slow batch");
+        assert!(asked.elapsed() < SLOW_BATCH, "took {:?}", asked.elapsed());
+        engine.stop();
     }
 
     #[test]

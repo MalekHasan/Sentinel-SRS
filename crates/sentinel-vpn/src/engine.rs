@@ -134,19 +134,19 @@ impl EngineStats {
         let last = Duration::from_millis(self.last_beat_ms.load(Ordering::Relaxed));
         self.origin.elapsed().saturating_sub(last)
     }
-    fn beat(&self) {
+    pub(crate) fn beat(&self) {
         let now = u64::try_from(self.origin.elapsed().as_millis()).unwrap_or(u64::MAX);
         self.last_beat_ms.store(now, Ordering::Relaxed);
     }
 }
 
-/// SP-03: report every `period`, for as long as the engine's runtime runs its tasks.
+/// SP-03: `beat` every `period`, for as long as the engine's runtime runs its tasks.
 /// Never returns; the engine drops it when it stops.
-pub(crate) async fn heartbeat(stats: Arc<EngineStats>, period: Duration) {
+pub(crate) async fn heartbeat(period: Duration, mut beat: impl FnMut()) {
     let mut every = tokio::time::interval(period);
     every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         every.tick().await;
-        stats.beat();
+        beat();
     }
 }

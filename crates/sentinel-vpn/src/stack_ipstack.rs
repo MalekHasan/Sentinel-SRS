@@ -55,7 +55,8 @@ pub async fn run_ipstack(
     // own task on drop). So does the heartbeat (SP-03).
     let mut relays = JoinSet::new();
     let mut beats = JoinSet::new();
-    beats.spawn(heartbeat(Arc::clone(&ctx.stats), ctx.config.heartbeat));
+    let stats = Arc::clone(&ctx.stats);
+    beats.spawn(heartbeat(ctx.config.heartbeat, move || stats.beat()));
     let closed = closed.wait();
     tokio::pin!(closed);
     loop {
