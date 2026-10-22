@@ -37,12 +37,31 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install --locked cargo-ndk --version 4.1.2
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          # The wrapper JAR must be one Gradle published (audit A-47).
+          validate-wrappers: true
       - name: Use the newest installed NDK
         # Runner variables are not in the `env` context, so read them from the shell.
         run: echo "ANDROID_NDK_HOME=${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" >> "$GITHUB_ENV"
-      - name: Build and lint
+      - name: Build and lint, debug and release
+        # The release build is what users get: it is built and linted too (audit A-48).
         working-directory: apps/android
-        run: ./gradlew --no-daemon --stacktrace assembleDebug lintDebug
+        run: ./gradlew --no-daemon --stacktrace assembleDebug lintDebug assembleRelease lintRelease
+      - name: Only debug builds trust the test feed key
+        # The device tests' bundles are signed with a key whose secret was deleted; a
+        # release must not trust it (ADR-0019, audit A-51). Its absence is checked in the
+        # release APK, and its presence in the debug one shows the check can see it.
+        working-directory: apps/android/app/build/outputs/apk
+        run: |
+          key=$(sed -n 's/.*TEST_KEY = "\([0-9a-f]\{64\}\)".*/\1/p' \
+            ../../../src/debug/kotlin/io/github/malekhasan/sentinel/FeedKeys.kt)
+          test -n "$key"
+          holds() { unzip -p "$1" 'classes*.dex' | grep -c -a "$key" || true; }
+          debug=$(holds debug/app-debug.apk)
+          release=$(holds release/app-release-unsigned.apk)
+          echo "test key in debug: $debug, in release: $release"
+          test "$debug" -gt 0
+          test "$release" -eq 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -50,6 +69,7 @@ jobs:
           path: |
             apps/android/app/build/outputs/apk/debug/*.apk
             apps/android/app/build/reports/lint-results-debug.html
+            apps/android/app/build/reports/lint-results-release.html
           if-no-files-found: ignore
 
   device-tests:

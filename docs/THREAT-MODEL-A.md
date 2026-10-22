@@ -79,7 +79,7 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
 | I1 | Payloads leak through logs or the database | Payloads are never stored; only the ClientHello is parsed for SNI, in memory | Done (engine) |
-| I2 | Cloud backup copies the history off the phone | `android:allowBackup="false"` | Done |
+| I2 | Cloud backup, or moving to a new phone, copies the history off the phone | `android:allowBackup="false"`; from Android 12, data extraction rules exclude every domain from both (audit A-46). The history and its key are in no-backup storage | Done: `BackupTest` reads the rules back on Android 14 |
 | I3 | Another app reads our files | App-private no-backup storage plus SQLCipher with a random key wrapped by the Android Keystore (ADR-0009) | Done |
 | I4 | Someone with the unlocked phone browses the history | One-tap wipe (deletes database and key); retention: connections in detail for 30 days, or as few as 1 if the user chooses, other records for their SRS §13.2 time (ADR-0039); optional app lock (SRS §15.2) | Wipe done. The app lock is not in Phase A's plan: open, for the owner to schedule (review finding F4) |
 | I5 | The feed download reveals that this person uses Sentinel | No identifiers sent (tested: the request names no phone); download is optional; import from a folder works offline (ADR-0019) | Done |

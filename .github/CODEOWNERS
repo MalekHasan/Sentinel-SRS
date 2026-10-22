@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The keys a release trusts to sign the indicator feed, and the code that reads them
+# (ADR-0019, audit A-51): a change here decides what Sentinel believes, so the owner
+# reviews it.
+/keys/feed/ @MalekHasan
+/apps/android/app/src/release/kotlin/io/github/malekhasan/sentinel/FeedKeys.kt @MalekHasan

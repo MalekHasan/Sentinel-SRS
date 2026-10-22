@@ -47,7 +47,7 @@ Two Gradle tasks run before the Android build. Both are skipped when nothing und
 
 `.github/workflows/android.yml` runs on every push:
 
-- **build, lint:** builds the debug APK and runs lint; the APK is uploaded as an artifact.
+- **build, lint:** builds the debug and release APKs and runs lint on both (audit A-48). It checks that the debug APK trusts the device tests' feed key and the release APK does not (A-51). The Gradle wrapper JAR is checked against Gradle's published ones, and the wrapper checks the Gradle download against its SHA-256 (`distributionSha256Sum`, A-47). The debug APK and both lint reports are uploaded as an artifact.
 - **instrumented tests:** starts an x86_64 emulator (API 34) and runs the device tests, then lists each test case and its result:
   - `CoreBindingTest` loads the Rust library and calls it through UniFFI;
   - `MonitoringTest` runs the VPN end to end (see above; CI starts the HTTP server);
