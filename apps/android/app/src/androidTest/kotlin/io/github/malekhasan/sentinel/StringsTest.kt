@@ -36,12 +36,16 @@ class StringsTest {
         assertEquals("strings that start right to left", emptyList<String>(), wrongDirection("en", rtl = false))
     }
 
-    /** MS-15: no text calls the phone or a result clean or safe, in either language. */
+    /**
+     * MS-15: no text calls the phone or a result clean or safe, in either language, in any
+     * form of the words (audit A-51). In Arabic, "security update" (تحديث الأمان) is
+     * Android's own name for one, and says nothing of the phone; every other "أمان" counts.
+     */
     @Test
     fun noTextSaysCleanOrSafe() {
         val banned = mapOf(
-            "en" to Regex("\\b(clean|safe)\\b", RegexOption.IGNORE_CASE),
-            "ar" to Regex("نظيف|آمن"),
+            "en" to Regex("\\b(clean(ed)?|safe(ly|ty)?)\\b", RegexOption.IGNORE_CASE),
+            "ar" to Regex("نظيف|آمن|سليم|(?<!تحديث )(?<!تحديث ال)أمان"),
         )
         val found = banned.flatMap { (language, words) ->
             texts(resources(language))
