@@ -703,6 +703,7 @@ mod tests {
             rule(None, domain("chat.example"), RuleAction::Allow),
             rule(Some(CHAT), domain("push.chat.example"), RuleAction::Allow),
             rule(None, domain("ads.example"), RuleAction::Block),
+            rule(None, domain("www.ads.example"), RuleAction::Allow),
             rule(None, network("192.0.2.0/24"), RuleAction::Allow),
         ]);
         // App and destination beats destination beats app.
@@ -724,6 +725,11 @@ mod tests {
                 Some(MAPS),
                 Place::new(Some(ip("192.0.2.1")), Some("ads.example"))
             ),
+            Some(RuleAction::Block)
+        );
+        // A name below a blocked domain is no more specific (audit A-52).
+        assert_eq!(
+            rules.decide(Some(MAPS), Place::new(None, Some("www.ads.example"))),
             Some(RuleAction::Block)
         );
         assert_eq!(

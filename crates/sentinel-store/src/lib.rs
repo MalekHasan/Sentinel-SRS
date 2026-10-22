@@ -276,8 +276,8 @@ pub struct JournalEntry {
     /// Unix milliseconds.
     pub at: i64,
     pub undone_at: Option<i64>,
-    /// Whether [`Store::undo`] would undo it now: it was not undone yet, and its setting
-    /// is still as it left it.
+    /// Whether [`Store::undo`] would undo it now: it was not undone yet, no later action
+    /// on its setting is in force, and the setting is still as it left it.
     pub can_undo: bool,
 }
 
@@ -1247,13 +1247,20 @@ impl Store {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut entries = Vec::with_capacity(rows.len());
+        // The settings that a later action, not undone, changed: newest first, the rows
+        // hold every action after the one at hand.
+        let mut changed_later: Vec<Setting> = Vec::new();
         for (id, alert, actor, before, after, undoable, at, undone_at) in rows {
             let Some(change) = read_change(&before, &after) else {
                 continue;
             };
             let can_undo = undoable
                 && undone_at.is_none()
+                && !changed_later.iter().any(|s| s.same_setting(change.after()))
                 && read_setting(&conn, change.after())? == *change.after();
+            if undone_at.is_none() {
+                changed_later.push(change.after().clone());
+            }
             entries.push(JournalEntry {
                 id,
                 alert,
@@ -1267,8 +1274,9 @@ impl Store {
         Ok(entries)
     }
 
-    /// Undo the journalled action `id`: put its setting back as it was before, if the
-    /// setting is still as the action left it, and record when it was undone.
+    /// Undo the journalled action `id`: put its setting back as it was before, if no
+    /// later action on that setting is in force and the setting is still as the action
+    /// left it, and record when it was undone.
     pub fn undo(&self, id: i64, now: i64) -> Result<Undo> {
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
@@ -1296,7 +1304,21 @@ impl Store {
         let Some(change) = read_change(&before, &after).filter(|_| undoable) else {
             return Ok(Undo::CannotUndo);
         };
-        if read_setting(&tx, change.after())? != *change.after() {
+        // A later action may have put the setting back as this one left it (blocking,
+        // taking the block back, blocking again): undoing this one would skip it.
+        let later = tx
+            .prepare(
+                "SELECT before_state, after_state FROM action_journal
+                 WHERE id > ?1 AND undone_at IS NULL",
+            )?
+            .query_map([id], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let changed_later = later.iter().any(|(before, after)| {
+            read_change(before, after).is_some_and(|c| c.after().same_setting(change.after()))
+        });
+        if changed_later || read_setting(&tx, change.after())? != *change.after() {
             return Ok(Undo::ChangedSince);
         }
         write_setting(&tx, change.before(), now)?;

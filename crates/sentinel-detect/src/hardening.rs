@@ -6,6 +6,11 @@
 /// security bulletins are monthly, and makers often ship them a month or two late.
 pub const UPDATE_MAX_AGE_DAYS: i64 = 90;
 
+/// How far past the phone's clock the security update's date may be. Some makers ship a
+/// month's update before the month begins, dated its 1st or 5th. A date further ahead
+/// means the clock or the date is wrong, and the update's age cannot be told.
+pub const UPDATE_MAX_AHEAD_DAYS: i64 = 31;
+
 /// A step of the checklist, in the order shown: the most protection first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Step {
@@ -71,6 +76,7 @@ pub fn checklist(facts: &Facts, today_ms: i64) -> Vec<Item> {
     };
     let today = today_ms.div_euclid(86_400_000);
     let security_update = match facts.security_patch.as_deref().and_then(day_number) {
+        Some(patch) if patch - today > UPDATE_MAX_AHEAD_DAYS => Status::CheckYourself,
         Some(patch) => done(today - patch <= UPDATE_MAX_AGE_DAYS),
         None => Status::CheckYourself,
     };
@@ -219,6 +225,23 @@ mod tests {
             status(&checklist(&recent, today), Step::SecurityUpdate),
             Status::Done
         );
+    }
+
+    /// Audit A-52: an update dated far past the phone's clock is not counted as done;
+    /// one dated a month ahead, as some makers ship them, is.
+    #[test]
+    fn an_update_from_the_future_is_left_to_the_user() {
+        let today = 20_742 * DAY;
+        let update = |date: &str| {
+            let facts = Facts {
+                security_patch: Some(date.to_owned()),
+                ..facts()
+            };
+            status(&checklist(&facts, today), Step::SecurityUpdate)
+        };
+        assert_eq!(update("2026-11-16"), Status::Done);
+        assert_eq!(update("2026-11-17"), Status::CheckYourself);
+        assert_eq!(update("2099-01-01"), Status::CheckYourself);
     }
 
     #[test]
