@@ -66,8 +66,9 @@ dependencies {
 
 val rustWorkspace: Directory = rootProject.layout.projectDirectory.dir("../..")
 
+// keys/ holds the feed's trusted keys, compiled into the library (audit A-21).
 fun rustInputs() = rustWorkspace.asFileTree.matching {
-    include("crates/**", "third_party/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
+    include("crates/**", "third_party/**", "keys/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
     exclude("**/target/**", "**/lab/**")
 }
 
