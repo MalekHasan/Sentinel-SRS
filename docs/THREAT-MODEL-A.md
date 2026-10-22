@@ -85,6 +85,7 @@ Status: **Done** = implemented and tested; **Open** = a gap with its planned fix
 | I5 | The feed download reveals that this person uses Sentinel | No identifiers sent (tested: the request names no phone); download is optional; import from a folder works offline (ADR-0019) | Done |
 | I6 | Upstream connections from the engine reveal the device's real IP | Same as without Sentinel; we add no servers of our own | Accepted |
 | I7 | Notifications on the lock screen tell whoever holds the phone what Sentinel found | Alert notifications are secret: on a locked phone they sound but show nothing (ADR-0012) | Done |
+| I11 | Spyware with notification access reads Sentinel's alert and learns it was found (B4) | Alerts about signs of someone watching say only that there is something to review; what was found shows in the app only. The channel, and so the severity, can still be seen (ADR-0012 decision 11) | Done (audit finding A-10): tested on Android 14 |
 | I8 | An export holds the history in plain text | Only at the user's request, after a warning that the file is not encrypted; Android's document picker; no copy kept by Sentinel (ADR-0033) | Done |
 | I9 | The monitoring notification and the VPN key icon show anyone who sees the phone that Sentinel runs | Required: no hidden mode (SRS §15.3) | Accepted |
 | I10 | Sensor use, and the app guessed to be on screen, add to what the history tells about the user | Same protection as the history (I3); usage access is optional and every guess is labelled as one (ADR-0027) | Done |

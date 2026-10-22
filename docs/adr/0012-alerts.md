@@ -4,6 +4,7 @@
 - Date: 2026-10-15
 - Implements: SRS AL-01, AL-02, the alert for monitoring gaps (SP-03), delivery as notifications (AL-03, AL-04, AL-06), and feedback (AL-05)
 - Amended 2026-10-22 for audit finding A-08 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): decisions 14 and 15, and the list of what was allowed.
+- Amended 2026-10-22 for audit finding A-10: decision 11, discreet notifications.
 
 ## Context
 
@@ -50,6 +51,11 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
    This completes AL-01's distinct sounds. The user can change each channel in Android's settings.
 10. **Repeated alerts share one notification.** Alerts of the same rule about the same app replace each other's notification, which says how many more like it are open (AL-03's grouping).
 11. **Nothing on a locked phone.** Alert notifications are secret: on a phone locked with a PIN, pattern or password they make their sound but show nothing until it is unlocked, whatever the lock screen setting. What was found, and about which app, can matter to someone who looks at another person's phone. THREAT-MODEL-A's B5 is that person with the phone unlocked; a locked phone should not show more. A "private" notification with a neutral public version is not enough. Android shows private notifications in full when the user's lock screen setting shows all notification content, which is a common default. Android also ignores lock screen visibility that an app sets on its own channel.
+    - **Alerts about signs of someone watching the phone say only that there is something to review.** An app with notification access reads every notification, locked phone or not, and spyware often has that access. Had the notification said "Known stalkerware or spyware app found", that spyware would learn it was found, and could tell whoever put it there before the user is ready (THREAT-MODEL-A B4, I11).
+        - Discreet: a known indicator, special access, wireless debugging, a new root certificate, the microphone or camera used while the user was away, changed DNS, Private DNS or proxy settings, check-ins at regular times, data hidden in DNS, an app's own encrypted DNS, upload surges and uploads to sharing sites. Their notification reads "Sentinel has something for you to review. Open Sentinel to see it.", with no severity, no app and no count, and all of them share one notification, whose tag names neither the rule nor the app.
+        - Not discreet: monitoring stopped or keeps stopping, a new history, an app's first use of the network or new places, and too many connections. They find nothing about anyone watching.
+        - The list is checked when the app is built: a new rule must be placed in one or the other.
+        - What was found, and about which app, shows in the app only, after it is opened. The notification still uses its severity's channel, so it sounds as loud as the alert is (AL-01).
 12. Tapping a notification opens the alert in the app, and a notification offers no other action. Every alert also lives in the app, so a notification that imitates Sentinel's leads nowhere new (THREAT-MODEL-A S4).
 
 ### Feedback (AL-05)
@@ -92,10 +98,12 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
   - the four channels' importance, sounds and vibrations;
   - that a gap posts a secret Warning notification;
   - that five gaps give one notification, three of them notified;
-  - that a Warning waits in the app while Do Not Disturb is on.
+  - that a Warning waits in the app while Do Not Disturb is on;
+  - that an app gaining accessibility access posts a notification that says only that there is something to review, with no severity or app, under a tag that names neither.
 
 ## Consequences
 
+- **A notification-reading app still sees when a discreet alert arrives and its channel**, so it can tell a High or Critical alert came, though not what it found. Hiding that too would make every alert sound alike (AL-01).
 - Every new rule needs a title and an explanation in each app's strings. `AlertTextTest` finds rules by their `alert_<rule>_title` and `alert_<rule>_text` strings, so a rule with strings in English only, or with hard words, fails the build's device tests.
 - A gap's reason is stored as text in the language of the moment it was recorded (the gap log predates this decision); the alert shows it as evidence, as recorded.
 - **Do Not Disturb on Android.** Android lets only the user allow an app's channel through Do Not Disturb. Sentinel asks for it on the High and Critical channels, and posts those alerts during Do Not Disturb. Whether they make a sound depends on the user allowing Sentinel in Do Not Disturb. Quiet hours on Android are Do Not Disturb schedules, so Sentinel has no quiet-hours setting of its own. A settings screen that shows the user how to let Critical alerts through comes with the settings work.
