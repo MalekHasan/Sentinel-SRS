@@ -1139,6 +1139,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "uniffi",
+ "zeroize",
 ]
 
 [[package]]

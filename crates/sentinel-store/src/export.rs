@@ -259,7 +259,9 @@ fn csv_cell(value: &Value) -> String {
     };
     // A spreadsheet runs a cell that starts like a formula; names in the history come
     // from the network and may be made to (CSV injection). A leading quote keeps it text.
-    let plain = if plain.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+    // Spreadsheets skip the space before a formula, so it counts too (audit A-31).
+    let formula = plain.trim_start().starts_with(['=', '+', '-', '@']);
+    let plain = if formula || plain.starts_with(['\t', '\r', '\n']) {
         format!("'{plain}")
     } else {
         plain
@@ -319,6 +321,10 @@ mod tests {
             "\"'=HYPERLINK(\"\"x\"\")\""
         );
         assert_eq!(csv_cell(&json!("-2+3")), "'-2+3");
+        assert_eq!(csv_cell(&json!(" =1+1")), "' =1+1");
+        assert_eq!(csv_cell(&json!("\n=1+1")), "\"'\n=1+1\"");
+        assert_eq!(csv_cell(&json!("\u{a0}@SUM(A1)")), "'\u{a0}@SUM(A1)");
+        assert_eq!(csv_cell(&json!("a = b")), "a = b");
         assert_eq!(
             csv_cell(&json!([{"type": "app"}])),
             "\"[{\"\"type\"\":\"\"app\"\"}]\""

@@ -380,9 +380,12 @@
 
 - [ ] **A-27:** حوار المسح لا يذكر إلا الاتصالات والانقطاعات، بينما يمسح القواعد والعزل والتنبيهات والسجل أيضاً. فشل المسح يُبلع، والزر يختفي إذا لم توجد اتصالات أو انقطاعات. المكان: `res/values*/strings.xml` (`wipe_text`)، `MainActivity.kt:365` و `:607-609`.
 - [ ] **A-28:** المسح يحذف ملفات قد تكون ما زالت مفتوحة (hunt أو export في الخلفية). المكان: `History.kt:83`، `crates/sentinel-store/src/lib.rs:1424`. عند إغلاق الاتصال القديم قد تُحذف ملفات `-wal` و `-shm` الخاصة بالتاريخ الجديد.
-- [ ] **A-29:** خريطة `open_flows` تتغير قبل `commit`، ولا تُرجَع إذا فشلت الـ batch. قد تُكتب بيانات اتصال فوق اتصال آخر. المكان: `crates/sentinel-store/src/lib.rs:489-509` و `:1739`.
-- [ ] **A-30:** نسخ مفتاح قاعدة البيانات لا تُصفَّر في الذاكرة: نصوص `format!` و `PRAGMA key` و `Vec<u8>`. المكان: `crates/sentinel-store/src/lib.rs:367-370`، `crates/sentinel-ffi/src/history.rs:216`. الإصلاح: استخدم `write!` داخل `Zeroizing<String>`.
-- [ ] **A-31:** أسماء DNS لا تُتحقق، فقد تحوي فواصل وأسطراً جديدة ومحارف bidi. وحماية حقن الصيغ في CSV لا تغطي مسافة أو سطراً جديداً قبل `=`. المكان: `crates/sentinel-vpn/src/relay.rs:422-425`، `crates/sentinel-store/src/export.rs:262`.
+- [x] **A-29:** خريطة `open_flows` تتغير قبل `commit`، ولا تُرجَع إذا فشلت الـ batch. قد تُكتب بيانات اتصال فوق اتصال آخر. المكان: `crates/sentinel-store/src/lib.rs:489-509` و `:1739`.
+  - تم الإصلاح: تغييرات `open_flows` تُجمع أثناء الـ batch وتُطبَّق فقط بعد `commit`. الـ batch الفاشلة لا تترك رقم صف لاتصال لم يُحفظ ([ADR-0009](adr/0009-local-history-store.md))
+- [x] **A-30:** نسخ مفتاح قاعدة البيانات لا تُصفَّر في الذاكرة: نصوص `format!` و `PRAGMA key` و `Vec<u8>`. المكان: `crates/sentinel-store/src/lib.rs:367-370`، `crates/sentinel-ffi/src/history.rs:216`. الإصلاح: استخدم `write!` داخل `Zeroizing<String>`.
+  - تم الإصلاح: الـ `Vec<u8>` من Kotlin ونسخة المصفوفة صارتا `Zeroizing`، وجملة `PRAGMA key` كاملة تُكتب بـ `write!` في `Zeroizing<String>` بسعة محجوزة، وتُمرَّر لـ SQLite بـ `execute_batch` دون نسخة. يبقى خارج يدنا: buffer الـ UniFFI ونسخة SQLite الداخلية ([ADR-0009](adr/0009-local-history-store.md))
+- [x] **A-31:** أسماء DNS لا تُتحقق، فقد تحوي فواصل وأسطراً جديدة ومحارف bidi. وحماية حقن الصيغ في CSV لا تغطي مسافة أو سطراً جديداً قبل `=`. المكان: `crates/sentinel-vpn/src/relay.rs:422-425`، `crates/sentinel-store/src/export.rs:262`.
+  - تم الإصلاح: أسماء DNS تُحفظ بصيغة العرض (RFC 1035): أي بايت غير حرف أو رقم أو `-` أو `_` يُكتب `\DDD`، فلا أسطر جديدة ولا فواصل ولا محارف bidi، ونقطة داخل label لا تصنع labelين. وحماية CSV تنظر لأول حرف غير المسافات، وللسطر الجديد في البداية. أهداف الـ fuzz تتحقق من الصيغة ([ADR-0006](adr/0006-android-packet-engine.md)، [ADR-0033](adr/0033-history-export.md))
 - [ ] **A-32:** إشعارات التنبيهات تبقى بعد المسح، وتشير لأرقام تنبيهات أصبحت تخص تنبيهات أخرى. الإصلاح: `cancelAll()` عند المسح.
 
 **الكشف والجدار الناري**

@@ -19,7 +19,7 @@ The A0 plan asked: can a Rust userspace TCP/IP stack do this well enough, or sho
 | `TunDevice` | The TUN descriptor as an async packet device (one read or write per packet). Reports when the tunnel closes. |
 | Relays | Per flow: ask the `Observer` (block or allow), connect a protected upstream socket, copy both ways, count bytes. |
 | `Protect` | `VpnService.protect()` on Android; a socket mark plus policy routing in the lab. |
-| Metadata | Hostname from DNS answers (cache) or from the TLS ClientHello (SNI), including ClientHellos split across two segments. Payloads are never stored. |
+| Metadata | Hostname from DNS answers (cache) or from the TLS ClientHello (SNI), including ClientHellos split across two segments. Payloads are never stored. A name from DNS is kept in DNS presentation format: any byte but a letter, a digit, `-` and `_` is written `\DDD`, so a name holds no line break, comma or direction mark, and a dot inside a label does not make two labels (audit A-31). A server name from TLS is refused unless it is a host name. |
 | Blocking | Before any upstream connection (by app or address), or by server name before the ClientHello is forwarded. |
 | Stacks | `netstack-smoltcp` 0.2.4 on smoltcp 0.12 (default since Sprint 1) and `ipstack` 1.0.1 (`--features ipstack`). Both vendored and patched in `third_party/`. |
 | DNS forwarding | Queries to the tunnel's own resolver address go to the current network's resolvers (Sprint 1, [ADR-0008](0008-android-tunnel-setup.md)). |

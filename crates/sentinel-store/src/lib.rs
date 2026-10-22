@@ -7,6 +7,7 @@
 //! the file is encrypted with a random 256-bit key, and [`wipe`] deletes it.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -384,13 +385,17 @@ impl Store {
     }
 
     fn with_connection(conn: Connection, key: &[u8; KEY_LEN]) -> Result<Self> {
-        let mut hex = Zeroizing::new(String::with_capacity(KEY_LEN * 2 + 3));
-        hex.push_str("x'");
+        // The key in hex, as SQLCipher takes a raw key. Every copy is wiped when it is
+        // dropped: the statement is written in place, in a buffer that never grows, and
+        // handed to SQLite as it is (audit A-30).
+        const PRAGMA: &str = "PRAGMA key = \"x'";
+        let mut sql = Zeroizing::new(String::with_capacity(PRAGMA.len() + KEY_LEN * 2 + 2));
+        sql.push_str(PRAGMA);
         for byte in key {
-            hex.push_str(&format!("{byte:02X}"));
+            let _ = write!(sql, "{byte:02X}");
         }
-        hex.push('\'');
-        conn.pragma_update(None, "key", hex.as_str())?;
+        sql.push_str("'\"");
+        conn.execute_batch(&sql)?;
         // The first real read fails with "not a database" if the key is wrong or the file
         // is not ours. Any other failure, busy or I/O, says nothing about the key: taking it
         // for a wrong key would have the app start a new history (audit A-06).
@@ -526,6 +531,10 @@ impl Store {
         let mut conn = lock(&self.conn);
         let mut open = lock(&self.open_flows);
         let tx = conn.transaction()?;
+        // What this batch opens (`Some`) and ends (`None`). The open flows change only once
+        // it is committed: a batch that fails leaves no row id behind, which the next flow
+        // would be given and the failed flow's end would then overwrite (audit A-29).
+        let mut changed: HashMap<(u64, u64), Option<i64>> = HashMap::new();
         let mut first_seen = Vec::new();
         for FlowEvent {
             engine_id,
@@ -537,11 +546,13 @@ impl Store {
                 record_destination(&tx, row, facts)?;
             }
             let key = (session, *engine_id);
-            let existing = if row.ended.is_some() {
-                open.remove(&key)
-            } else {
-                open.get(&key).copied()
+            let existing = match changed.get(&key) {
+                Some(id) => *id,
+                None => open.get(&key).copied(),
             };
+            if row.ended.is_some() {
+                changed.insert(key, None);
+            }
             match existing {
                 Some(id) => update_flow(&tx, id, row)?,
                 None => {
@@ -554,7 +565,7 @@ impl Store {
                         });
                     }
                     if row.ended.is_none() {
-                        open.insert(key, id);
+                        changed.insert(key, Some(id));
                     }
                 }
             }
@@ -563,6 +574,12 @@ impl Store {
             }
         }
         tx.commit()?;
+        for (key, id) in changed {
+            match id {
+                Some(id) => open.insert(key, id),
+                None => open.remove(&key),
+            };
+        }
         Ok(first_seen)
     }
 

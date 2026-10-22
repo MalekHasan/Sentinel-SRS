@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use sentinel_detect::{FirewallMode as Mode, Isolation, Place, RuleSet};
 use sentinel_store::{KEY_LEN, Store, StoreError, Undo};
+use zeroize::Zeroizing;
 
 use crate::alerts::{
     AlertDelivery, AlertFeedback, AlertListener, AlertRule, AllowedRule, HistoryAlert,
@@ -216,9 +217,13 @@ impl HistoryStore {
     /// unwrapped with a Keystore key; see ADR-0009).
     #[uniffi::constructor]
     pub fn open(path: String, key: Vec<u8>) -> Result<Arc<Self>, HistoryError> {
-        let key: [u8; KEY_LEN] = key.try_into().map_err(|_| HistoryError::BadKey {
-            expected: KEY_LEN as u32,
-        })?;
+        // Both copies of the key are wiped when dropped (audit A-30).
+        let key = Zeroizing::new(key);
+        let key: Zeroizing<[u8; KEY_LEN]> = Zeroizing::new(key.as_slice().try_into().map_err(
+            |_| HistoryError::BadKey {
+                expected: KEY_LEN as u32,
+            },
+        )?);
         let store = Store::open(Path::new(&path), &key)?;
         let mode = store.firewall_mode()?;
         let isolation = store.isolation()?.map(Arc::new);
