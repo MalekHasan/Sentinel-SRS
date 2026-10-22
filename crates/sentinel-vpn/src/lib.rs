@@ -32,7 +32,8 @@ mod stack_smoltcp;
 
 pub use device::{TunClosed, TunDevice};
 pub use dns::{
-    DnsAnswer, DnsCache, DnsQuery, name_error_reply, parse_dns_query, parse_dns_response,
+    DnsAnswer, DnsCache, DnsQuery, name_error_reply, parse_dns_query, parse_dns_questions,
+    parse_dns_response,
 };
 pub use engine::{EngineConfig, EngineStats};
 pub use flow::{FlowCounters, FlowInfo, FlowTotals, HostnameSource, Observer, Proto, Verdict};

@@ -418,23 +418,26 @@ async fn dns_to_the_tunnel_resolver_follows_the_network() {
         },
     );
 
-    // Resolvers use a new source port per query, so each query is a new flow.
+    // Resolvers use a new source port per query, so each query is a new flow. Only
+    // queries are sent on from the tunnel's resolver (audit A-39).
     let app = SocketAddr::new(APP_V4.into(), 40_001);
-    h.send(&udp_packet_from(app, tunnel_dns, b"q1"));
+    let q1 = dns_query(1, "one.example");
+    h.send(&udp_packet_from(app, tunnel_dns, &q1));
     let (src, dst, payload) = parse_udp(&h.recv().await.expect("no answer"));
     assert_eq!(
         src, tunnel_dns,
         "the answer must come from the address the app asked"
     );
     assert_eq!(dst, app);
-    assert_eq!(payload, b"Aq1");
+    assert_eq!(payload, [b"A".as_slice(), &q1].concat());
 
     forward.set_upstream(vec![udp_echo_tagged(Ipv4Addr::LOCALHOST.into(), b"B")]);
     let app = SocketAddr::new(APP_V4.into(), 40_002);
-    h.send(&udp_packet_from(app, tunnel_dns, b"q2"));
+    let q2 = dns_query(2, "two.example");
+    h.send(&udp_packet_from(app, tunnel_dns, &q2));
     let (src, _, payload) = parse_udp(&h.recv().await.expect("no answer after the change"));
     assert_eq!(src, tunnel_dns);
-    assert_eq!(payload, b"Bq2");
+    assert_eq!(payload, [b"B".as_slice(), &q2].concat());
     assert_eq!(h.stats.upstream_failures(), 0);
 
     // Only DNS is served at the resolver address.

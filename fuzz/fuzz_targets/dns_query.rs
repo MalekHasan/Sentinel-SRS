@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use sentinel_vpn::{name_error_reply, parse_dns_query, parse_dns_response};
+use sentinel_vpn::{name_error_reply, parse_dns_query, parse_dns_questions, parse_dns_response};
 
 fuzz_target!(|data: &[u8]| {
     let query = parse_dns_query(data);
@@ -21,6 +21,20 @@ fuzz_target!(|data: &[u8]| {
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_.\\".contains(&b))
         );
         assert!(reply.is_some(), "a query that can be read can be answered");
+    }
+    // Every question is read the same way, the first being the query's (audit A-39).
+    let questions = parse_dns_questions(data);
+    assert_eq!(
+        questions.as_ref().and_then(|questions| questions.first()),
+        query.as_ref()
+    );
+    for asked in questions.iter().flatten() {
+        assert!(
+            asked
+                .name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_.\\".contains(&b))
+        );
     }
     if let Some(reply) = reply {
         assert_eq!(parse_dns_query(&reply), None, "the answer is not a query");
