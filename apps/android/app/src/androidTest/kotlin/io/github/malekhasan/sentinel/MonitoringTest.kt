@@ -3,6 +3,7 @@ package io.github.malekhasan.sentinel
 
 import android.app.ActivityOptions
 import android.app.NotificationManager
+import android.content.Intent
 import android.os.Build
 import android.os.Process
 import android.os.SystemClock
@@ -47,6 +48,24 @@ class MonitoringTest {
 
     @After
     fun stop() = stopMonitoring()
+
+    /**
+     * Audit A-53: a start sent right after a stop, before Android has acted on the stop,
+     * goes on. Before, the stop ended the service whatever came after it, and when the
+     * start had not yet put it in the foreground, Android ended the app as well.
+     */
+    @Test
+    fun aStartRightAfterAStopGoesOn() {
+        startMonitoring()
+        val service = Intent(context, SentinelVpnService::class.java)
+        context.startService(Intent(service).setAction(SentinelVpnService.ACTION_STOP))
+        context.startForegroundService(Intent(service).setAction(SentinelVpnService.ACTION_START))
+        waitFor("monitoring to run after the start") { Monitor.status.value == Monitor.Status.ON }
+        // Long enough for Android to act on the stop, and for the old engine to finish.
+        SystemClock.sleep(3_000)
+        assertEquals("still running", Monitor.Status.ON, Monitor.status.value)
+        assertTrue("still wanted", GapLog.monitoringWanted(context))
+    }
 
     /**
      * THREAT-MODEL-A T5: the notification's Stop asks to unlock the phone first, so

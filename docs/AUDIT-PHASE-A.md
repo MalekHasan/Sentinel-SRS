@@ -59,7 +59,7 @@
 | CM-02 اسم الوجهة من DNS أو SNI | ✅ | ⚠️ | 5 | ذاكرة DNS مشتركة يقدر أي تطبيق يسمّمها (A-05) |
 | CM-03 العرض الحي | ✅ | ✅ | 8 | مختبر بـ 500 اتصال |
 | CM-06 حركة البيانات والشاشة مطفأة | ✅ | ✅ | 9 | التقسيم دقيق |
-| NF-07 الفشل المفتوح وتسجيل الانقطاعات | ✅ | ✅ | 7 | لا إعادة تشغيل بعد crash (A-44) |
+| NF-07 الفشل المفتوح وتسجيل الانقطاعات | ✅ | ✅ | 7 | لا إعادة تشغيل بعد crash (A-44، تم: ADR-0038، والمحرّك يتوقف خارج main thread) |
 | SP-03 الـ heartbeat و"إبقاء المراقبة" | ✅ | ✅ | 7 | توقّف قبول اتصالات TCP لا يُكتشف (A-14) |
 | D2 حدود عدد الاتصالات | ⚠️ | ⚠️ | 4 | A-04 و A-18 |
 | D3 الـ fuzzing | ✅ | ✅ | 7 | لم يشتغل في CI بعد (A-49) |
@@ -419,7 +419,8 @@
   - تم الإصلاح: `FLAG_SECURE` على كل نوافذ Sentinel وحواراته، ضمن حماية النوافذ (A-17). الثمن: المستخدم لا يقدر يصوّر شاشة Sentinel أو يشاركها في مكالمة، والتصدير هو طريق المشاركة ([ADR-0040](adr/0040-other-apps-and-sentinels-screens.md))
 - [x] **A-43:** `isolate()` لا ينظّف محارف U+2069 و U+202E الموجودة داخل أسماء التطبيقات، فيقدر الاسم يخرج من العزل ويعيد ترتيب الجملة. المكان: `Bidi.kt:10`.
   - تم الإصلاح: `isolate()` يحذف كل محارف التحكم بالاتجاه من الاسم قبل عزله (U+061C، U+200E، U+200F، U+202A إلى U+202E، U+2066 إلى U+2069). اختبار RTL: اسم فيه U+2069 و U+202E يفقدهما، والجملة العربية تبقى من اليمين لليسار
-- [ ] **A-44:** لا إعادة تشغيل بعد crash (SP-02، و F3 في THREAT-MODEL-A). `Engine.stop()` ينتظر thread المحرّك على main thread، فقد يسبب ANR. المكان: `SentinelVpnService.kt:102` (`START_NOT_STICKY`)، `crates/sentinel-ffi/src/engine.rs:200`. **إعادة التشغيل تمت في PR #14** ([ADR-0038](adr/0038-restart-after-a-crash.md)). يبقى `Engine.stop()` على main thread.
+- [x] **A-44:** لا إعادة تشغيل بعد crash (SP-02، و F3 في THREAT-MODEL-A). `Engine.stop()` ينتظر thread المحرّك على main thread، فقد يسبب ANR. المكان: `SentinelVpnService.kt:102` (`START_NOT_STICKY`)، `crates/sentinel-ffi/src/engine.rs:200`. **إعادة التشغيل تمت في PR #14** ([ADR-0038](adr/0038-restart-after-a-crash.md)). يبقى `Engine.stop()` على main thread.
+  - تم الإصلاح: المحرّك يتوقف على thread خاص به، لا على main thread، لأن توقفه قد ينتظر تاريخاً مشغولاً، ومحرّك صامت قد لا يتوقف أبداً (وكان heartbeat يستبدله على main thread). المراقبة تُقرأ "متوقفة" بعد أن يتوقف المحرّك ويكتب آخر الاتصالات، إلا إذا بدأ محرّك أحدث في هذه الأثناء ([ADR-0008](adr/0008-android-tunnel-setup.md))
 - [ ] **A-45:** تنزيل القائمة إجباري بلا خيار إيقاف، و THREAT-MODEL I5 يقول "optional". ولا certificate pinning، بينما §14.3 يطلبه. الأثر على الخصوصية فقط، لأن السلامة يضمنها التوقيع.
 - [ ] **A-46:** لا `dataExtractionRules`. من Android 12، `allowBackup=false` لا تمنع النقل من جهاز لجهاز. الأثر محدود على `shared_prefs`.
 - [ ] **A-47:** `gradle-wrapper.properties` بلا `distributionSha256Sum`، ولا dependency verification ولا locking في Gradle.
@@ -430,7 +431,8 @@
 - [ ] **A-49:** الـ fuzzing الأسبوعي في CI لم يشتغل ولا مرة. ولا targets لـ parsers القائمة (manifest، ملفات المؤشرات، `ip.db`، `trackers.db`) ولا لـ stack الحزم.
 - [x] **A-50:** (تم: أندرويد قد يعيد إنشاء الشاشة عند تغيير التباين، والشاشة التي وضع الاختبار محتواها ترجع فارغة. صار الاختبار يستخدم شاشة تضع محتواها بنفسها، `ThemeProbeActivity`، في نسخة debug فقط.) اختبار متذبذب: `AccessibilityTest.androidsContrastSettingSwitchesToHighContrast` فشل عند دمج #11، ونجح على نفس الكود في فرعه وعلى `6204460`.
 - [ ] **A-51:** `StringsTest` يبحث عن كلمات قليلة: لا يشمل "سليم" ولا "أمان" ولا "بأمان" ولا "safely" ولا "safety". ولا اختبار يضمن أن `test-key.pub` غير موجود في release، ولا يوجد CODEOWNERS لـ `keys/feed`.
-- [ ] **A-53:** اختبار متذبذب: `KeepMonitoringJobTest.startsMonitoringThatIsWantedButDoesNotRun` أوقف عملية الاختبارات مرة واحدة بـ `ForegroundServiceDidNotStartInTimeException` (run 39727734772 على PR #21)، ونجح في التشغيل التالي، والتغيير بينهما نصوص فقط. أندرويد يطلب `startForeground()` خلال وقت محدد بعد `startForegroundService()`. `onStartCommand` لا يستدعيه في مسارين: `ACTION_STOP`، والخدمة التي تعمل أصلاً (`engine != null`). المكان: `KeepMonitoringJob.kt:34`، `SentinelVpnService.kt:106-135`. الإصلاح: تحقق أي مسار حصل، واستدعِ `startForeground()` في كل مسار يصل إليه `startForegroundService()`.
+- [x] **A-53:** اختبار متذبذب: `KeepMonitoringJobTest.startsMonitoringThatIsWantedButDoesNotRun` أوقف عملية الاختبارات مرة واحدة بـ `ForegroundServiceDidNotStartInTimeException` (run 39727734772 على PR #21)، ونجح في التشغيل التالي، والتغيير بينهما نصوص فقط. أندرويد يطلب `startForeground()` خلال وقت محدد بعد `startForegroundService()`. `onStartCommand` لا يستدعيه في مسارين: `ACTION_STOP`، والخدمة التي تعمل أصلاً (`engine != null`). المكان: `KeepMonitoringJob.kt:34`، `SentinelVpnService.kt:106-135`. الإصلاح: تحقق أي مسار حصل، واستدعِ `startForeground()` في كل مسار يصل إليه `startForegroundService()`.
+  - تم الإصلاح: السبب المرجّح سباق بين Stop و Start: `stopSelf()` بلا رقم يُنهي الخدمة حتى لو وصل بعده Start، وإذا لم يكن Start قد وضع الخدمة في الـ foreground بعد، ينهي أندرويد التطبيق. صار Stop يُنهي نفسه فقط (`stopSelf(startId)`)، وكل Start عبر `startForegroundService` يستدعي `startForeground()` حتى لو كانت المراقبة تعمل. وتوقف المحرّك خارج main thread (A-44) يمنع أن يتأخر `startForeground()` خلفه. اختبار على المحاكي: Start مباشرة بعد Stop والمراقبة تبقى شغّالة ([ADR-0008](adr/0008-android-tunnel-setup.md))
 
 ### ملاحظات (Info)
 

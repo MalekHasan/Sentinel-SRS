@@ -56,11 +56,14 @@ The tunnel routes `0.0.0.0/0` and `::/0`, with addresses `10.215.173.1/32` and `
   - Android did not open the tunnel;
   - the process ended while monitoring was on. On Android 11+ the time and reason come from `ApplicationExitInfo`.
 - A gap closes when monitoring starts again. Until the encrypted store exists (Sprint 2), gaps live in a small private file.
+- **The engine stops on a thread of its own** (audit A-44). Before it stops, it writes its last batch and ends the flows still open. That may wait on a busy history, and an engine that stopped answering may not stop at all. Waiting for it on the main thread froze every screen meanwhile, and could freeze them for good when the heartbeat replaced a silent engine. Monitoring reads as off once the engine has stopped, unless a newer engine started meanwhile.
+- **A stop ends only itself** (audit A-53). It ends the service only if no start came after it (`stopSelf(startId)`). Before, a start sent right after a stop was ended with it. If the start had not yet put the service in the foreground, Android ended the app (`ForegroundServiceDidNotStartInTimeException`). Every start sent with `startForegroundService` puts the service in the foreground, also when monitoring already runs.
 
 ## Verification
 
 - Rust: `DnsForward` unit tests, and a socket-pair test in which DNS follows a resolver change and port 853 is refused.
 - Android: `MonitoringTest` on an Android 14 emulator in CI (passing since commit 4e2b551; CI lists each device test and its result). It starts the VPN with the consent app op, sends TCP through the engine to a server on the CI host, sends DNS through the tunnel resolver to the emulator's real resolver, checks the notification, and stops without recording a gap. `GapLogTest` covers the gap file.
+- Android: `MonitoringTest` sends a start right after a stop, without waiting, and monitoring still runs three seconds later (A-53). Every device test that stops monitoring waits for it to read as off, so each one also checks that the engine stopped off the main thread has written its last flows (A-44).
 - Not yet covered by a test: the revoke path (another VPN taking over) and the process-exit path (`ApplicationExitInfo`). Both need a device-level harness; planned with the Sprint 9 hardening.
 
 ## Still open

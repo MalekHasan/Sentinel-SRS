@@ -114,7 +114,10 @@ class SentinelVpnService : VpnService() {
             }
             GapLog.setMonitoringWanted(this, false)
             teardown()
-            stopSelf()
+            // This stop only: a start sent after it, and delivered before Android acts on
+            // the stop, goes on (audit A-53). A plain stopSelf() would end it too, before
+            // or after it went into the foreground.
+            stopSelf(startId)
             return START_NOT_STICKY
         }
         // No intent: Android starts the service again after its process died (SP-02).
@@ -132,7 +135,16 @@ class SentinelVpnService : VpnService() {
     }
 
     private fun startMonitoring() {
-        if (engine != null) return
+        if (engine != null) {
+            // Already in the foreground. Android needs to hear it again after every start
+            // sent with startForegroundService, or it ends the app (audit A-53).
+            try {
+                goForeground()
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "the monitoring notification could not be shown again", e)
+            }
+            return
+        }
         Monitor.starting()
         try {
             goForeground()
@@ -305,12 +317,21 @@ class SentinelVpnService : VpnService() {
         installWatch = null
         deviceWatch?.stop()
         deviceWatch = null
-        engine?.let {
-            it.stop()
-            it.close()
-        }
+        // The engine writes its last batch and ends its open flows before it stops, which
+        // may wait on a busy history, and a silent engine may not stop at all. Waiting for
+        // it here would hold up the main thread, every screen and the next start with it
+        // (audit A-44). Monitoring reads as off once it has stopped.
+        val stopping = engine
         engine = null
-        Monitor.stopped()
+        if (stopping == null) {
+            Monitor.stopped(null)
+        } else {
+            Thread({
+                stopping.stop()
+                Monitor.stopped(stopping)
+                stopping.close()
+            }, "sentinel-engine-stop").start()
+        }
         if (!keepForeground) stopForeground(STOP_FOREGROUND_REMOVE)
     }
 

@@ -42,13 +42,19 @@ object Monitor {
     /** The most recent flows of this session, newest first. */
     fun recentFlows(): List<FlowRecord> = synchronized(flows) { flows.values.reversed() }
 
-    internal fun started(engine: Engine) {
+    internal fun started(engine: Engine) = synchronized(this) {
         this.engine = engine
         mutableStatus.value = Status.ON
     }
 
-    internal fun stopped() {
-        engine = null
+    /**
+     * Monitoring is off: [engine] has stopped, its last flows written, or a start got no
+     * engine (null). An engine stops on a thread of its own (audit A-44), so another may
+     * have started meanwhile; if so, nothing changes.
+     */
+    internal fun stopped(engine: Engine?) = synchronized(this) {
+        if (this.engine !== engine) return@synchronized
+        this.engine = null
         alwaysOn = null
         ipSources = null
         trackerSources = null
