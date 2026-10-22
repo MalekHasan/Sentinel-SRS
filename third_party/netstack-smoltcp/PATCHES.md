@@ -38,3 +38,34 @@ Found by the Android device tests (a probe app's answered connections ended only
 monitoring stopped) and reproduced in the lab: with the server closing first, five of
 five flows ended after 10 002 ms before the fix. Checked by the lab's
 `server_close_ok` check (gating).
+
+## Patch 3: bounded sockets, a reset on request, a time limit on closing
+
+`src/tcp.rs`: the runner, `TcpStream::reset` and `Drop for TcpStream`; `src/stack.rs`:
+`StackBuilder::tcp_max_sockets` and `tcp_linger`.
+
+A socket stayed in the runner's set until smoltcp reached `Closed`, long after its
+stream was dropped, and nothing counted it (Sentinel audit finding A-04):
+- dropping a stream closes it with a FIN, so a connection the engine refused or
+  blocked waited for the app to acknowledge that FIN; an app that never does kept the
+  socket and its four buffers (about 128 KiB) for as long as smoltcp retransmits;
+- every SYN made a new socket, so a SYN sent again made a second socket that listened
+  for good while its stream went to the engine as a connection that never opened;
+- the engine counted its flows, not the stack's sockets, so an app could open and
+  abandon connections until memory ran out.
+
+Fix:
+- `TcpStream::reset` ends a connection with a reset (RST): the runner aborts the socket,
+  sends the reset at the next poll, and removes the socket.
+- `tcp_linger(d)`: once its stream is dropped, a socket has `d` to close; then the
+  runner aborts it. The runner wakes for the earliest such time. Unset by default.
+- `tcp_max_sockets(n, refused)`: at most `n` sockets, those still closing included. A
+  SYN beyond them gets no socket, and smoltcp answers it with a reset; it is counted in
+  `refused`. A SYN for a connection that already has a socket makes no second one.
+  Unlimited by default.
+
+Checked by `crates/sentinel-vpn/tests/socketpair.rs`: a blocked connection is reset
+and never closed; an app that never acknowledges the FIN is reset after the linger
+time; with one socket allowed, a second connection is reset and counted while the first
+still closes, and opens once it is freed; a SYN sent twice makes one flow. Each of
+these fails with its part of the patch taken out. The lab's checks pass.

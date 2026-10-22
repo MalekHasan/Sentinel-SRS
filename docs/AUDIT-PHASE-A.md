@@ -182,7 +182,7 @@
 
 #### A-04: sockets في smoltcp تعيش بعد انتهاء الاتصال ولا تحسبها الحدود (THREAT-MODEL D2)
 
-- [ ] تم الإصلاح
+- [x] تم الإصلاح: الاتصالات المرفوضة والمحجوبة تنقطع بـ RST، و sockets الـ stack محسوبة ضمن `max_flows` حتى وهي تُغلق، ولكل socket مهلة 60 ثانية ليُغلق بعد انتهاء الاتصال ثم RST، و SYN المكرر لا يفتح socket ثانياً (patch 3 في `third_party/netstack-smoltcp/PATCHES.md`، [ADR-0028](adr/0028-flow-limits.md))
 - **المكان:**
   - `third_party/netstack-smoltcp/src/tcp.rs:139-160`: أربعة buffers لكل SYN، حوالي 128 KiB.
   - `third_party/netstack-smoltcp/src/tcp.rs:220`: الـ socket لا يُحذف إلا في `Closed`.
@@ -346,7 +346,7 @@
 
 #### A-18: لا مهلة خمول لـ TCP في stack smoltcp، والذاكرة الفعلية ضعف التقدير (D2)
 
-- [ ] تم الإصلاح
+- [x] تم الإصلاح: اتصال TCP بلا أي بايت لمدة `tcp_idle_timeout` (ساعتان) ينقطع بـ RST في مسار smoltcp أيضاً، و ADR-0028 و THREAT-MODEL D2 فيهما الأرقام الحقيقية: حوالي 176 KiB محجوزة للاتصال، وأسوأ حالة قرب 180 MB ([ADR-0028](adr/0028-flow-limits.md))
 - **المكان:**
   - `crates/sentinel-vpn/src/engine.rs:18` و `:52`: `tcp_idle_timeout` مستخدم في ipstack فقط (`stack_ipstack.rs:36`).
   - ADR-0028 يقدّر حوالي 96 KiB للاتصال، والحقيقي حوالي 176 KiB.

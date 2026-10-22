@@ -14,7 +14,7 @@ use crate::{
     filter::{IpFilter, IpFilters},
     packet::{AnyIpPktFrame, IpPacket},
     runner::Runner,
-    tcp::TcpListener,
+    tcp::{TcpLimits, TcpListener},
     udp::UdpSocket,
 };
 
@@ -30,6 +30,8 @@ pub struct StackBuilder {
     // high-BDP hosts can raise it without recompiling.
     tcp_recv_buffer_size: u32,
     tcp_send_buffer_size: u32,
+    // Sentinel patch 3: bounds on the TCP sockets.
+    tcp_limits: TcpLimits,
     mtu: usize,
     ip_filters: IpFilters<'static>,
 }
@@ -51,6 +53,7 @@ impl Default for StackBuilder {
             // `tcp_{recv,send}_buffer_size` for a high-BDP path.
             tcp_recv_buffer_size: 0x3FFF * 20,
             tcp_send_buffer_size: 0x3FFF * 20,
+            tcp_limits: TcpLimits::default(),
             mtu: 1504, // 1500 for Ethernet + 4 for VLAN
             ip_filters: IpFilters::with_non_broadcast(),
         }
@@ -103,6 +106,23 @@ impl StackBuilder {
     /// `SocketBuffer` capacity). See [`Self::tcp_recv_buffer_size`].
     pub fn tcp_send_buffer_size(mut self, size: u32) -> Self {
         self.tcp_send_buffer_size = size;
+        self
+    }
+
+    /// Sentinel patch 3: at most `max` TCP sockets at once, those still closing after
+    /// their stream was dropped included. A SYN beyond them is answered with a reset,
+    /// and counted in `refused`. No limit by default.
+    pub fn tcp_max_sockets(mut self, max: usize, refused: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
+        self.tcp_limits.max_sockets = Some(max);
+        self.tcp_limits.refused = refused;
+        self
+    }
+
+    /// Sentinel patch 3: a TCP socket whose stream was dropped is aborted with a reset
+    /// once it has taken `linger` to close, for example because the peer never
+    /// acknowledges the FIN. By default it takes as long as smoltcp retransmits.
+    pub fn tcp_linger(mut self, linger: std::time::Duration) -> Self {
+        self.tcp_limits.linger = Some(linger);
         self
     }
 
@@ -175,6 +195,7 @@ impl StackBuilder {
                 self.mtu,
                 self.tcp_recv_buffer_size,
                 self.tcp_send_buffer_size,
+                self.tcp_limits,
             )?;
             (Some(tcp_runner), Some(tcp_listener))
         } else {

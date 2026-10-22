@@ -97,6 +97,14 @@ impl Ctx {
     }
 }
 
+/// The app's side of a TCP flow, as the stack gives it.
+pub(crate) trait Reset {
+    /// End the connection at once with a reset (RST), as the relay does when it refuses
+    /// or blocks a flow, or when the flow fails or idles out. Dropping the connection
+    /// instead closes it with a FIN, which the app may leave unanswered (audit A-04).
+    fn reset(self);
+}
+
 /// Decrements the active-flow gauge however the relay ends.
 struct ActiveGuard<'a>(&'a EngineStats);
 
@@ -117,23 +125,23 @@ impl Drop for ActiveGuard<'_> {
 /// stack; `src` is the app's address and `dst` the original destination.
 pub(crate) async fn tcp<S>(ctx: Arc<Ctx>, client: S, src: SocketAddr, dst: SocketAddr)
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    S: AsyncRead + AsyncWrite + Reset + Unpin + Send + 'static,
 {
     let _active = ActiveGuard::new(&ctx.stats);
     if ctx.refused() {
-        // Dropping the stream resets the app's connection.
+        client.reset();
         return;
     }
     let mut flow = ctx.new_flow(Proto::Tcp, src, dst);
     let changes = ctx.firewall_changes();
     if ctx.observer.flow_started(&flow) == Verdict::Block {
-        // Dropping the stream resets the app's connection.
         ctx.finish(&flow, Verdict::Block);
+        client.reset();
         return;
     }
 
-    // The app already sees its connection as open: ipstack answered the handshake
-    // locally. If the upstream connect fails, dropping the stream resets it.
+    // The app already sees its connection as open: the stack answered the handshake
+    // locally. If the upstream connect fails, the app's connection is reset.
     let connected = match ctx.upstream_for(flow.dst) {
         Ok(target) => connect_tcp(&*ctx.protect, target, ctx.config.connect_timeout).await,
         Err(e) => Err(e),
@@ -148,6 +156,7 @@ where
             );
             ctx.stats.upstream_failures.fetch_add(1, Ordering::Relaxed);
             ctx.finish(&flow, Verdict::Allow);
+            client.reset();
             return;
         }
     };
@@ -191,10 +200,22 @@ where
         flow.counters.add_up(first.len());
         copy_counted(&mut client_rx, &mut up_tx, |n| flow.counters.add_up(n)).await
     };
-    tokio::select! {
-        _ = run_both(to_server, to_client) => {}
-        // Dropping both directions resets the app's connection and the server's.
-        _ = blocked_later(&ctx, &flow, changes) => blocked.store(true, Ordering::Relaxed),
+    // A flow that ends cleanly closes the app's connection; one blocked, failed or idle
+    // resets it. Dropping the upstream socket closes the server's side.
+    let clean = tokio::select! {
+        ended = run_both(to_server, to_client) => ended.is_ok(),
+        _ = blocked_later(&ctx, &flow, changes) => {
+            blocked.store(true, Ordering::Relaxed);
+            false
+        }
+        // Audit A-18: on smoltcp nothing else ends a connection both sides keep open.
+        _ = idle(&flow.counters, ctx.config.tcp_idle_timeout) => {
+            log::debug!("flow {} idle for {:?}", flow.id, ctx.config.tcp_idle_timeout);
+            false
+        }
+    };
+    if !clean {
+        client_rx.unsplit(client_tx).reset();
     }
 
     if let Some(name) = sni.into_inner() {
@@ -277,8 +298,8 @@ where
 }
 
 /// Run both directions. A clean end of one direction waits for the other; an error in
-/// either ends both.
-async fn run_both<A, B>(a: A, b: B)
+/// either ends both, and is returned.
+async fn run_both<A, B>(a: A, b: B) -> io::Result<()>
 where
     A: Future<Output = io::Result<()>>,
     B: Future<Output = io::Result<()>>,
@@ -287,8 +308,36 @@ where
     let (mut a_done, mut b_done) = (false, false);
     while !(a_done && b_done) {
         tokio::select! {
-            r = &mut a, if !a_done => { a_done = true; if r.is_err() { return; } }
-            r = &mut b, if !b_done => { b_done = true; if r.is_err() { return; } }
+            r = &mut a, if !a_done => { a_done = true; r?; }
+            r = &mut b, if !b_done => { b_done = true; r?; }
+        }
+    }
+    Ok(())
+}
+
+/// Resolves once no byte has moved either way for `limit` (audit A-18). It looks four
+/// times per `limit`, so a flow ends between `limit` and 1.25 times `limit` after its
+/// last byte. Counted on the monotonic clock, which stands still while a phone sleeps.
+/// A zero `limit` is no limit.
+async fn idle(counters: &FlowCounters, limit: Duration) {
+    if limit.is_zero() {
+        return std::future::pending().await;
+    }
+    let step = limit / 4;
+    let moved = || counters.bytes_up() + counters.bytes_down();
+    let mut last = moved();
+    let mut quiet = Duration::ZERO;
+    loop {
+        tokio::time::sleep(step).await;
+        let now = moved();
+        if now == last {
+            quiet += step;
+            if quiet >= limit {
+                return;
+            }
+        } else {
+            last = now;
+            quiet = Duration::ZERO;
         }
     }
 }
@@ -505,6 +554,10 @@ mod tests {
                 Verdict::Allow
             }
         }
+    }
+
+    impl Reset for tokio::io::DuplexStream {
+        fn reset(self) {}
     }
 
     /// An app sends `pieces` to a server on loopback through the relay, `pause` apart,
