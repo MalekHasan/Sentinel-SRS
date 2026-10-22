@@ -24,6 +24,7 @@ import androidx.compose.ui.res.stringResource
 class StopMonitoringActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        guardWindow()
         setContent {
             SentinelTheme {
                 StopMonitoringQuestion(
@@ -47,7 +48,10 @@ fun StopMonitoringQuestion(onStop: () -> Unit, onKeep: () -> Unit) {
     AlertDialog(
         onDismissRequest = onKeep,
         title = { Text(stringResource(R.string.stop_title)) },
-        text = { Text(stringResource(R.string.stop_text)) },
+        text = {
+            GuardDialogWindow()
+            Text(stringResource(R.string.stop_text))
+        },
         confirmButton = {
             TextButton(onClick = onStop) { Text(stringResource(R.string.action_stop)) }
         },
