@@ -473,3 +473,337 @@ async fn an_open_flow_ends_when_the_firewall_now_blocks_it() {
     assert!(h.recv().await.is_none(), "nothing came back once blocked");
     h.engine.abort();
 }
+
+/// The app's end of one TCP connection over IPv4, by hand: a handshake, a FIN, and no
+/// more than the tests below need. Its own sequence numbers start at [`TcpApp::ISN`].
+struct TcpApp {
+    from: SocketAddr,
+    to: SocketAddr,
+}
+
+impl TcpApp {
+    const ISN: u32 = 1_000;
+
+    fn new(port: u16, to: SocketAddr) -> TcpApp {
+        TcpApp {
+            from: SocketAddr::new(APP_V4.into(), port),
+            to,
+        }
+    }
+
+    fn segment(&self, seq: u32, ack: Option<u32>, syn: bool, fin: bool) -> Vec<u8> {
+        let (IpAddr::V4(from), IpAddr::V4(to)) = (self.from.ip(), self.to.ip()) else {
+            panic!("IPv4 only");
+        };
+        let mut builder = PacketBuilder::ipv4(from.octets(), to.octets(), 64).tcp(
+            self.from.port(),
+            self.to.port(),
+            seq,
+            64_240,
+        );
+        if syn {
+            builder = builder.syn();
+        }
+        if fin {
+            builder = builder.fin();
+        }
+        if let Some(ack) = ack {
+            builder = builder.ack(ack);
+        }
+        let mut packet = Vec::with_capacity(builder.size(0));
+        builder.write(&mut packet, &[]).unwrap();
+        packet
+    }
+
+    fn syn(&self) -> Vec<u8> {
+        self.segment(Self::ISN, None, true, false)
+    }
+
+    /// Acknowledges the engine's SYN.
+    fn ack(&self, syn_ack: &Seg) -> Vec<u8> {
+        self.segment(
+            Self::ISN + 1,
+            Some(syn_ack.seq.wrapping_add(1)),
+            false,
+            false,
+        )
+    }
+
+    /// Closes the app's side without data, acknowledging the engine's SYN only: never
+    /// its FIN.
+    fn fin(&self, syn_ack: &Seg) -> Vec<u8> {
+        self.segment(
+            Self::ISN + 1,
+            Some(syn_ack.seq.wrapping_add(1)),
+            false,
+            true,
+        )
+    }
+}
+
+/// A TCP segment the engine wrote into the tunnel.
+#[derive(Debug)]
+struct Seg {
+    to: SocketAddr,
+    syn: bool,
+    ack: bool,
+    fin: bool,
+    rst: bool,
+    seq: u32,
+}
+
+fn parse_tcp(packet: &[u8]) -> Option<Seg> {
+    let sliced = SlicedPacket::from_ip(packet).ok()?;
+    let Some(NetSlice::Ipv4(ip)) = sliced.net else {
+        return None;
+    };
+    let Some(TransportSlice::Tcp(tcp)) = sliced.transport else {
+        return None;
+    };
+    Some(Seg {
+        to: SocketAddr::new(
+            ip.header().destination_addr().into(),
+            tcp.destination_port(),
+        ),
+        syn: tcp.syn(),
+        ack: tcp.ack(),
+        fin: tcp.fin(),
+        rst: tcp.rst(),
+        seq: tcp.sequence_number(),
+    })
+}
+
+/// Closes the connection once the other side has closed its own: after the app's FIN
+/// came through the engine, so the engine's FIN to the app follows the handshake.
+fn close_after_the_app(mut stream: std::net::TcpStream) {
+    let _ = stream.read_to_end(&mut Vec::new());
+}
+
+/// A TCP server on loopback that hands each connection it accepts to `then`, on a
+/// thread of its own.
+fn tcp_server(then: fn(std::net::TcpStream)) -> SocketAddr {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let local = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            std::thread::spawn(move || then(stream));
+        }
+    });
+    local
+}
+
+impl Harness {
+    /// The TCP segments the engine sends to `to` within `within`, until one is `last`.
+    async fn tcp_until(
+        &self,
+        to: SocketAddr,
+        within: Duration,
+        last: fn(&Seg) -> bool,
+    ) -> Vec<Seg> {
+        let deadline = std::time::Instant::now() + within;
+        let mut seen = Vec::new();
+        while std::time::Instant::now() < deadline {
+            let Some(segment) = self.recv().await.as_deref().and_then(parse_tcp) else {
+                continue;
+            };
+            if segment.to != to {
+                continue;
+            }
+            let done = last(&segment);
+            seen.push(segment);
+            if done {
+                break;
+            }
+        }
+        seen
+    }
+
+    /// Opens `app`'s connection: its SYN, the engine's SYN-ACK, its ACK. Returns the
+    /// SYN-ACK.
+    async fn handshake(&self, app: &TcpApp) -> Seg {
+        self.send(&app.syn());
+        let syn_ack = self
+            .tcp_until(app.from, Duration::from_secs(2), |s| s.syn && s.ack)
+            .await
+            .into_iter()
+            .find(|s| s.syn && s.ack)
+            .expect("no SYN-ACK");
+        self.send(&app.ack(&syn_ack));
+        syn_ack
+    }
+
+    /// Waits up to two seconds for `n` flows to have ended.
+    async fn ended(&self, n: usize) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while self.recorder.ended.lock().unwrap().len() < n {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{n} flows did not end"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
+/// Audit A-04: a blocked connection is reset. A close instead would leave the stack's
+/// socket to an app that need never answer it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_blocked_connection_is_reset() {
+    let server = tcp_server(drop);
+    let h = start(Recorder {
+        block_port: Some(server.port()),
+        ..Recorder::default()
+    });
+    let app = TcpApp::new(41_100, server);
+    h.send(&app.syn());
+    let seen = h
+        .tcp_until(app.from, Duration::from_secs(3), |s| s.rst)
+        .await;
+    assert!(seen.last().is_some_and(|s| s.rst), "reset: {seen:?}");
+    assert!(!seen.iter().any(|s| s.fin), "never closed: {seen:?}");
+    assert_eq!(h.stats.flows_blocked(), 1);
+    h.engine.abort();
+}
+
+/// Audit A-04: once a flow ended, the app's side has `tcp_linger` to close. An app that
+/// never acknowledges the engine's FIN is then reset, which frees the stack's socket.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_close_the_app_never_acknowledges_ends_in_a_reset() {
+    let server = tcp_server(close_after_the_app);
+    let h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            tcp_linger: Duration::from_secs(1),
+            ..EngineConfig::default()
+        },
+    );
+    let app = TcpApp::new(41_101, server);
+    let syn_ack = h.handshake(&app).await;
+    h.send(&app.fin(&syn_ack));
+    let closed = std::time::Instant::now();
+    let seen = h
+        .tcp_until(app.from, Duration::from_secs(5), |s| s.rst)
+        .await;
+    assert!(
+        seen.iter().any(|s| s.fin),
+        "the engine closed its side: {seen:?}"
+    );
+    assert!(seen.last().is_some_and(|s| s.rst), "then reset: {seen:?}");
+    assert!(
+        closed.elapsed() >= Duration::from_millis(900),
+        "not before the linger time"
+    );
+    h.ended(1).await;
+    h.engine.abort();
+}
+
+/// Audit A-04: the stack's sockets count towards `max_flows`, those still closing after
+/// their flow ended included. Beyond them a connection is reset and counted as refused;
+/// once a socket is freed, a new one opens.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sockets_still_closing_count_towards_the_cap() {
+    let server = tcp_server(close_after_the_app);
+    let h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            max_flows: 1,
+            tcp_linger: Duration::from_secs(1),
+            ..EngineConfig::default()
+        },
+    );
+    let first = TcpApp::new(41_102, server);
+    let syn_ack = h.handshake(&first).await;
+    h.send(&first.fin(&syn_ack));
+    h.ended(1).await;
+    assert_eq!(
+        h.stats.flows_active(),
+        0,
+        "the flow ended; its socket still closes"
+    );
+
+    let second = TcpApp::new(41_103, server);
+    h.send(&second.syn());
+    let seen = h
+        .tcp_until(second.from, Duration::from_secs(2), |s| s.rst)
+        .await;
+    assert!(seen.last().is_some_and(|s| s.rst), "reset: {seen:?}");
+    assert!(!seen.iter().any(|s| s.syn), "never opened: {seen:?}");
+    assert_eq!(h.stats.flows_refused(), 1);
+    assert_eq!(h.stats.flows_total(), 1, "a refused connection is no flow");
+
+    let freed = h
+        .tcp_until(first.from, Duration::from_secs(5), |s| s.rst)
+        .await;
+    assert!(
+        freed.last().is_some_and(|s| s.rst),
+        "the first is reset: {freed:?}"
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    h.handshake(&TcpApp::new(41_104, server)).await;
+    // The stack answers the handshake; the relay counts the flow when it starts.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while h.stats.flows_total() < 2 {
+        assert!(std::time::Instant::now() < deadline, "no second flow");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    h.engine.abort();
+}
+
+/// Audit A-04: a SYN sent again, as an app does when the SYN-ACK is slow, reaches the
+/// connection's socket. Before, it made a second socket that never opened, and a second
+/// flow that waited on it for good.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_syn_sent_again_opens_one_flow() {
+    let server = tcp_server(drop);
+    let h = start(Recorder::default());
+    let app = TcpApp::new(41_105, server);
+    h.send(&app.syn());
+    h.send(&app.syn());
+    let seen = h
+        .tcp_until(app.from, Duration::from_secs(2), |s| s.syn && s.ack)
+        .await;
+    assert!(seen.iter().any(|s| s.syn && s.ack), "opened: {seen:?}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while h.stats.flows_total() < 1 {
+        assert!(std::time::Instant::now() < deadline, "no flow");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // A second flow would have started by now.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(h.stats.flows_total(), 1);
+    h.engine.abort();
+}
+
+/// Audit A-18: a connection with no byte either way for `tcp_idle_timeout` is reset.
+/// On smoltcp nothing else ends a connection that both sides keep open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_idle_connection_is_reset() {
+    let server = tcp_server(|stream| {
+        std::thread::sleep(Duration::from_secs(10));
+        drop(stream);
+    });
+    let h = start_with(
+        Recorder::default(),
+        EngineConfig {
+            tcp_idle_timeout: Duration::from_millis(400),
+            ..EngineConfig::default()
+        },
+    );
+    let app = TcpApp::new(41_106, server);
+    h.handshake(&app).await;
+    let opened = std::time::Instant::now();
+    let seen = h
+        .tcp_until(app.from, Duration::from_secs(3), |s| s.rst)
+        .await;
+    assert!(seen.last().is_some_and(|s| s.rst), "reset: {seen:?}");
+    assert!(
+        opened.elapsed() >= Duration::from_millis(350),
+        "not before the idle time"
+    );
+    h.ended(1).await;
+    assert_eq!(
+        h.recorder.ended.lock().unwrap()[0].1.verdict,
+        Verdict::Allow
+    );
+    h.engine.abort();
+}

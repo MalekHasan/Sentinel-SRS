@@ -19,7 +19,7 @@ use tokio::task::JoinSet;
 
 use crate::dns::DnsCache;
 use crate::engine::heartbeat;
-use crate::relay::{self, Ctx};
+use crate::relay::{self, Ctx, Reset};
 use crate::{EngineConfig, EngineStats, Observer, Protect, TunDevice};
 
 type FlowKey = (SocketAddr, SocketAddr);
@@ -42,10 +42,14 @@ pub async fn run(
     config: EngineConfig,
     stats: Arc<EngineStats>,
 ) -> io::Result<()> {
+    // Audit A-04: the stack's TCP sockets are bounded too, those still closing after
+    // their flow ended included, and none closes for longer than `tcp_linger`.
     let mut builder = StackBuilder::default()
         .enable_tcp(true)
         .enable_udp(true)
-        .mtu(usize::from(config.mtu));
+        .mtu(usize::from(config.mtu))
+        .tcp_max_sockets(config.max_flows, Arc::clone(&stats.flows_refused))
+        .tcp_linger(config.tcp_linger);
     if let Some(size) = config.tcp_buffer {
         builder = builder
             .tcp_send_buffer_size(size)
@@ -184,6 +188,12 @@ pub async fn run(
             },
             Some(_) = relays.join_next(), if !relays.is_empty() => {}
         }
+    }
+}
+
+impl Reset for netstack_smoltcp::TcpStream {
+    fn reset(self) {
+        netstack_smoltcp::TcpStream::reset(self);
     }
 }
 

@@ -12,10 +12,15 @@ use crate::DnsForward;
 pub struct EngineConfig {
     /// Must match `VpnService.Builder.setMtu`.
     pub mtu: u16,
-    /// Idle time after which a TCP flow is dropped. Phones keep push-notification
-    /// connections idle for many minutes, so this must be long (ipstack's default of
-    /// 60 s would force constant reconnects and waste battery).
+    /// Idle time after which a TCP flow is reset: no byte either way for this long
+    /// (audit A-18). Phones keep push-notification connections idle for many minutes, so
+    /// this must be long (ipstack's default of 60 s would force constant reconnects and
+    /// waste battery). Zero: no limit on smoltcp.
     pub tcp_idle_timeout: Duration,
+    /// How long the app's side of a TCP flow may take to close once the flow ended,
+    /// before it is reset (audit A-04): an app that never acknowledges the FIN would
+    /// otherwise hold the stack's socket and its buffers for hours.
+    pub tcp_linger: Duration,
     pub udp_idle_timeout: Duration,
     pub connect_timeout: Duration,
     /// How long to wait for the rest of a ClientHello split across TCP segments.
@@ -26,8 +31,10 @@ pub struct EngineConfig {
     pub heartbeat: Duration,
     /// The most flows open at once, TCP and UDP together (THREAT-MODEL-A D2, ADR-0028).
     /// A flow beyond it is refused before it reaches the observer: a TCP connection is
-    /// reset, a datagram dropped. Each TCP flow holds about 96 KiB of buffers, so this
-    /// bounds the engine's memory however many connections an app opens.
+    /// reset, a datagram dropped. On smoltcp it also bounds the stack's TCP sockets,
+    /// those still closing included. Each TCP flow holds about 176 KiB of buffers (128
+    /// in the stack, 48 in the relay), so this bounds the engine's memory however many
+    /// connections an app opens.
     pub max_flows: usize,
     /// Per-connection TCP buffer towards the app, in bytes, each direction. The window
     /// faces the app over a local tunnel with a tiny round-trip time, so small buffers
@@ -50,6 +57,7 @@ impl Default for EngineConfig {
         EngineConfig {
             mtu: 1500,
             tcp_idle_timeout: Duration::from_secs(2 * 60 * 60),
+            tcp_linger: Duration::from_secs(60),
             udp_idle_timeout: Duration::from_secs(120),
             connect_timeout: Duration::from_secs(10),
             sni_wait: Duration::from_millis(500),
@@ -72,7 +80,8 @@ pub struct EngineStats {
     pub(crate) flows_blocked: AtomicU64,
     pub(crate) upstream_failures: AtomicU64,
     pub(crate) unsupported_packets: AtomicU64,
-    pub(crate) flows_refused: AtomicU64,
+    /// Shared with the smoltcp stack, which refuses TCP connections beyond its sockets.
+    pub(crate) flows_refused: Arc<AtomicU64>,
     /// When these counters were made: the origin of `last_beat_ms`.
     origin: Instant,
     /// The engine's last heartbeat, in milliseconds after `origin`.
@@ -87,7 +96,7 @@ impl Default for EngineStats {
             flows_blocked: AtomicU64::new(0),
             upstream_failures: AtomicU64::new(0),
             unsupported_packets: AtomicU64::new(0),
-            flows_refused: AtomicU64::new(0),
+            flows_refused: Arc::new(AtomicU64::new(0)),
             origin: Instant::now(),
             last_beat_ms: AtomicU64::new(0),
         }

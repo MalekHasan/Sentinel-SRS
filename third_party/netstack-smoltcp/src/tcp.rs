@@ -1,12 +1,13 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     task::{Context, Poll, Waker},
+    time::{Duration as StdDuration, Instant as StdInstant},
 };
 
 use futures::Stream;
@@ -49,15 +50,36 @@ struct TcpSocketControl {
     recv_waker: Option<Waker>,
     recv_state: TcpSocketState,
     send_state: TcpSocketState,
+    // Sentinel patch 3: the stream asked for a reset, and when it was dropped.
+    reset: bool,
+    dropped_at: Option<StdInstant>,
 }
 
 struct TcpSocketCreation {
     control: SharedControl,
     socket: TcpSocket<'static>,
+    key: ConnectionKey,
 }
 
 type SharedNotify = Arc<Notify>;
 type SharedControl = Arc<SpinMutex<TcpSocketControl>>;
+/// A connection's (source, destination): the app's address and the one it asked for.
+type ConnectionKey = (SocketAddr, SocketAddr);
+/// The connections that have a socket, from its SYN until the runner removes it.
+type LiveSockets = Arc<SpinMutex<HashSet<ConnectionKey>>>;
+
+/// Sentinel patch 3: what bounds the runner's sockets.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TcpLimits {
+    /// The most sockets at once, closing ones included. A SYN beyond them gets no
+    /// socket, and smoltcp answers it with a reset. `None`: no limit.
+    pub max_sockets: Option<usize>,
+    /// Counts the SYNs turned away by `max_sockets`.
+    pub refused: Arc<AtomicU64>,
+    /// How long a socket may take to close once its stream is dropped, before it is
+    /// aborted with a reset. `None`: as long as smoltcp takes.
+    pub linger: Option<StdDuration>,
+}
 
 struct TcpListenerRunner;
 
@@ -70,16 +92,18 @@ impl TcpListenerRunner {
         iface_ingress_tx_avail: Arc<AtomicBool>,
         tcp_rx: Receiver<AnyIpPktFrame>,
         stream_tx: UnboundedSender<TcpStream>,
-        sockets: HashMap<SocketHandle, SharedControl>,
+        sockets: HashMap<SocketHandle, (SharedControl, ConnectionKey)>,
         tcp_recv_buffer_size: u32,
         tcp_send_buffer_size: u32,
+        limits: TcpLimits,
     ) -> Runner {
         Runner::new(async move {
             let notify = Arc::new(Notify::new());
             let (socket_tx, socket_rx) = unbounded_channel::<TcpSocketCreation>();
+            let live = LiveSockets::default();
             let res = tokio::select! {
-                v = Self::handle_packet(notify.clone(), iface_ingress_tx, iface_ingress_tx_avail.clone(), tcp_rx, stream_tx, socket_tx, tcp_recv_buffer_size, tcp_send_buffer_size) => v,
-                v = Self::handle_socket(notify, device, iface, iface_ingress_tx_avail, sockets, socket_rx) => v,
+                v = Self::handle_packet(notify.clone(), iface_ingress_tx, iface_ingress_tx_avail.clone(), tcp_rx, stream_tx, socket_tx, tcp_recv_buffer_size, tcp_send_buffer_size, live.clone(), limits.max_sockets, limits.refused) => v,
+                v = Self::handle_socket(notify, device, iface, iface_ingress_tx_avail, sockets, socket_rx, live, limits.linger) => v,
             };
             res?;
             trace!("VirtDevice::poll thread exited");
@@ -97,6 +121,9 @@ impl TcpListenerRunner {
         socket_tx: UnboundedSender<TcpSocketCreation>,
         tcp_recv_buffer_size: u32,
         tcp_send_buffer_size: u32,
+        live: LiveSockets,
+        max_sockets: Option<usize>,
+        refused: Arc<AtomicU64>,
     ) -> std::io::Result<()> {
         while let Some(frame) = tcp_rx.recv().await {
             let packet = match IpPacket::new_checked(frame.as_slice()) {
@@ -134,8 +161,22 @@ impl TcpListenerRunner {
             let src_addr = SocketAddr::new(src_ip, src_port);
             let dst_addr = SocketAddr::new(dst_ip, dst_port);
 
+            // Sentinel patch 3: one socket per connection, and no more than the limit. A
+            // SYN sent again reaches the socket made for the first one: a second socket
+            // would listen for good, its stream never opened. A SYN beyond the limit
+            // reaches no socket, and smoltcp answers it with a reset.
+            let key = (src_addr, dst_addr);
+            let admitted = packet.syn() && !packet.ack() && {
+                let live = live.lock();
+                let full = max_sockets.is_some_and(|max| live.len() >= max);
+                if full && !live.contains(&key) {
+                    refused.fetch_add(1, Ordering::Relaxed);
+                }
+                !live.contains(&key) && !full
+            };
+
             // TCP first handshake packet, create a new Connection
-            if packet.syn() && !packet.ack() {
+            if admitted {
                 let mut socket = TcpSocket::new(
                     TcpSocketBuffer::new(vec![0u8; tcp_recv_buffer_size as usize]),
                     TcpSocketBuffer::new(vec![0u8; tcp_send_buffer_size as usize]),
@@ -152,6 +193,7 @@ impl TcpListenerRunner {
                 }
 
                 trace!("created TCP connection for {} <-> {}", src_addr, dst_addr);
+                live.lock().insert(key);
 
                 let control = Arc::new(SpinMutex::new(TcpSocketControl {
                     send_buffer: RingBuffer::new(vec![0u8; tcp_send_buffer_size as usize]),
@@ -160,6 +202,8 @@ impl TcpListenerRunner {
                     recv_waker: None,
                     recv_state: TcpSocketState::Normal,
                     send_state: TcpSocketState::Normal,
+                    reset: false,
+                    dropped_at: None,
                 }));
 
                 stream_tx
@@ -171,7 +215,11 @@ impl TcpListenerRunner {
                     })
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
                 socket_tx
-                    .send(TcpSocketCreation { control, socket })
+                    .send(TcpSocketCreation {
+                        control,
+                        socket,
+                        key,
+                    })
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::BrokenPipe, e))?;
             }
 
@@ -190,14 +238,21 @@ impl TcpListenerRunner {
         mut device: VirtualDevice,
         mut iface: Interface,
         iface_ingress_tx_avail: Arc<AtomicBool>,
-        mut sockets: HashMap<SocketHandle, SharedControl>,
+        mut sockets: HashMap<SocketHandle, (SharedControl, ConnectionKey)>,
         mut socket_rx: UnboundedReceiver<TcpSocketCreation>,
+        live: LiveSockets,
+        linger: Option<StdDuration>,
     ) -> std::io::Result<()> {
         let mut socket_set = SocketSet::new(vec![]);
         loop {
-            while let Ok(TcpSocketCreation { control, socket }) = socket_rx.try_recv() {
+            while let Ok(TcpSocketCreation {
+                control,
+                socket,
+                key,
+            }) = socket_rx.try_recv()
+            {
                 let handle = socket_set.add(socket);
-                sockets.insert(handle, control);
+                sockets.insert(handle, (control, key));
             }
 
             let before_poll = Instant::now();
@@ -211,8 +266,12 @@ impl TcpListenerRunner {
 
             // Check all the sockets' status
             let mut sockets_to_remove = Vec::new();
+            // Sentinel patch 3: sockets aborted in this pass, and the next linger time.
+            let mut aborted = false;
+            let mut next_linger: Option<StdInstant> = None;
+            let now = StdInstant::now();
 
-            for (socket_handle, control) in sockets.iter() {
+            for (socket_handle, (control, _)) in sockets.iter() {
                 let socket_handle = *socket_handle;
                 let socket = socket_set.get_mut::<TcpSocket>(socket_handle);
                 let mut control = control.lock();
@@ -232,6 +291,28 @@ impl TcpListenerRunner {
                     }
 
                     trace!("closed TCP connection");
+                    continue;
+                }
+
+                // Sentinel patch 3: a reset the stream asked for, or a close that
+                // outlived the linger time since the stream was dropped. Aborting sends
+                // a reset (RST) at the next poll; the socket then goes, as Closed. Without
+                // this, a socket whose peer never acknowledges the FIN lives on for as
+                // long as smoltcp retransmits it, uncounted.
+                let lingered = match (control.dropped_at, linger) {
+                    (Some(dropped), Some(linger)) => {
+                        let due = dropped + linger;
+                        if now < due {
+                            next_linger = Some(next_linger.map_or(due, |next| next.min(due)));
+                        }
+                        now >= due
+                    }
+                    _ => false,
+                };
+                if control.reset || lingered {
+                    trace!("aborting TCP connection, {:?}", socket.state());
+                    socket.abort();
+                    aborted = true;
                     continue;
                 }
 
@@ -341,7 +422,9 @@ impl TcpListenerRunner {
             }
 
             for socket_handle in sockets_to_remove {
-                sockets.remove(&socket_handle);
+                if let Some((_, key)) = sockets.remove(&socket_handle) {
+                    live.lock().remove(&key);
+                }
                 socket_set.remove(socket_handle);
             }
 
@@ -356,20 +439,27 @@ impl TcpListenerRunner {
             // cooperative `yield_now()` keeps the re-poll just as prompt while
             // letting `handle_packet` make progress. The timed-park path and the
             // 5 ms idle fallback are unchanged, so there is no missed-wake risk.
-            if iface_ingress_tx_avail.load(Ordering::Acquire) {
+            // Sentinel patch 3: a socket just aborted has its reset to send, and goes
+            // at the next pass, whatever smoltcp's timers say.
+            if aborted || iface_ingress_tx_avail.load(Ordering::Acquire) {
                 tokio::task::yield_now().await;
             } else {
                 // Sentinel patch 1: with no smoltcp timer pending, sleep until notified.
                 // Every event that needs a poll already notifies: incoming packets, and
                 // reads, writes, shutdowns and drops on a TcpStream. The upstream 5 ms
                 // fallback woke the runner 200 times a second on an idle phone.
-                match iface.poll_delay(before_poll, &socket_set) {
-                    Some(next_duration) if next_duration != Duration::ZERO => {
-                        let _ = tokio::time::timeout(
-                            tokio::time::Duration::from(next_duration),
-                            notify.notified(),
-                        )
-                        .await;
+                let timer = iface
+                    .poll_delay(before_poll, &socket_set)
+                    .map(StdDuration::from);
+                // Sentinel patch 3: wake for the next linger time too.
+                let until_linger = next_linger.map(|due| due.saturating_duration_since(now));
+                let timer = match (timer, until_linger) {
+                    (Some(timer), Some(linger)) => Some(timer.min(linger)),
+                    (timer, linger) => timer.or(linger),
+                };
+                match timer {
+                    Some(next_duration) if next_duration != StdDuration::ZERO => {
+                        let _ = tokio::time::timeout(next_duration, notify.notified()).await;
                     }
                     Some(_) => tokio::task::yield_now().await,
                     None => notify.notified().await,
@@ -390,6 +480,7 @@ impl TcpListener {
         mtu: usize,
         tcp_recv_buffer_size: u32,
         tcp_send_buffer_size: u32,
+        limits: TcpLimits,
     ) -> std::io::Result<(Runner, Self)> {
         let (mut device, iface_ingress_tx, iface_ingress_tx_avail) =
             VirtualDevice::new(stack_tx, mtu);
@@ -407,6 +498,7 @@ impl TcpListener {
             HashMap::new(),
             tcp_recv_buffer_size,
             tcp_send_buffer_size,
+            limits,
         );
 
         Ok((runner, Self { stream_rx }))
@@ -467,6 +559,8 @@ pub struct TcpStream {
 impl Drop for TcpStream {
     fn drop(&mut self) {
         let mut control = self.control.lock();
+        // Sentinel patch 3: from now on the socket has the linger time to close.
+        control.dropped_at = Some(StdInstant::now());
 
         if matches!(control.recv_state, TcpSocketState::Normal) {
             control.recv_state = TcpSocketState::Close;
@@ -487,6 +581,13 @@ impl TcpStream {
 
     pub fn remote_addr(&self) -> &SocketAddr {
         &self.dst_addr
+    }
+
+    /// Sentinel patch 3: end the connection at once with a reset (RST), rather than
+    /// the close that dropping the stream starts. Data not yet sent is discarded.
+    pub fn reset(self) {
+        self.control.lock().reset = true;
+        // Dropping the stream wakes the runner.
     }
 }
 

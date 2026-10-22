@@ -12,7 +12,7 @@ use tokio::task::JoinSet;
 
 use crate::dns::DnsCache;
 use crate::engine::heartbeat;
-use crate::relay::{self, Ctx};
+use crate::relay::{self, Ctx, Reset};
 use crate::{EngineConfig, EngineStats, Observer, Protect, TunDevice};
 
 /// Run the engine until the tunnel closes or the future is dropped.
@@ -82,4 +82,9 @@ pub async fn run_ipstack(
             Some(_) = relays.join_next(), if !relays.is_empty() => {}
         }
     }
+}
+
+impl Reset for ipstack::IpStackTcpStream {
+    /// ipstack offers no reset: the stream is dropped, and ipstack ends the connection.
+    fn reset(self) {}
 }
