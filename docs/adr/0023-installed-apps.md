@@ -49,6 +49,7 @@ Some questions had to be settled:
   - a list finds an app by package, one by certificate (given in upper case), and one by both (two alerts), and nothing for an app it does not name;
   - checking again raises nothing, although one alert was dismissed;
   - an app installed anew is reported again;
+  - with the clock two days before the install time, a listed app is reported once, not at every check;
   - the result counts every alert.
 
   The device tests' lists 4 and 5 name the probe's package and certificate, and only those lists do.
@@ -64,6 +65,6 @@ Some questions had to be settled:
 - **The list knows only what was reported.** An app under a new package name and a new key is not found until a list names it. Neither is a stalkerware feature hidden inside an app that is not on the list. ID-12 (apps holding accessibility, device-admin or notification-listener access) is the check for those.
 - **Hidden apps are found.** The check reads the package manager, not the launcher, so an app without an icon is listed like any other. Apps in a work profile or another user on the phone are not seen.
 - **Updating a listed app reports it again.** That is rare, and the app is still there.
-- **The device clock decides "since installed".** If the clock is set back after an alert, a reinstall made before the alert's time is not reported again until the app is updated.
+- **The device clock decides "since installed".** If the clock is set back after an alert, a reinstall made before the alert's time is not reported again until the app is updated. An install time more than a day past the clock means the clock was set back since the install. Then any earlier alert counts, so that each check does not report the app again (audit A-52). A reinstall then goes unreported, and the app is reported once more when the clock passes its install time.
 - **Google Play.** The check needs `QUERY_ALL_PACKAGES`. If Google refuses the declaration, the Play build falls back to checking only the packages the list names ([PLAY-POLICY.md](../PLAY-POLICY.md)), and loses the certificate check.
 - **Which public lists are imported, and under which licences, is the feed builder's task.** It is done offline, with the real signing keys (ADR-0019).

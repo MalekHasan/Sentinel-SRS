@@ -12,6 +12,10 @@ use crate::feed::Feed;
 use crate::history::{HistoryError, HistoryStore, now_ms};
 use crate::hunt::indicator_match;
 
+/// How far past the phone's clock an install time may be before the clock is taken to
+/// have been set back since (audit A-52).
+const CLOCK_SET_BACK_MS: i64 = 86_400_000;
+
 /// An app installed on the phone, as Android describes it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct InstalledApp {
@@ -74,9 +78,16 @@ impl HistoryStore {
                     Some(&app.package),
                     indicator_match(hit, &seen.to_ascii_lowercase(), sighting),
                 );
+                // With the clock set back past the install time, every alert raised
+                // now would seem older than the app, and each check would raise one
+                // again. The clock cannot tell a reinstall then: any alert counts.
+                let since = if app.installed_ms > now + CLOCK_SET_BACK_MS {
+                    i64::MIN
+                } else {
+                    app.installed_ms
+                };
                 let already = reported.iter().any(|earlier| {
-                    earlier.alert.created >= app.installed_ms
-                        && same_sighting(&alert, &earlier.alert)
+                    earlier.alert.created >= since && same_sighting(&alert, &earlier.alert)
                 });
                 if !already {
                     self.raise(&alert)?;
@@ -236,5 +247,34 @@ mod tests {
         );
         assert_eq!(reported(&history).last().unwrap().0, watch.0);
         assert_eq!(history.known_traces().unwrap().alerts, 5);
+    }
+
+    /// Audit A-52: with the clock set back days before an app's install time, a listed
+    /// app is reported once, not at every check.
+    #[test]
+    fn a_clock_set_back_does_not_report_an_app_at_every_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = history(dir.path());
+        let feed = open(&dir.path().join("feed"));
+        let staged = stage(
+            dir.path(),
+            1,
+            &[(
+                "indicators-lab.json",
+                indicators("lab", &[("package", "com.example.spy")]),
+            )],
+        );
+        feed.install(path(&staged)).unwrap();
+        let installed = now_ms() + 2 * CLOCK_SET_BACK_MS;
+        let apps = || vec![app("com.example.spy", &[], installed)];
+        let raised = |history: &HistoryStore| {
+            history
+                .check_apps(Arc::clone(&feed), apps())
+                .unwrap()
+                .unwrap()
+                .raised
+        };
+        assert_eq!(raised(&history), 1);
+        assert_eq!(raised(&history), 0);
     }
 }

@@ -104,6 +104,7 @@ Small buffers cost little throughput here because the window faces a local tunne
 3. **Keep the relay layer stack-agnostic.** ipstack stays in the tree behind the `ipstack` feature, so the comparison can be re-run whenever either stack changes. It is not built into the app.
 4. **CI gates on the default stack.** The lab runs smoltcp on every push and fails on any correctness check, including half-close and slow-upstream backpressure (app send rate at most 3 times the server's, engine growth under 50 MB).
 5. **Offer both stacks' fixes upstream.** If upstream does not take them, we maintain the vendored copies.
+6. **A packet the stack cannot read is dropped, and the engine goes on** (audit A-52). Before, the first one ended the task that reads the tunnel, and with it the engine, until it was restarted. Apps cannot send one through their sockets, since Android builds their packets, but an app with root can. Checked by the socketpair test `a_packet_the_stack_cannot_read_is_dropped`, which fails without the change. The ipstack comparison stack reads the tunnel itself and is not changed.
 
 Download throughput (0.56–0.69 Gbit/s on the host) is smoltcp's weak point. The phone measurements below decide whether it matters; if it does, profile the download path before changing stacks again.
 
