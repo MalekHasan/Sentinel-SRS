@@ -12,7 +12,7 @@ use tokio::task::JoinSet;
 
 use crate::dns::DnsCache;
 use crate::engine::heartbeat;
-use crate::relay::{self, Ctx, Reset};
+use crate::relay::{self, BlockedUdp, Ctx, Reset};
 use crate::{EngineConfig, EngineStats, Observer, Protect, TunDevice};
 
 /// Run the engine until the tunnel closes or the future is dropped.
@@ -82,6 +82,12 @@ pub async fn run_ipstack(
             Some(_) = relays.join_next(), if !relays.is_empty() => {}
         }
     }
+}
+
+/// The comparison stack keeps its own UDP sessions: a blocked one is ended, and the
+/// next datagram decided again.
+impl BlockedUdp for ipstack::IpStackUdpStream {
+    fn remember_blocked(&self, _idle: std::time::Duration) {}
 }
 
 impl Reset for ipstack::IpStackTcpStream {

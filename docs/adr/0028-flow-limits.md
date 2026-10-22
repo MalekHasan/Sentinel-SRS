@@ -4,6 +4,7 @@
 - Date: 2026-10-16
 - Implements: THREAT-MODEL-A D2 ("An app opens thousands of flows … to exhaust memory"), whose other mitigations were already in place: a bounded DNS cache, idle timeouts, fixed TCP buffers with flow control, and bounded UDP queues.
 - Amended 2026-10-22 for audit findings A-04 and A-18 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): decision 5, and the memory per flow.
+- Amended 2026-10-22 for audit finding A-13: a full UDP queue drops the datagram.
 
 ## Context
 
@@ -37,9 +38,12 @@ A phone normally has a few hundred flows open; browsers limit themselves to abou
    - **A socket has `tcp_linger`, 60 s, to close** once its flow ended. Then it is reset. Linux gives orphaned sockets about as long (`tcp_fin_timeout`).
    - **A TCP flow with no byte either way for `tcp_idle_timeout`, 2 hours, is reset.** On smoltcp nothing else ended a connection that both sides keep open; only ipstack had this. Push connections send heartbeats far more often.
 
+**A full UDP queue drops the datagram** (audit finding A-13). Each UDP flow takes the app's datagrams through a queue of 256. When a flow does not keep up, as while it is still being decided, a datagram that finds its queue full is dropped, as a full network queue would drop it. Before, it started a second flow to the same place, which reached the server from a new source port that many protocols do not survive, and was decided and stored again. A datagram whose flow has ended still starts a new one.
+
 ## Verification
 
 - `sentinel-vpn` (socketpair test): with `max_flows` 2, two UDP flows are relayed and a third is refused. The refusal is counted, no observer hears of it, and the open flows go on.
+- `sentinel-vpn` (socketpair test): 600 datagrams sent while the flow takes 500 ms to be decided make one flow, not two.
 - `sentinel-vpn` (socketpair tests over TCP, an app's side written packet by packet): a blocked connection is reset and never closed; an app that never acknowledges the FIN is reset after `tcp_linger`; with `max_flows` 1, a second connection is reset and counted while the first still closes, and a third opens once it is freed; a SYN sent twice makes one flow; an idle connection is reset after `tcp_idle_timeout`. Each test fails with its part of the fix taken out. The lab's checks (throughput, backpressure, half-close, server close, SNI and DNS) still pass.
 - `sentinel-detect`: the alert is a Warning about the app, offers to block it and to look at it, and its stored JSON is fixed.
 - `sentinel-ffi`:

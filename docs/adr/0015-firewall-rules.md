@@ -4,6 +4,7 @@
 - Date: 2026-10-15
 - Implements: SRS CM-10 for Android, the Phase A subset: rules by app, domain, address and company; RA-01 (block an app, a destination or a company, from the app). Modes (CM-08) are [ADR-0016](0016-firewall-modes.md), isolation (RA-03) is [ADR-0017](0017-isolation.md); the action journal and undo are [ADR-0018](0018-action-journal.md).
 - Amended 2026-10-22 for audit finding A-09 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): decision 1, apps that share a Linux user.
+- Amended 2026-10-22 for audit finding A-12: decision 3, a blocked UDP flow is remembered.
 
 ## Context
 
@@ -27,6 +28,8 @@ Names are the hard part. The engine learns a name for an address from the DNS an
 2. **The most specific rule decides.** A rule for an app and a destination beats one for a destination, which beats one for an app. Among matching rules equally specific, blocking wins. When no rule matches, the firewall mode decides ([ADR-0016](0016-firewall-modes.md)): in Watch only, the default, that means allow.
 3. **The core decides, the engine enforces.** The rules and their decision live in `sentinel-detect` (`firewall`), so every edition decides the same way. The engine asks at three moments, each with only what it knows for sure:
    - **A new connection:** its app and address. App rules and address rules decide here, and a blocked connection never reaches the server.
+     - **A blocked UDP flow is remembered** (audit finding A-12). UDP has no connection: every datagram from the app to the same place belongs to the flow. Before, each next datagram started a flow of its own, was decided again and stored as a flow: a blocked call or game, sending dozens a second, added millions of rows a day. Now the engine remembers the app's address and the place, and drops what the app sends there, with no flow, no question and no record, for the UDP idle time after the block (2 minutes; 5 seconds for DNS). The next datagram is then decided again, so a blocked flow is stored once every two minutes at most. When the rules or the mode change, every remembered block is forgotten, so that allowing an app takes effect at its next datagram.
+     - Remembered blocks are kept apart from open flows: they take no place among `max_flows` (ADR-0028), so a blocked app sending to many places, as file sharing does, cannot crowd out the others. At most 4,096 are kept, about a hundred bytes each; past that, a blocked flow is not remembered, and its next datagram is decided again, as before.
    - **A TLS server name:** the app, the address and that name, and the name's company if the tracker list gives one. Domain and company rules decide here too.
      - The ClientHello is read whole, joined from the handshake records TLS lets a client split it into, up to `MAX_HELLO` (about 33 KB) of records. The engine waits up to 500 ms (`sni_wait`) for its rest.
      - **A name that cannot be read is not let past a rule that blocks by name** (audit finding A-03). This covers a ClientHello that comes too slowly, is broken across records, or is longer than the engine reads; the server may still see a name. If a rule blocking a domain or a company applies to the app, the connection is blocked before anything is forwarded. Otherwise it goes on, as before. A ClientHello read whole that carries no name is not blocked: a client connecting to an address needs none.
@@ -64,6 +67,7 @@ Names are the hard part. The engine learns a name for an address from the DNS an
   - the "new app" and "new places" alerts offer to block the app;
   - through the real packet engine, blocking an app ends its open connection within a second; nothing more reaches the server, and it is stored as blocked;
   - blocked connections are stored as blocked, and without a history nothing is blocked;
+  - `sentinel-vpn` (socketpair tests): a blocked UDP flow sent a datagram every 50 ms is decided and stored once, and decided again after the idle time; once the firewall changes, the app's next datagram, now allowed, is decided again and gets its answer;
   - through the real packet engine, an app's blocked datagram never reaches the server.
 - `sentinel-vpn`:
   - when the firewall changes, every open flow is asked again; one still allowed goes on, one now blocked ends at once and is reported as blocked, and without a change no flow is asked;

@@ -72,7 +72,7 @@ impl Ctx {
 
     /// A view of the firewall's changes from now on: taken before a flow is first
     /// decided, so that no change after that decision goes unseen.
-    fn firewall_changes(&self) -> Option<watch::Receiver<u64>> {
+    pub(crate) fn firewall_changes(&self) -> Option<watch::Receiver<u64>> {
         let mut changes = self.config.firewall_changes.clone()?;
         changes.mark_unchanged();
         Some(changes)
@@ -105,6 +105,14 @@ impl Ctx {
             },
         );
     }
+}
+
+/// The app's side of a UDP flow, as the stack gives it.
+pub(crate) trait BlockedUdp {
+    /// The flow was blocked when it started: the app's datagrams to the same place are
+    /// dropped for `idle`, rather than each starting a flow of its own, decided and
+    /// recorded again (audit A-12). A game or a call sends dozens a second.
+    fn remember_blocked(&self, idle: Duration);
 }
 
 /// The app's side of a TCP flow, as the stack gives it.
@@ -356,7 +364,7 @@ async fn idle(counters: &FlowCounters, limit: Duration) {
 /// each write sends one datagram back to it.
 pub(crate) async fn udp<S>(ctx: Arc<Ctx>, client: S, src: SocketAddr, dst: SocketAddr)
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    S: AsyncRead + AsyncWrite + BlockedUdp + Unpin + Send + 'static,
 {
     let _active = ActiveGuard::new(&ctx.stats);
     if ctx.refused() {
@@ -365,7 +373,21 @@ where
     }
     let flow = ctx.new_flow(Proto::Udp, src, dst);
     let changes = ctx.firewall_changes();
+    let is_dns = flow.dst.port() == DNS_PORT;
+    let idle = if is_dns {
+        DNS_IDLE
+    } else {
+        ctx.config.udp_idle_timeout
+    };
     if ctx.observer.flow_started(&flow) == Verdict::Block {
+        // A firewall change while it was decided may allow it now: it is then not
+        // remembered, and the next datagram is decided again.
+        if !changes
+            .as_ref()
+            .is_some_and(|changes| changes.has_changed().unwrap_or(false))
+        {
+            client.remember_blocked(idle);
+        }
         ctx.finish(&flow, Verdict::Block);
         return;
     }
@@ -382,12 +404,6 @@ where
         }
     };
     let (mut client_rx, mut client_tx) = tokio::io::split(client);
-    let is_dns = flow.dst.port() == DNS_PORT;
-    let idle = if is_dns {
-        DNS_IDLE
-    } else {
-        ctx.config.udp_idle_timeout
-    };
     // Answers the engine writes itself: "no such name" for a blocked lookup.
     let (replies_tx, replies_rx) = tokio::sync::mpsc::channel(16);
     let lookups = is_dns.then(|| Lookups {

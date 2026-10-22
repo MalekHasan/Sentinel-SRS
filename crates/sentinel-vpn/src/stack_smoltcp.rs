@@ -10,6 +10,7 @@ use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
 use netstack_smoltcp::StackBuilder;
@@ -19,14 +20,28 @@ use tokio::task::JoinSet;
 
 use crate::dns::DnsCache;
 use crate::engine::heartbeat;
-use crate::relay::{self, Ctx, Reset};
+use crate::relay::{self, BlockedUdp, Ctx, Reset};
 use crate::{EngineConfig, EngineStats, Observer, Protect, TunDevice};
 
 type FlowKey = (SocketAddr, SocketAddr);
-type Sessions = Arc<Mutex<HashMap<FlowKey, (u64, mpsc::Sender<Vec<u8>>)>>>;
+type Sessions = Arc<Mutex<HashMap<FlowKey, Session>>>;
+
+/// What the dispatcher knows of the datagrams from one app address to one remote one.
+enum Session {
+    /// A flow is open: they go to it.
+    Open { id: u64, tx: mpsc::Sender<Vec<u8>> },
+    /// The flow was blocked when it started: they are dropped until `until`, or until
+    /// the firewall changes, and the next one is then decided again (audit A-12).
+    Blocked { until: Instant },
+}
 
 /// Datagrams queued per UDP flow before new ones are dropped (UDP may lose packets).
 const UDP_QUEUE: usize = 256;
+
+/// Sessions kept at most for remembering blocked flows: past it, a blocked flow is not
+/// remembered, and its next datagram is decided again, as before. Each costs about a
+/// hundred bytes.
+const MAX_SESSIONS: usize = 4096;
 
 /// Run the engine until the tunnel closes or the future is dropped.
 ///
@@ -125,32 +140,67 @@ pub async fn run(
         tasks.spawn(async move {
             let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
             let mut next_session = 1u64;
+            let mut changes = ctx.firewall_changes();
             // Owned by this task, so aborting it aborts the UDP flows too.
             let mut flows = JoinSet::new();
             loop {
-                let (data, app, remote) = tokio::select! {
+                let (mut data, app, remote) = tokio::select! {
                     datagram = udp_rx.next() => match datagram {
                         Some(datagram) => datagram,
                         None => break,
                     },
                     Some(_) = flows.join_next(), if !flows.is_empty() => continue,
+                    changed = firewall_changed(&mut changes) => {
+                        if changed {
+                            // Blocked flows are decided again at their next datagram,
+                            // so that allowing an app takes effect at once.
+                            if let Ok(mut map) = sessions.lock() {
+                                map.retain(|_, session| matches!(session, Session::Open { .. }));
+                            }
+                        } else {
+                            // The firewall is gone: nothing more will change.
+                            changes = None;
+                        }
+                        continue;
+                    }
                 };
                 let key = (app, remote);
                 let existing = sessions
                     .lock()
                     .ok()
-                    .and_then(|map| map.get(&key).map(|(_, tx)| tx.clone()));
-                if let Some(tx) = existing
-                    && tx.try_send(data.clone()).is_ok()
-                {
-                    continue;
+                    .and_then(|mut map| match map.get(&key) {
+                        Some(Session::Open { tx, .. }) => Some(Some(tx.clone())),
+                        Some(Session::Blocked { until }) if Instant::now() < *until => Some(None),
+                        Some(Session::Blocked { .. }) => {
+                            map.remove(&key);
+                            None
+                        }
+                        None => None,
+                    });
+                let existing = match existing {
+                    // Blocked: dropped, with no flow, no question and no record.
+                    Some(None) => continue,
+                    Some(Some(tx)) => Some(tx),
+                    None => None,
+                };
+                if let Some(tx) = existing {
+                    match tx.try_send(data) {
+                        Ok(()) => continue,
+                        // The flow is not keeping up: the datagram is dropped, as a full
+                        // network queue drops it. A second flow for the same app and
+                        // place would reach the server from a new source port, which
+                        // many protocols do not survive (audit A-13).
+                        Err(mpsc::error::TrySendError::Full(_)) => continue,
+                        // The flow has ended: the datagram starts a new one.
+                        Err(mpsc::error::TrySendError::Closed(returned)) => data = returned,
+                    }
                 }
                 let (tx, rx) = mpsc::channel(UDP_QUEUE);
                 let _ = tx.try_send(data);
                 let id = next_session;
                 next_session += 1;
                 if let Ok(mut map) = sessions.lock() {
-                    map.insert(key, (id, tx));
+                    map.insert(key, Session::Open { id, tx });
                 }
                 let flow = UdpFlow {
                     rx,
@@ -252,16 +302,52 @@ impl AsyncWrite for UdpFlow {
     }
 }
 
+impl UdpFlow {
+    /// Whether the session for this flow's key is this flow's own: a newer flow may
+    /// already use the same key.
+    fn owns(&self, map: &HashMap<FlowKey, Session>) -> bool {
+        matches!(map.get(&(self.app, self.remote)), Some(Session::Open { id, .. }) if *id == self.id)
+    }
+}
+
+impl BlockedUdp for UdpFlow {
+    fn remember_blocked(&self, idle: Duration) {
+        let Ok(mut map) = self.sessions.lock() else {
+            return;
+        };
+        if !self.owns(&map) {
+            return;
+        }
+        // The flow's own entry is replaced: remembering adds none.
+        let now = Instant::now();
+        if map.len() > MAX_SESSIONS {
+            map.retain(
+                |_, session| !matches!(session, Session::Blocked { until } if *until <= now),
+            );
+        }
+        if map.len() <= MAX_SESSIONS {
+            map.insert(
+                (self.app, self.remote),
+                Session::Blocked { until: now + idle },
+            );
+        }
+    }
+}
+
 impl Drop for UdpFlow {
     fn drop(&mut self) {
-        if let Ok(mut map) = self.sessions.lock() {
-            // Only remove our own entry; a newer flow may already use the same key.
-            if map
-                .get(&(self.app, self.remote))
-                .is_some_and(|(id, _)| *id == self.id)
-            {
-                map.remove(&(self.app, self.remote));
-            }
+        if let Ok(mut map) = self.sessions.lock()
+            && self.owns(&map)
+        {
+            map.remove(&(self.app, self.remote));
         }
+    }
+}
+
+/// Resolves when the firewall changes (`true`) or is gone (`false`); never without one.
+async fn firewall_changed(changes: &mut Option<tokio::sync::watch::Receiver<u64>>) -> bool {
+    match changes {
+        Some(changes) => changes.changed().await.is_ok(),
+        None => std::future::pending().await,
     }
 }
