@@ -295,7 +295,7 @@ class RtlTest {
 
     @Test
     fun allowedScreen() {
-        val row = AllowedRow(AllowedRule(AlertRule.SPECIAL_ACCESS, PACKAGE, now), LABEL)
+        val row = AllowedRow(AllowedRule(AlertRule.SPECIAL_ACCESS, PACKAGE, SpecialAccess.ACCESSIBILITY, now), LABEL)
         compose.setContent {
             InArabic { AllowedList(listOf(row), takenBack = LABEL, onBack = {}, onTakeBack = {}) }
         }
@@ -306,7 +306,7 @@ class RtlTest {
         // A Latin name inside the sentence must not turn it around.
         val said = arabic.getString(R.string.allowed_taken_back, isolate(LABEL))
         assertRightToLeft(compose.onNodeWithText(said))
-        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_special_access_title)))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_accessibility_title)))
         compose.onNodeWithText(arabic.getString(R.string.allowed_take_back)).assertAtTheRight()
     }
 

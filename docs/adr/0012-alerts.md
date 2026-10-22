@@ -65,11 +65,11 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
 13. **Every alert asks whether it was useful.** The user can answer:
     - **Not useful.** The alert is dismissed. Later alerts from the same rule about the same app are still kept and shown in the app, but they no longer notify.
     - **Allow.** The alert is dismissed, and its rule and app go on an allow-list. That rule raises no more alerts about that app; what it watches, such as monitoring gaps, is still recorded.
-14. **Both can be undone** from the alert. Taking back "allow" removes the allow-list entry. **Everything allowed is also listed** on its own screen ("Alerts you allowed", opened from the main screen): each kind of alert, the app, when, and Take back. Taking one back there brings its alerts again, and the alerts it was allowed from no longer say it is allowed; they stay dismissed.
+14. **Both can be undone** from the alert. Taking back "allow" removes the allow-list entry. **Everything allowed is also listed** on its own screen ("Alerts you allowed", opened from the main screen): each kind of alert, the app, when, and Take back. For special access the kind of access is part of what was allowed, and is named ([ADR-0024](0024-special-access.md), audit A-38). Taking one back there brings its alerts again, and the alerts it was allowed from no longer say it is allowed; they stay dismissed.
 15. **Only an alert about an app, and not a Critical one, can be allowed; "not useful" never holds a Critical notification.** The core decides (`Feedback::allowed_on`), tells the app on each alert (`can_allow`), and refuses the rest.
     - **A Critical alert:** someone else holding the phone could otherwise silence what it found, such as spyware (THREAT-MODEL-A B5).
     - **An alert about no app:** allowing goes by rule and app, so allowing one of these would silence its rule for the whole phone, for good. One tap would stop every later alert about the microphone used while the screen is off, a monitoring gap, a network setting changed, or a certificate added (audit A-08). These can be dismissed or marked not useful. What an earlier version allowed for no app no longer counts, and is not listed.
-16. **Feedback is kept in the encrypted history and changes only this user's alerts.** It is stored in `alert.user_feedback` and, for allowing, in an `allowed` table (schema version 8). It never leaves the phone (NF-11), and it tunes nothing but these two local thresholds.
+16. **Feedback is kept in the encrypted history and changes only this user's alerts.** It is stored in `alert.user_feedback` and, for allowing, in an `allowed` table (schema version 8; version 18 adds the kind of special access). It never leaves the phone (NF-11), and it tunes nothing but these two local thresholds.
 
 ## Verification
 
@@ -94,8 +94,9 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
   - the store test checks that "not useful" holds later alerts like it but not other apps' or Critical ones;
   - it checks that allowing adds to the allow-list and that changing or undoing the feedback removes the entry, as does taking it back from the list, which clears that app's alerts' feedback only;
   - it checks that a Critical alert, and an alert about no app, cannot be allowed, that an older allowance for no app no longer counts and is not listed, and that everything survives reopening;
+  - the schema test checks that special access allowed before version 18 keeps only the kinds of the alerts it was allowed from, and that one whose alerts are gone no longer counts (A-38);
   - the FFI test shows that an allowed rule raises nothing about that app until undone, or taken back from the list, and that a gap cannot be allowed.
-  - `AlertsTest` on the emulator checks that a gap recorded by the app cannot be allowed and that the next gap alerts again, and checks the buttons, their results and Undo (no Allow where the core says so); `AllowedTest` allows an app's special access, finds it on the list, takes it back there, and is alerted again; `RtlTest` checks them in Arabic.
+  - `AlertsTest` on the emulator checks that a gap recorded by the app cannot be allowed and that the next gap alerts again, and checks the buttons, their results and Undo (no Allow where the core says so); `AllowedTest` allows an app's special access, finds it on the list by its kind, takes it back there, and is alerted again, and once that kind is allowed again the app's other kind is still reported (A-38); `RtlTest` checks them in Arabic.
 - `AlertNotificationTest` on the emulator checks:
   - the four channels' importance, sounds and vibrations;
   - that a gap posts a secret Warning notification;

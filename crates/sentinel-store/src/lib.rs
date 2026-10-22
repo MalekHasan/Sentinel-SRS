@@ -257,6 +257,8 @@ pub struct StoredAlert {
 pub struct AllowedEntry {
     pub rule: Rule,
     pub app: String,
+    /// For special access, the kind allowed; no other is (audit A-38).
+    pub access: Option<Access>,
     /// Unix milliseconds.
     pub created: i64,
 }
@@ -798,8 +800,8 @@ impl Store {
 
     /// Record what the user said about alert `id` (AL-05), or take it back with `None`.
     /// Any feedback also dismisses the alert. Allowing it adds its rule and app to the
-    /// allow-list; taking that back removes them. Returns whether there is an alert with
-    /// this id.
+    /// allow-list, with the kind of special access it is about if any; taking that back
+    /// removes them. Returns whether there is an alert with this id.
     pub fn set_feedback(&self, id: i64, feedback: Option<Feedback>, now: i64) -> Result<bool> {
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
@@ -815,16 +817,18 @@ impl Store {
         }
         let rule = stored.alert.rule.id();
         let subject = stored.alert.app().unwrap_or_default();
+        let detail = detail(stored.alert.allowed_access());
         if stored.feedback == Some(Feedback::Allowed) && feedback != Some(Feedback::Allowed) {
             tx.execute(
-                "DELETE FROM allowed WHERE rule_id = ?1 AND subject = ?2",
-                params![rule, subject],
+                "DELETE FROM allowed WHERE rule_id = ?1 AND subject = ?2 AND detail = ?3",
+                params![rule, subject, detail],
             )?;
         }
         if feedback == Some(Feedback::Allowed) {
             tx.execute(
-                "INSERT OR IGNORE INTO allowed (rule_id, subject, created) VALUES (?1, ?2, ?3)",
-                params![rule, subject, now],
+                "INSERT OR IGNORE INTO allowed (rule_id, subject, detail, created)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![rule, subject, detail, now],
             )?;
         }
         tx.execute(
@@ -841,9 +845,15 @@ impl Store {
         Ok(true)
     }
 
-    /// Whether the user allowed `rule` for `app`, so that it raises no alerts about it
-    /// (AL-05). Never for no app.
-    pub fn is_allowed(&self, rule: Rule, app: Option<&str>) -> Result<bool> {
+    /// Whether the user allowed `rule` for `app`, and for special access, the kind
+    /// `access` (audit A-38), so that it raises no alerts about it (AL-05). Never for no
+    /// app.
+    pub fn is_allowed(
+        &self,
+        rule: Rule,
+        app: Option<&str>,
+        access: Option<Access>,
+    ) -> Result<bool> {
         // An alert about no app is never allowed. What an older version allowed for none
         // silenced the rule for the whole phone, and no longer counts (audit A-08).
         let Some(app) = app else {
@@ -851,23 +861,23 @@ impl Store {
         };
         let found: Option<i64> = lock(&self.conn)
             .query_row(
-                "SELECT 1 FROM allowed WHERE rule_id = ?1 AND subject = ?2",
-                params![rule.id(), app],
+                "SELECT 1 FROM allowed WHERE rule_id = ?1 AND subject = ?2 AND detail = ?3",
+                params![rule.id(), app, detail(access)],
                 |r| r.get(0),
             )
             .optional()?;
         Ok(found.is_some())
     }
 
-    /// Take back what the user allowed for `app` and `rule`: its alerts come again, and
-    /// the alerts it was allowed from no longer say it is allowed. They stay dismissed.
-    /// Returns whether it was allowed.
-    pub fn take_back(&self, rule: Rule, app: &str) -> Result<bool> {
+    /// Take back what the user allowed for `app` and `rule`, and for special access, the
+    /// kind `access`: its alerts come again, and the alerts it was allowed from no longer
+    /// say it is allowed. They stay dismissed. Returns whether it was allowed.
+    pub fn take_back(&self, rule: Rule, app: &str, access: Option<Access>) -> Result<bool> {
         let mut conn = lock(&self.conn);
         let tx = conn.transaction()?;
         let removed = tx.execute(
-            "DELETE FROM allowed WHERE rule_id = ?1 AND subject = ?2",
-            params![rule.id(), app],
+            "DELETE FROM allowed WHERE rule_id = ?1 AND subject = ?2 AND detail = ?3",
+            params![rule.id(), app, detail(access)],
         )?;
         let mut stmt = tx.prepare(&format!(
             "{ALERT_COLUMNS} WHERE rule_id = ?1 AND user_feedback = ?2"
@@ -878,7 +888,9 @@ impl Store {
         drop(stmt);
         for row in rows {
             let allowed_from = stored_alert(row)?;
-            if allowed_from.alert.app() == Some(app) {
+            if allowed_from.alert.app() == Some(app)
+                && allowed_from.alert.allowed_access() == access
+            {
                 tx.execute(
                     "UPDATE alert SET user_feedback = NULL WHERE id = ?1",
                     [allowed_from.id],
@@ -889,12 +901,13 @@ impl Store {
         Ok(removed > 0)
     }
 
-    /// Everything the user allowed, newest first. Entries for rules this version does
-    /// not know are left out, and so are those for no app, which no longer count.
+    /// Everything the user allowed, newest first. Entries for rules or kinds of access
+    /// this version does not know are left out, and so are those for no app, which no
+    /// longer count.
     pub fn allowed(&self) -> Result<Vec<AllowedEntry>> {
         let conn = lock(&self.conn);
         let mut stmt = conn.prepare(
-            "SELECT rule_id, subject, created FROM allowed WHERE subject <> ''
+            "SELECT rule_id, subject, detail, created FROM allowed WHERE subject <> ''
              ORDER BY created DESC",
         )?;
         let rows = stmt
@@ -902,16 +915,22 @@ impl Store {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows
             .into_iter()
-            .filter_map(|(rule, subject, created)| {
+            .filter_map(|(rule, subject, detail, created)| {
+                let access = match detail.as_str() {
+                    "" => None,
+                    name => Some(Access::from_name(name)?),
+                };
                 Some(AllowedEntry {
                     rule: Rule::from_id(&rule)?,
                     app: subject,
+                    access,
                     created,
                 })
             })
@@ -2005,6 +2024,11 @@ fn update_flow(tx: &Transaction<'_>, id: i64, row: &FlowRow) -> Result<()> {
         ],
     )?;
     Ok(())
+}
+
+/// The `allowed.detail` that goes with `access` (schema V18): its name, or empty.
+fn detail(access: Option<Access>) -> &'static str {
+    access.map_or("", Access::as_str)
 }
 
 fn proto_name(proto: Proto) -> &'static str {

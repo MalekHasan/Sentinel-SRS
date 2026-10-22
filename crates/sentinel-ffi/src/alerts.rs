@@ -382,6 +382,8 @@ impl From<Feedback> for AlertFeedback {
 pub struct AllowedRule {
     pub rule: AlertRule,
     pub app: String,
+    /// For special access, the kind allowed; no other is (audit A-38).
+    pub access: Option<SpecialAccess>,
     pub created_ms: i64,
 }
 

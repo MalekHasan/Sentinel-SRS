@@ -9,6 +9,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.malekhasan.sentinel.core.AlertEvidence
 import io.github.malekhasan.sentinel.core.AlertFeedback
 import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.HeldAccess
@@ -24,7 +25,7 @@ import org.junit.runner.RunWith
 
 /**
  * AL-05 on a device (audit A-08): what the user allowed is listed, and taking it back
- * brings its alerts again.
+ * brings its alerts again. Special access is allowed one kind at a time (audit A-38).
  */
 @RunWith(AndroidJUnit4::class)
 class AllowedTest {
@@ -56,7 +57,7 @@ class AllowedTest {
         assertTrue("allowed", accessAlerts().isEmpty())
 
         compose.setContent { SentinelTheme { AllowedScreen(onBack = {}) } }
-        waitUntilShown(context.getString(R.string.alert_special_access_title))
+        waitUntilShown(context.getString(R.string.alert_accessibility_title))
         compose.onNodeWithText(APP).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.allowed_explainer)).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.allowed_take_back)).performClick()
@@ -67,6 +68,13 @@ class AllowedTest {
         assertNull("the alert no longer says it is allowed", history.alert(alert.id)?.feedback)
         offAndOn()
         assertEquals("taken back", 1, accessAlerts().size)
+
+        // Allowing it does not allow the app's other kinds of access.
+        assertTrue(history.setFeedback(accessAlerts().single().id, AlertFeedback.ALLOWED))
+        history.checkAccess(held + HeldAccess(APP, SpecialAccess.NOTIFICATION_LISTENER, false))
+        val other = accessAlerts().single()
+        assertTrue("${other.evidence}", AlertEvidence.Access(SpecialAccess.NOTIFICATION_LISTENER) in other.evidence)
+        assertEquals(listOf(SpecialAccess.ACCESSIBILITY), history.allowed().map { it.access })
     }
 
     @Test

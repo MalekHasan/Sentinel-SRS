@@ -424,6 +424,20 @@ impl Alert {
             _ => None,
         })
     }
+
+    /// What allowing the alert allows besides its rule and app (AL-05): for special
+    /// access, the kind it is about and no other, so that an app allowed to read
+    /// notifications is still reported once it can see the screen (audit A-38). `None`
+    /// for other rules.
+    pub fn allowed_access(&self) -> Option<Access> {
+        if self.rule != Rule::SpecialAccess {
+            return None;
+        }
+        self.evidence.iter().find_map(|e| match e {
+            Evidence::Access { access } => Some(*access),
+            _ => None,
+        })
+    }
 }
 
 /// What the user said about an alert (AL-05). It stays on the device and changes only
@@ -433,8 +447,9 @@ pub enum Feedback {
     /// Alerts like this are not useful: later ones about the same app wait in the app
     /// instead of notifying. Critical alerts still notify.
     NotUseful,
-    /// Allow what the alert was about: no more alerts from this rule about the same app.
-    /// Only for an alert about an app, and not a Critical one (see [`Feedback::allowed_on`]).
+    /// Allow what the alert was about: no more alerts from this rule about the same app,
+    /// and for special access, the same kind of it (see [`Alert::allowed_access`]). Only
+    /// for an alert about an app, and not a Critical one (see [`Feedback::allowed_on`]).
     Allowed,
 }
 
