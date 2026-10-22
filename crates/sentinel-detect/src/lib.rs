@@ -34,8 +34,8 @@ pub use dns_use::{
     encrypted_dns, own_encrypted_dns,
 };
 pub use firewall::{
-    Destination, FirewallMode, FirewallRule, Isolation, Network, Place, RuleAction, RuleError,
-    RuleSet,
+    Destination, FirewallMode, FirewallRule, Isolation, Network, Owner, Place, RuleAction,
+    RuleError, RuleSet,
 };
 pub use first_seen::{
     GROUP_WINDOW_MS, LEARNING_MS, MAX_LISTED, add_destinations, first_network_use,

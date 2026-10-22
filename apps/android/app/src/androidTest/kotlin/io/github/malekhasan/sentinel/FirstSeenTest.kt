@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
+import android.os.Process
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.malekhasan.sentinel.core.AlertEvidence
 import io.github.malekhasan.sentinel.core.AlertRule
+import io.github.malekhasan.sentinel.core.FlowOwner
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -47,6 +49,27 @@ class FirstSeenTest {
         assertEquals("asked once, then remembered", expected, names.installedAt(context.packageName))
         assertNull(names.installedAt("android.uid.system:1000"))
         assertNull(names.installedAt("org.example.not.installed"))
+    }
+
+    /**
+     * Audit A-09: the owner of a UID that several packages share lists them all, so that
+     * a rule about any of them applies to its connections. Android's own UIDs keep no
+     * install time, so they are never new. An app's own UID lists none.
+     */
+    @Test
+    fun ownersOfSharedUidsListTheirPackages() {
+        val names = AppNames(context)
+        val system = names.ownerOf(Process.SYSTEM_UID)
+        assertEquals(context.packageManager.getNameForUid(Process.SYSTEM_UID), system.app)
+        assertTrue("${system.packages}", "android" in system.packages && system.packages.size > 1)
+        assertNull(system.installedMs)
+        assertTrue(system.system)
+
+        val own = FlowOwner(
+            Process.myUid(), context.packageName, names.installedAt(context.packageName), false, emptyList(),
+        )
+        assertEquals(own, names.ownerOf(Process.myUid()))
+        assertEquals(FlowOwner(-1, null, null, false, emptyList()), names.ownerOf(-1))
     }
 
     @Test

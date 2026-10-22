@@ -343,8 +343,10 @@ impl HistoryStore {
     pub fn app_access(&self, app: String, installed_ms: Option<i64>) -> AppAccess {
         let rules = self.rule_set();
         AppAccess {
-            rule: rules.decide(Some(&app), Place::default()).map(Into::into),
-            blocked_as_new: rules.blocks_new_app(self.mode_in_force(), &app, installed_ms),
+            rule: rules
+                .decide(Some(app.as_str()), Place::default())
+                .map(Into::into),
+            blocked_as_new: rules.blocks_new_app(self.mode_in_force(), app.as_str(), installed_ms),
         }
     }
 

@@ -358,6 +358,7 @@ mod tests {
                 app: Some(OWNER_APP.to_owned()),
                 installed_ms: self.installed_ms,
                 system: false,
+                packages: Vec::new(),
             }
         }
         fn flows(&self, records: Vec<FlowRecord>) {
@@ -1282,6 +1283,7 @@ mod tests {
                 app: Some(OWNER_APP.to_owned()),
                 installed_ms: None,
                 system: false,
+                packages: Vec::new(),
             }
         }
         fn flows(&self, records: Vec<FlowRecord>) {

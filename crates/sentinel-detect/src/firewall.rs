@@ -49,6 +49,37 @@ pub struct Isolation {
     pub own_app: String,
 }
 
+/// Who a connection or lookup comes from, as far as Android can tell (audit A-09).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Owner<'a> {
+    /// The name the history knows the owner by: its package, or Android's name for a
+    /// Linux user that several packages share (`sharedUserId`). `None` when Android
+    /// could not say who owns the connection.
+    pub app: Option<&'a str>,
+    /// Every package that shares that Linux user; empty when it is one package's own.
+    /// The network cannot tell them apart, so a rule about any of them applies to all.
+    pub packages: &'a [String],
+}
+
+impl Owner<'_> {
+    /// Whether `name` is this owner: the name it is known by, or a package that shares it.
+    fn is(&self, name: &str) -> bool {
+        self.app == Some(name) || self.packages.iter().any(|package| package == name)
+    }
+}
+
+impl<'a> From<Option<&'a str>> for Owner<'a> {
+    fn from(app: Option<&'a str>) -> Owner<'a> {
+        Owner { app, packages: &[] }
+    }
+}
+
+impl<'a> From<&'a str> for Owner<'a> {
+    fn from(app: &'a str) -> Owner<'a> {
+        Owner::from(Some(app))
+    }
+}
+
 /// What is known for sure about where a connection or lookup goes when the firewall is
 /// asked (ADR-0015).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -262,9 +293,9 @@ impl FirewallRule {
         }
     }
 
-    fn matches(&self, app: Option<&str>, place: Place<'_>) -> bool {
+    fn matches(&self, owner: Owner<'_>, place: Place<'_>) -> bool {
         let app_matches = match &self.app {
-            Some(rule_app) => app == Some(rule_app.as_str()),
+            Some(rule_app) => owner.is(rule_app),
             None => true,
         };
         let destination_matches = match &self.destination {
@@ -300,38 +331,49 @@ impl RuleSet {
         &self.rules
     }
 
-    /// What the rules say about a connection or lookup by `app` (`None` when not known)
-    /// to `place`. The most specific matching rule decides; among rules equally specific,
-    /// blocking wins. `None` when no rule matches.
-    pub fn decide(&self, app: Option<&str>, place: Place<'_>) -> Option<RuleAction> {
+    /// What the rules say about a connection or lookup by `owner` to `place`. The most
+    /// specific matching rule decides; among rules equally specific, blocking wins. `None`
+    /// when no rule matches.
+    pub fn decide<'o>(&self, owner: impl Into<Owner<'o>>, place: Place<'_>) -> Option<RuleAction> {
+        let owner = owner.into();
         self.rules
             .iter()
-            .filter(|rule| rule.matches(app, place))
+            .filter(|rule| rule.matches(owner, place))
             .max_by_key(|rule| (rule.specificity(), rule.action == RuleAction::Block))
             .map(|rule| rule.action)
     }
 
     /// Whether to let a connection or lookup through: the rules decide, and where none
-    /// matches, `mode` does. `installed` is when `app` was installed, if known.
-    pub fn verdict(
+    /// matches, `mode` does. `installed` is when `owner` was installed, if known.
+    ///
+    /// When Android cannot say who owns it, it may be an app installed since Block-unknown
+    /// was turned on, so that mode does not let it through: an app could otherwise get
+    /// past it by closing its socket before Sentinel asks (audit A-09). Rules that name no
+    /// app still decide.
+    pub fn verdict<'o>(
         &self,
         mode: FirewallMode,
-        app: Option<&str>,
+        owner: impl Into<Owner<'o>>,
         installed: Option<i64>,
         place: Place<'_>,
     ) -> RuleAction {
-        self.decide(app, place)
-            .unwrap_or_else(|| mode.decide(installed))
+        let owner = owner.into();
+        self.decide(owner, place)
+            .unwrap_or_else(|| match (mode, owner.app) {
+                (FirewallMode::BlockUnknown { .. }, None) => RuleAction::Block,
+                _ => mode.decide(installed),
+            })
     }
 }
 
 impl RuleSet {
-    /// Whether a rule that blocks by name, a domain or a company, applies to `app`'s
-    /// connections (`None` when the app is not known). A connection whose TLS server name
+    /// Whether a rule that blocks by name, a domain or a company, applies to `owner`'s
+    /// connections. A connection whose TLS server name
     /// cannot be read may be going to such a name, and is then blocked rather than let
     /// past the rule unread (audit finding A-03, ADR-0015). Allow rules for some names
     /// are not weighed: without the name, none can be shown to apply.
-    pub fn blocks_by_name(&self, app: Option<&str>) -> bool {
+    pub fn blocks_by_name<'o>(&self, owner: impl Into<Owner<'o>>) -> bool {
+        let owner = owner.into();
         self.rules.iter().any(|rule| {
             rule.action == RuleAction::Block
                 && matches!(
@@ -341,42 +383,47 @@ impl RuleSet {
                 && rule
                     .app
                     .as_deref()
-                    .is_none_or(|rule_app| app == Some(rule_app))
+                    .is_none_or(|rule_app| owner.is(rule_app))
         })
     }
 
-    /// Whether `mode` keeps `app`, installed at `installed`, off the network as a new
+    /// Whether `mode` keeps `owner`, installed at `installed`, off the network as a new
     /// app: Block-unknown blocks it and no rule is about the app as a whole. Rules about
     /// some of its destinations may still let it reach those.
-    pub fn blocks_new_app(&self, mode: FirewallMode, app: &str, installed: Option<i64>) -> bool {
+    pub fn blocks_new_app<'o>(
+        &self,
+        mode: FirewallMode,
+        owner: impl Into<Owner<'o>>,
+        installed: Option<i64>,
+    ) -> bool {
         mode.decide(installed) == RuleAction::Block
-            && self.decide(Some(app), Place::default()).is_none()
+            && self.decide(owner, Place::default()).is_none()
     }
 
-    /// Whether `isolation` lets `app`'s connection or lookup sent to `to` through: DNS
+    /// Whether `isolation` lets `owner`'s connection or lookup sent to `to` through: DNS
     /// to one of the tunnel's own `resolvers` (port 53), Sentinel itself, and apps a rule
     /// allows as a whole. The rules still apply to what it lets through.
     ///
     /// Port 53 elsewhere is not let through: an app may send anything to its own server
     /// there (audit finding A-01). The tunnel's resolver passes only lookups on to the
     /// network's.
-    pub fn isolation_lets_through(
+    pub fn isolation_lets_through<'o>(
         &self,
         isolation: &Isolation,
-        app: Option<&str>,
+        owner: impl Into<Owner<'o>>,
         to: SocketAddr,
         resolvers: &[IpAddr],
     ) -> bool {
+        let owner = owner.into();
         const DNS: u16 = 53;
         let to_resolver = to.port() == DNS
             && resolvers
                 .iter()
                 .any(|resolver| normalize(*resolver) == normalize(to.ip()));
         to_resolver
-            || app == Some(isolation.own_app.as_str())
-            || app.is_some_and(|app| {
-                self.decide(Some(app), Place::default()) == Some(RuleAction::Allow)
-            })
+            || owner.app == Some(isolation.own_app.as_str())
+            || (owner.app.is_some()
+                && self.decide(owner, Place::default()) == Some(RuleAction::Allow))
     }
 }
 
@@ -884,12 +931,8 @@ mod tests {
                 RuleAction::Block
             );
         }
-        // Without an app or its install time (Android's shared system identities), the
-        // mode cannot tell, so it does not block.
-        assert_eq!(
-            none.verdict(mode, None, None, Place::new(address, None)),
-            RuleAction::Allow
-        );
+        // Without its install time (Android's shared system identities), the mode cannot
+        // tell an app is new, so it does not block it.
         assert_eq!(
             none.verdict(
                 mode,
@@ -899,6 +942,93 @@ mod tests {
             ),
             RuleAction::Allow
         );
+    }
+
+    /// Android could not say who owns it: it may be an app installed since, so
+    /// Block-unknown does not let it through, unless a rule that names no app allows its
+    /// destination. Watch only lets it through (audit A-09).
+    #[test]
+    fn block_unknown_blocks_what_has_no_known_owner() {
+        let on = FirewallMode::BlockUnknown { since: 1_000 };
+        let address = Some(ip("192.0.2.1"));
+        let rules = RuleSet::new(vec![rule(None, domain("ok.example"), RuleAction::Allow)]);
+        assert_eq!(
+            rules.verdict(on, None, None, Place::new(address, None)),
+            RuleAction::Block
+        );
+        assert_eq!(
+            rules.verdict(on, None, Some(500), Place::new(None, Some("other.example"))),
+            RuleAction::Block,
+            "an install time without an owner changes nothing"
+        );
+        assert_eq!(
+            rules.verdict(on, None, None, Place::new(None, Some("www.ok.example"))),
+            RuleAction::Allow
+        );
+        assert_eq!(
+            rules.verdict(FirewallMode::Monitor, None, None, Place::new(address, None)),
+            RuleAction::Allow
+        );
+    }
+
+    /// Packages that share a Linux user cannot be told apart on the network: a rule about
+    /// any of them, or about the name the user is known by, applies to all its
+    /// connections (audit A-09).
+    #[test]
+    fn a_rule_about_one_package_of_a_shared_user_applies_to_all_of_it() {
+        const SHARED: &str = "org.example.shared:10123";
+        let packages = [CHAT.to_owned(), MAPS.to_owned()];
+        let shared = Owner {
+            app: Some(SHARED),
+            packages: &packages,
+        };
+        let address = Place::new(Some(ip("192.0.2.1")), None);
+        for about in [MAPS, CHAT, SHARED] {
+            let blocked = RuleSet::new(vec![rule(Some(about), None, RuleAction::Block)]);
+            assert_eq!(
+                blocked.verdict(FirewallMode::Monitor, shared, None, address),
+                RuleAction::Block,
+                "{about}"
+            );
+        }
+        let other = RuleSet::new(vec![rule(
+            Some("org.example.other"),
+            None,
+            RuleAction::Block,
+        )]);
+        assert_eq!(other.decide(shared, address), None);
+        // Allowing one package does not undo blocking another: blocking wins the tie.
+        let both = RuleSet::new(vec![
+            rule(Some(CHAT), None, RuleAction::Allow),
+            rule(Some(MAPS), None, RuleAction::Block),
+        ]);
+        assert_eq!(both.decide(shared, address), Some(RuleAction::Block));
+
+        // Names blocked for one package are blocked for all, even unread (A-03).
+        let names = RuleSet::new(vec![rule(
+            Some(MAPS),
+            domain("ads.example"),
+            RuleAction::Block,
+        )]);
+        assert!(names.blocks_by_name(shared));
+        assert_eq!(
+            names.decide(shared, Place::new(None, Some("x.ads.example"))),
+            Some(RuleAction::Block)
+        );
+
+        // Block-unknown keeps it off as new until one of its packages is allowed, and
+        // isolation lets it through only then.
+        let on = FirewallMode::BlockUnknown { since: 1_000 };
+        assert!(RuleSet::default().blocks_new_app(on, shared, Some(1_000)));
+        let allowed = RuleSet::new(vec![rule(Some(CHAT), None, RuleAction::Allow)]);
+        assert!(!allowed.blocks_new_app(on, shared, Some(1_000)));
+        let isolation = Isolation {
+            since: 1_000,
+            own_app: "io.github.malekhasan.sentinel".to_owned(),
+        };
+        let to = "203.0.113.5:443".parse().unwrap();
+        assert!(allowed.isolation_lets_through(&isolation, shared, to, &[]));
+        assert!(!RuleSet::default().isolation_lets_through(&isolation, shared, to, &[]));
     }
 
     #[test]
