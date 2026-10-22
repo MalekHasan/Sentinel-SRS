@@ -36,7 +36,7 @@ What Android lets an ordinary app read:
    - **To do.**
    - **Check this yourself**, when Android does not let Sentinel see it.
    - **Not on this version of Android**: Advanced Protection before Android 16, with nothing to open.
-3. **"Recent" means at most 90 days old.** A security update older than that is a step to take. Android's security bulletins are monthly, and makers often ship them a month or two late. The update's date is shown. Automatic updates cannot be read, so the date stands for them.
+3. **"Recent" means at most 90 days old.** A security update older than that is a step to take. Android's security bulletins are monthly, and makers often ship them a month or two late. The update's date is shown. Automatic updates cannot be read, so the date stands for them. A date more than 31 days past the phone's clock is left for the user to check (audit A-52): some makers ship a month's update before the month begins, but further ahead the clock or the date is wrong, and the update's age cannot be told.
 4. **The core works out the statuses** (`sentinel_detect::checklist`, exported as `hardening_checklist`) from facts Kotlin reads, as of today. That way the rules are tested on the host and shared with the other editions later. Nothing is stored: the checklist is read again each time it is shown, including when the user comes back from Android's settings.
 5. **Each step opens Android's settings for it** where Android names a screen:
    - security settings, for Advanced Protection;
@@ -55,6 +55,7 @@ What Android lets an ordinary app read:
   - dates count days from 1970 and malformed ones are refused;
   - a hardened phone has every readable step done, in order;
   - each readable step can be left to do, and 90 days is still recent while 91 is not;
+  - an update dated 31 days ahead is done, and one dated 32 days ahead is for the user to check;
   - what cannot be read is the user's to check;
   - Advanced Protection is not available before Android 16.
 - `sentinel-ffi`: the checklist is worked out as of today.

@@ -4,6 +4,21 @@ Upstream: https://github.com/cavivie/netstack-smoltcp, version 0.2.4, MIT OR Apa
 (see LICENSE-MIT and LICENSE-APACHE). Vendored for the packet engine; see
 `docs/adr/0006-android-packet-engine.md`.
 
+## Left out of the copy
+
+Compared with the crates.io archive `netstack-smoltcp-0.2.4.crate`; the library source
+differs only by the patches below.
+
+- Removed: `examples/forward.rs`, `examples/forward-offload-linux.rs`,
+  `tests/regression.rs`, `scripts/bench-offload.sh`, `scripts/route-linux.sh`,
+  `scripts/route-macos.sh`, `scripts/route-windows.ps1`,
+  `.github/actions/ndk-dev-rs/action.yml`, `.github/workflows/main.yml`,
+  `.github/workflows/publish.yml`, `.gitignore`, `Cargo.lock`, `Cargo.toml.orig` and
+  `.cargo_vcs_info.json`.
+- `Cargo.toml` rewritten: the same dependencies with the same versions and features;
+  no examples, tests or dev-dependencies; `authors`, `homepage`, `documentation`,
+  `readme`, `keywords` and `categories` left out; `publish = false`.
+
 ## Patch 1: no polling while idle
 
 `src/tcp.rs`, end of the runner loop.

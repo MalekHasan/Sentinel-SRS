@@ -2285,6 +2285,51 @@ fn undo_puts_back_what_was_there_before() {
     assert_eq!(store.undo(9_999, NOW + 19).unwrap(), Undo::NotFound);
 }
 
+/// Audit A-52: blocking, taking the block back and blocking again leaves the setting as
+/// the first block left it, but only the latest action can be undone. Undoing steps back
+/// through the actions one at a time, newest first.
+#[test]
+fn only_the_latest_action_on_a_setting_can_be_undone() {
+    use sentinel_detect::{FirewallRule, RuleAction};
+    use sentinel_store::Undo;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&db(&dir), &KEY).unwrap();
+    let block = FirewallRule::new(Some("org.example.chat"), None, RuleAction::Block).unwrap();
+    let key = store.set_firewall_rule(&block, NOW, None).unwrap();
+    store.remove_firewall_rule(&key, NOW + 1).unwrap();
+    store.set_firewall_rule(&block, NOW + 2, None).unwrap();
+    let ids = |store: &Store| -> Vec<(i64, bool)> {
+        let mut entries: Vec<_> = store
+            .journal(10)
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.id, e.can_undo))
+            .collect();
+        entries.reverse();
+        entries
+    };
+    let [(blocked, false), (taken_back, false), (blocked_again, true)] = ids(&store)[..] else {
+        panic!("{:?}", ids(&store));
+    };
+    assert_eq!(store.undo(blocked, NOW + 3).unwrap(), Undo::ChangedSince);
+    assert_eq!(store.undo(taken_back, NOW + 3).unwrap(), Undo::ChangedSince);
+    assert_eq!(store.firewall_rules().unwrap().len(), 1);
+
+    assert_eq!(store.undo(blocked_again, NOW + 4).unwrap(), Undo::Undone);
+    assert_eq!(
+        ids(&store),
+        [(blocked, false), (taken_back, true), (blocked_again, false)]
+    );
+    assert_eq!(store.undo(taken_back, NOW + 5).unwrap(), Undo::Undone);
+    assert_eq!(
+        ids(&store),
+        [(blocked, true), (taken_back, false), (blocked_again, false)]
+    );
+    assert_eq!(store.undo(blocked, NOW + 6).unwrap(), Undo::Undone);
+    assert!(store.firewall_rules().unwrap().is_empty());
+}
+
 /// SRS §12.3: the flows, alerts and actions of a time range export as JSON and as CSV,
 /// a page at a time. Joined, the pages make one document whatever their size; records
 /// outside the range are left out, and no cell can be a spreadsheet formula.

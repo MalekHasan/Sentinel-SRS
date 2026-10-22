@@ -175,12 +175,20 @@ fn values_must_be_what_their_kind_says() {
         ("address", "100.64.0.1"),
         ("address", "224.0.0.1"),
         ("address", "255.255.255.255"),
+        ("address", "0.1.2.3"),
+        ("address", "192.0.0.4"),
+        ("address", "192.0.0.170"),
+        ("address", "198.18.0.1"),
+        ("address", "198.19.255.254"),
+        ("address", "240.0.0.1"),
         ("address", "::1"),
         ("address", "::"),
         ("address", "fe80::1"),
         ("address", "fd00::1"),
         ("address", "::ffff:203.0.113.7"),
         ("address", "64:ff9b::cb00:7107"),
+        ("address", "64:ff9b:1::cb00:7107"),
+        ("address", "100::7"),
         ("address", "ff02::1"),
         ("package", "spyapp"),
         ("package", "com.1example.app"),
@@ -195,6 +203,24 @@ fn values_must_be_what_their_kind_says() {
             matches!(refused, Err(IocError::Indicator { index: 0, .. })),
             "{kind} {bad}: {refused:?}"
         );
+    }
+}
+
+/// Audit A-52: next to the refused ranges, servers' addresses are accepted.
+#[test]
+fn addresses_beside_the_refused_ranges_are_accepted() {
+    for good in [
+        "1.0.0.1",
+        "192.0.1.1",
+        "198.17.255.255",
+        "198.20.0.1",
+        "223.255.255.254",
+        "64:ff9b:2::1",
+        "100:0:0:1::1",
+        "2001:db8::7",
+    ] {
+        let parsed = parse(&file(vec![indicator("address", good)]));
+        assert!(parsed.is_ok(), "{good}: {parsed:?}");
     }
 }
 

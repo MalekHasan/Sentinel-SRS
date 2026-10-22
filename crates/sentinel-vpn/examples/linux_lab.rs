@@ -93,7 +93,7 @@ mod lab {
         req.ifr_ifru.ifru_flags = (libc::IFF_TUN | libc::IFF_NO_PI) as libc::c_short;
         // SAFETY: valid open descriptor and a pointer to a live, initialised ifreq.
         #[allow(unsafe_code)]
-        let rc = unsafe { libc::ioctl(file.as_raw_fd(), libc::TUNSETIFF, &req) };
+        let rc = unsafe { libc::ioctl(file.as_raw_fd(), libc::TUNSETIFF, &mut req) };
         if rc < 0 {
             return Err(io::Error::last_os_error());
         }

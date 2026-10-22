@@ -333,7 +333,8 @@ fn is_domain(name: &str) -> bool {
 
 /// An address a server on the internet could have, written as Rust writes it. Local,
 /// private and special addresses are refused: an indicator naming one would match a
-/// home network's own traffic.
+/// home network's own traffic, or a phone's (audit A-52). The documentation ranges
+/// (RFC 5737, RFC 3849) are kept: nothing is reached there, and tests use them.
 fn is_public_address(text: &str) -> bool {
     let Ok(address) = text.parse::<IpAddr>() else {
         return false;
@@ -350,7 +351,16 @@ fn is_public_address(text: &str) -> bool {
                 || v4.is_multicast()
                 || v4.is_broadcast()
                 // 100.64.0.0/10, shared address space (carrier-grade NAT).
-                || (v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 64))
+                || (v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 64)
+                // 0.0.0.0/8, "this network".
+                || v4.octets()[0] == 0
+                // 192.0.0.0/24, protocol assignments: Android's 464XLAT (192.0.0.4)
+                // and `ipv4only.arpa`, by which NAT64 is found (192.0.0.170).
+                || v4.octets()[..3] == [192, 0, 0]
+                // 198.18.0.0/15, for benchmarks; proxies hand these out as stand-ins.
+                || (v4.octets()[0] == 198 && v4.octets()[1] & 0xfe == 18)
+                // 240.0.0.0/4, reserved.
+                || v4.octets()[0] >= 240)
         }
         IpAddr::V6(v6) => {
             let first = v6.segments()[0];
@@ -360,6 +370,10 @@ fn is_public_address(text: &str) -> bool {
                 || v6.to_ipv4_mapped().is_some()
                 // An IPv4 address through NAT64 is matched as IPv4 (audit A-23).
                 || nat64(v6).is_some()
+                // 64:ff9b:1::/48, NAT64 prefixes a network chooses (RFC 8215).
+                || v6.segments()[..3] == [0x64, 0xff9b, 1]
+                // 100::/64, discarded (RFC 6666).
+                || v6.segments()[..4] == [0x100, 0, 0, 0]
                 // fc00::/7 unique local, fe80::/10 link-local.
                 || first & 0xfe00 == 0xfc00
                 || first & 0xffc0 == 0xfe80)

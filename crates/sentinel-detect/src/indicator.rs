@@ -98,7 +98,9 @@ pub fn known_indicator_in_history(
 
 /// Whether `alert` and `other` are known-indicator alerts about the same app and the
 /// same indicator, however it was seen: while one is open, the other would tell the
-/// user nothing new.
+/// user nothing new. A package and a domain written the same are different indicators
+/// (audit A-52): an app installed under a listed package name says something else than
+/// an app reaching a listed domain.
 pub fn same_sighting(alert: &Alert, other: &Alert) -> bool {
     alert.rule == Rule::KnownIndicator
         && other.rule == Rule::KnownIndicator
@@ -106,9 +108,26 @@ pub fn same_sighting(alert: &Alert, other: &Alert) -> bool {
         && indicators(alert).eq(indicators(other))
 }
 
-fn indicators(alert: &Alert) -> impl Iterator<Item = &str> {
+/// What an indicator names, as told by how it was seen.
+#[derive(PartialEq)]
+enum Kind {
+    Name,
+    Address,
+    Package,
+    Certificate,
+}
+
+fn indicators(alert: &Alert) -> impl Iterator<Item = (Kind, &str)> {
     alert.evidence.iter().filter_map(|e| match e {
-        Evidence::Indicator(matched) => Some(matched.indicator.as_str()),
+        Evidence::Indicator(matched) => {
+            let kind = match matched.sighting {
+                Sighting::DnsQuery | Sighting::ServerName | Sighting::ConnectionName => Kind::Name,
+                Sighting::Address => Kind::Address,
+                Sighting::InstalledPackage => Kind::Package,
+                Sighting::SigningCertificate => Kind::Certificate,
+            };
+            Some((kind, matched.indicator.as_str()))
+        }
         _ => None,
     })
 }
@@ -260,6 +279,19 @@ mod tests {
             matched("worse.example", "worse.example", Sighting::DnsQuery),
         );
         assert!(!same_sighting(&first, &other_indicator));
+        // Audit A-52: a package named as a listed domain is another indicator.
+        let package = known_indicator(
+            2,
+            app,
+            matched("bad.example", "bad.example", Sighting::InstalledPackage),
+        );
+        assert!(!same_sighting(&first, &package));
+        let connection = known_indicator(
+            2,
+            app,
+            matched("bad.example", "bad.example", Sighting::ConnectionName),
+        );
+        assert!(same_sighting(&first, &connection));
         let other_rule = Alert {
             rule: Rule::NewDestination,
             ..first.clone()

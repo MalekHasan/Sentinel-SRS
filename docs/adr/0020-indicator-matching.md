@@ -55,7 +55,7 @@
   - the alert is Critical, names the app, and offers to block and open it;
   - an alert without an app has no actions;
   - the stored JSON is fixed;
-  - "the same sighting" means the same rule, app and indicator, however it was seen.
+  - "the same sighting" means the same rule, app and indicator, however it was seen. An indicator is its kind and its value: a package and a domain written the same are two (audit A-52).
 - `sentinel-store`: the open alerts of a rule are found, newest first, and a dismissed one is not among them.
 - `sentinel-ffi`:
   - the feed's indicators are those of the bundle in force: a new bundle's at once, the old ones after a refused update, none after a failed check or before the first one;

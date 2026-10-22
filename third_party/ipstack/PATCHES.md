@@ -4,6 +4,19 @@ Upstream: https://github.com/narrowlink/ipstack, version 1.0.1, Apache-2.0 (see 
 Vendored for the A0 packet-engine spike; see `docs/adr/0006-android-packet-engine.md`.
 Since Sprint 1 it is an optional comparison stack, not the default.
 
+## Left out of the copy
+
+Compared with the crates.io archive `ipstack-1.0.1.crate`; the library source differs only
+by the patches below.
+
+- Removed: `build.rs` (on Windows it copies `wintun.dll` for the examples),
+  `examples/tun.rs`, `examples/tun_wintun.rs`, `scripts/run_tun_bench.sh`,
+  `.github/workflows/publish.yml`, `.github/workflows/rust.yml`, `Cargo.lock`,
+  `Cargo.toml.orig` and `.cargo_vcs_info.json`.
+- `Cargo.toml` rewritten: the same dependencies with the same versions and features;
+  no examples, dev-dependencies, build dependencies, build script or profiles; `homepage`
+  and `readme` left out; `publish = false`.
+
 ## Patch 1: wake the reader when a connection closes
 
 `src/stream/tcp.rs`, stream task loop, `exit_monitor` branch.
