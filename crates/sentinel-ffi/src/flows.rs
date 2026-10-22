@@ -1373,7 +1373,7 @@ mod tests {
             &history,
             vec![
                 (443, installed("org.example.flashlight", None)),
-                (8443, installed("nz.mega.android", None)),
+                (8443, installed("mega.privacy.android.app", None)),
                 (9443, system),
             ],
         );

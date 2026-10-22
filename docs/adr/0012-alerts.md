@@ -5,6 +5,7 @@
 - Implements: SRS AL-01, AL-02, the alert for monitoring gaps (SP-03), delivery as notifications (AL-03, AL-04, AL-06), and feedback (AL-05)
 - Amended 2026-10-22 for audit finding A-08 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): decisions 14 and 15, and the list of what was allowed.
 - Amended 2026-10-22 for audit finding A-10: decision 11, discreet notifications.
+- Amended 2026-10-22 for audit finding A-16: decision 7, the rate limit counts by severity.
 
 ## Context
 
@@ -35,7 +36,8 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
 7. **The core decides whether an alert is notified now.** The rule lives in `sentinel-detect` (`delivery`), so every edition applies it the same way:
    - Critical alerts are always notified.
    - While Do Not Disturb is on, Info and Warning alerts wait in the app. High and Critical alerts are posted.
-   - Otherwise an alert is notified unless the app it is about already had three non-critical notifications in the last hour. Sentinel's own alerts, such as a monitoring gap, count as one app.
+   - Otherwise an alert is notified unless the app it is about already had three non-critical notifications in the last hour **as severe as the alert or more**. Sentinel's own alerts, such as a monitoring gap, count as one app.
+   - Less severe notifications do not use up a more severe alert's allowance (audit A-16). Counted together, an app could raise three cheap Info alerts, such as its first use of the network, its own encrypted DNS and a regular check-in, and then gain accessibility access with no notification. So one app can have up to three notifications an hour at each non-critical severity, nine in all, but only as its alerts grow more severe. AL-03's "≤ 3 non-critical notifications per hour per app" holds for alerts of one severity, which is what floods are made of; its load test still gives three an hour.
 
    The store records when each alert was notified (schema version 7) and makes the decision and the record in one transaction. That way two alerts raised at once cannot both pass the limit. An alert that is not notified is still kept and shown in the app.
 8. **The app hears every new alert** through a listener the core calls after storing it. The app reads the phone's Do Not Disturb state and asks the core for the decision. It posts only if allowed, and only if Android would show the notification (permission granted, channel not turned off), so that a hidden notification does not use up the allowance.
@@ -85,7 +87,7 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
   - `RtlTest` shows the alert screens in Arabic, right to left.
 
 - Delivery:
-  - the `delivery` unit tests cover each severity with and without Do Not Disturb, the per-app count, critical alerts never being held, and the one-hour window;
+  - the `delivery` unit tests cover each severity with and without Do Not Disturb, the per-app count, critical alerts never being held, the one-hour window, and that three Info notifications hold the next Info alert but not a Warning or a High one, while three High ones hold all;
   - AL-03's load test sends one alert per second for two hours and gets exactly three notifications in each hour, with every critical one notified;
   - the store and FFI tests check the atomic claim, that a claim is never counted twice, and that the app's listener can claim from inside the call.
 - Feedback:
