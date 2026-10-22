@@ -3,6 +3,7 @@ package io.github.malekhasan.sentinel
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.util.Log
 import io.github.malekhasan.sentinel.core.Feed
@@ -44,6 +45,19 @@ object IndicatorFeed {
     private const val MAX_MANIFEST_BYTES = 1L shl 20
     private const val PREFS = "feed"
     private const val LAST_CHECK = "last_check"
+
+    /**
+     * How slowly a list may arrive (audit A-22). A fetch that falls behind gives up, so
+     * that a connection trickling a byte at a time cannot hold [updating], and with it
+     * "Import from a folder", for hours. The sizes come from the signed manifest, so the
+     * network cannot stretch the time allowed.
+     */
+    data class Pace(
+        /** Allowed for the manifest, and on top of the time its files may take. */
+        val graceMillis: Long = 2 * 60 * 1000L,
+        /** The slowest average the files the manifest lists may arrive at. */
+        val minBytesPerSecond: Long = 8 * 1024L,
+    )
 
     /** What the last check or update found. */
     enum class Outcome {
@@ -148,11 +162,11 @@ object IndicatorFeed {
      * and passes every check. The history (MS-02) and the installed apps (ID-13) are then
      * checked against a list installed, before this returns.
      */
-    fun update(context: Context, source: BundleSource): Outcome {
+    fun update(context: Context, source: BundleSource, pace: Pace = Pace()): Outcome {
         val feed = get(context) ?: return Outcome.FAILED
         val outcome = synchronized(updating) {
             state.value = state.value.copy(busy = true)
-            val fetched = fetch(feed, source, staging(context))
+            val fetched = fetch(feed, source, staging(context), pace)
             state.value = state.value.copy(busy = false, status = feed.status(), last = fetched)
             if (fetched == Outcome.INSTALLED) listeners.forEach { it() }
             fetched
@@ -179,21 +193,27 @@ object IndicatorFeed {
         if (removed) listeners.forEach { it() }
     }
 
-    private fun fetch(feed: Feed, source: BundleSource, staging: File): Outcome {
+    private fun fetch(feed: Feed, source: BundleSource, staging: File, pace: Pace): Outcome {
         staging.deleteRecursively()
         return try {
-            val manifest = source.open(MANIFEST)?.use { it.readAtMost(MAX_MANIFEST_BYTES) }
+            val manifestBy = SystemClock.elapsedRealtime() + pace.graceMillis
+            val manifest = source.open(MANIFEST)?.use { it.readAtMost(MAX_MANIFEST_BYTES, manifestBy) }
                 ?: return Outcome.NOT_FOUND
             when (val offer = feed.offer(manifest)) {
                 FeedOffer.UpToDate -> Outcome.UP_TO_DATE
                 is FeedOffer.Update -> {
                     if (!staging.mkdirs()) return Outcome.FAILED
                     File(staging, MANIFEST).writeBytes(manifest)
+                    // Each size bounded, so that the sum and the time cannot overflow.
+                    val listed = offer.files.sumOf { it.size.coerceAtMost(1uL shl 40) }.toLong()
+                    val filesBy = SystemClock.elapsedRealtime() + pace.graceMillis +
+                        listed / pace.minBytesPerSecond * 1000
                     for (file in offer.files) {
                         val target = File(staging, file.path)
                         target.parentFile?.mkdirs()
+                        checkPace(filesBy)
                         val input = source.open(file.path) ?: return Outcome.INCOMPLETE
-                        input.use { it.copyAtMost(target, file.size.toLong()) }
+                        input.use { it.copyAtMost(target, file.size.toLong(), filesBy) }
                     }
                     feed.install(staging.path)
                     Outcome.INSTALLED
@@ -294,21 +314,32 @@ object IndicatorFeed {
     /** A file is larger than its manifest says. */
     private class LargerThanListed(message: String) : IOException(message)
 
-    private fun InputStream.readAtMost(limit: Long): ByteArray {
+    /** A list arrives more slowly than [Pace] allows. */
+    private class TooSlow : IOException("the indicator list arrives too slowly")
+
+    private fun checkPace(by: Long) {
+        if (SystemClock.elapsedRealtime() > by) throw TooSlow()
+    }
+
+    private fun InputStream.readAtMost(limit: Long, by: Long): ByteArray {
         val out = java.io.ByteArrayOutputStream()
-        copyAtMost(out, limit, "the manifest")
+        copyAtMost(out, limit, "the manifest", by)
         return out.toByteArray()
     }
 
-    private fun InputStream.copyAtMost(target: File, limit: Long) {
-        target.outputStream().use { copyAtMost(it, limit, target.name) }
+    private fun InputStream.copyAtMost(target: File, limit: Long, by: Long) {
+        target.outputStream().use { copyAtMost(it, limit, target.name, by) }
     }
 
-    /** Copy at most [limit] bytes to [out]; more is refused, as a file larger than listed. */
-    private fun InputStream.copyAtMost(out: java.io.OutputStream, limit: Long, what: String) {
+    /**
+     * Copy at most [limit] bytes to [out]; more is refused, as a file larger than listed.
+     * Gives up once [SystemClock.elapsedRealtime] passes [by].
+     */
+    private fun InputStream.copyAtMost(out: java.io.OutputStream, limit: Long, what: String, by: Long) {
         val buffer = ByteArray(64 * 1024)
         var total = 0L
         while (true) {
+            checkPace(by)
             val read = read(buffer)
             if (read < 0) break
             total += read

@@ -123,6 +123,8 @@ pub enum FeedOffer {
 struct InForce {
     dir: PathBuf,
     files: Vec<String>,
+    /// What its files hold: see [`files_id`].
+    files_id: i64,
     status: FeedStatus,
 }
 
@@ -193,6 +195,7 @@ impl Feed {
         self.set_matcher(Some(matcher));
         *in_force = Some(InForce {
             files: listed(&installed.verified),
+            files_id: files_id(&installed.verified),
             dir: installed.dir,
             status: status.clone(),
         });
@@ -245,6 +248,7 @@ impl Feed {
         self.set_matcher(Some(matcher));
         *in_force = Some(InForce {
             files: listed(&installed.verified),
+            files_id: files_id(&installed.verified),
             dir: installed.dir,
             status: status.clone(),
         });
@@ -277,11 +281,12 @@ impl Feed {
             .clone()
     }
 
-    /// The version of the bundle in force and its indicators, read together (MS-02).
-    pub(crate) fn in_force(&self) -> Option<(u64, Arc<Matcher>)> {
+    /// The version of the bundle in force, what its files hold ([`files_id`]) and its
+    /// indicators, read together (MS-02).
+    pub(crate) fn in_force(&self) -> Option<(u64, i64, Arc<Matcher>)> {
         let in_force = self.lock();
-        let version = in_force.as_ref()?.status.version;
-        Some((version, self.matcher()?))
+        let in_force = in_force.as_ref()?;
+        Some((in_force.status.version, in_force.files_id, self.matcher()?))
     }
 
     fn set_matcher(&self, matcher: Option<Matcher>) {
@@ -291,6 +296,15 @@ impl Feed {
 
 fn now_secs() -> u64 {
     u64::try_from(now_ms() / 1000).unwrap_or(0)
+}
+
+/// Tells bundles apart by what their files hold, whatever their versions (audit A-26):
+/// the first eight bytes of the manifest's files digest.
+fn files_id(verified: &VerifiedManifest) -> i64 {
+    let digest = verified.manifest().files_digest();
+    let mut first = [0; 8];
+    first.copy_from_slice(&digest[..8]);
+    i64::from_be_bytes(first)
 }
 
 fn listed(verified: &VerifiedManifest) -> Vec<String> {

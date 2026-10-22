@@ -1125,6 +1125,7 @@ dependencies = [
  "etherparse 0.20.3",
  "hex",
  "log",
+ "rusqlite",
  "sentinel-detect",
  "sentinel-enrich",
  "sentinel-feed",

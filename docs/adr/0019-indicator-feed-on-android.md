@@ -39,6 +39,7 @@
    - The requests carry nothing about the user or the phone. The `User-Agent` is "Sentinel", because Android's default names the phone's model. No cookies are sent.
    - Plain HTTP is refused by the app's network security configuration. Debug builds also allow the phone's own loopback address, where the device tests serve their lists.
    - A user without access to GitHub can import the list from a folder: the release's files, copied side by side.
+   - A fetch gives up once it falls behind (audit A-22). The manifest has two minutes. Its files have two minutes more, plus a second for every 8 KiB they list. Otherwise a connection trickling a byte at a time would hold the update, and with it "Import from a folder", for hours. The sizes come from the signed manifest, so the network cannot stretch the time allowed.
 7. **The trusted keys are compiled in** from every `keys/feed/*.pub` file (`crates/sentinel-ffi/build.rs`); a file that is not a key fails the build.
    - Adding a key is a reviewed commit of its public key, then an app release.
    - **There are no keys yet.** Until the maintainers make theirs offline, the app says it cannot check indicator lists and uses none.
@@ -78,6 +79,7 @@
   - nothing published, then version 1 installed, then up to date, then version 2 installed;
   - an older list, a list changed after signing, a file larger than listed and a list with a file missing are each refused, and version 2 stays in force;
   - the requests' `User-Agent` is "Sentinel";
+  - a list whose file arrives too slowly is given up within seconds (with a short pace for the test), the list in force stays, and the next update can start at once;
   - a list whose file changed on the phone is removed at the next check, and its IP database is no longer used;
   - the main screen shows the list's date, version, count and source, the outcome of the last check, that it is out of date, that a check is running, and that this build has no keys.
 - `DestinationFactsTest` and `TrackerListTest` now receive their data through a signed list, the way phones will. `RtlTest` shows the indicator list section in Arabic, right to left.

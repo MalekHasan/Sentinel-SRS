@@ -1492,12 +1492,15 @@ fn past_destinations_cover_kept_flows_and_rolled_up_days() {
     );
 
     assert_eq!(store.hunted().unwrap(), None);
-    store.set_hunted(3).unwrap();
-    store.set_hunted(2).unwrap();
+    assert_eq!(store.hunted_files().unwrap(), None);
+    store.set_hunted(3, 30).unwrap();
+    store.set_hunted(2, -20).unwrap();
     assert_eq!(store.hunted().unwrap(), Some(2), "replaced, not kept apart");
+    assert_eq!(store.hunted_files().unwrap(), Some(-20));
     drop(store);
     let store = Store::open(&db(&dir), &KEY).unwrap();
     assert_eq!(store.hunted().unwrap(), Some(2));
+    assert_eq!(store.hunted_files().unwrap(), Some(-20));
 }
 
 /// ID-13, MS-02: a known-indicator alert is found among the alerts of its rule, open or

@@ -15,7 +15,7 @@
 
 1. **The result is shown under the indicator list on the main screen**, only while a list is in force:
    - **"Known traces found"** as soon as the history keeps any known-indicator alert, open or dismissed. It says how many alerts, the date of the list in use, and to open them. Dismissing an alert does not make the result go back to "not found". Someone else holding the phone could otherwise hide a finding in two taps, as with Critical alerts that cannot be allowed (ADR-0012).
-   - **"No known traces found"** only once the history has been checked against the version in force (ADR-0021). It says since when the history holds traffic and the date of the list. It is followed every time by the limits: this is not proof that the phone has no spyware; Sentinel finds only traces that were published, in traffic it saw; spyware that controls a phone can hide from every app on it.
+   - **"No known traces found"** only once the history has been checked against the version in force (ADR-0021), and only for a list that holds indicators: a list without any looked for nothing, so it gives no result (audit A-24). It says since when the history holds traffic and the date of the list. It is followed every time by the limits: this is not proof that the phone has no spyware; Sentinel finds only traces that were published, in traffic it saw; spyware that controls a phone can hide from every app on it.
    - **"Not checked against this list yet"** otherwise, for example in the moment between an install and the end of the check.
 2. **The core gives what the result needs** (`HistoryStore.known_traces`): how many known-indicator alerts the history keeps, which list version it was last checked against, and since when it holds traffic. Alerts are kept a year (§13.2). A wipe starts over.
 3. **The main screen follows the checks.** `History.hunts` counts finished checks, so the result changes as soon as one ends. The app also checks the history when it opens, should a check not have run (ADR-0021).
@@ -32,7 +32,7 @@
 - `sentinel-store`: alerts are counted per rule, open and dismissed.
 - `sentinel-ffi`: the known traces before any list, after a check (three alerts, version 1), and after a newer list and a dismissal (four alerts, version 2: a dismissed alert still counts).
 - On the Android 14 emulator:
-  - `FeedTest`: no result without a check or without a list; "not checked yet" for an older version; "No known traces found" with the history's start, the list's date and the limits; "Known traces found" with the count and the list's date, even when the last check found nothing new.
+  - `FeedTest`: no result without a check, without a list, or for a list without indicators; "not checked yet" for an older version; "No known traces found" with the history's start, the list's date and the limits; "Known traces found" with the count and the list's date, even when the last check found nothing new.
   - `AlertsTest`: a known-indicator alert shows the advice before the actions, and each helpline's button opens its page and shows its address; other alerts give no advice.
   - `RtlTest`: the result, its limits and the advice in Arabic, right to left.
   - `StringsTest`: no text in either language says "clean" or "safe".
