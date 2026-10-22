@@ -352,18 +352,20 @@ fun titleRes(alert: HistoryAlert): Int = when {
     alert.rule == AlertRule.FIRST_NETWORK_USE && alert.blocked() -> R.string.alert_first_network_use_blocked_title
     alert.rule == AlertRule.KNOWN_INDICATOR && alert.installedApp() -> R.string.alert_known_indicator_app_title
     alert.rule == AlertRule.KNOWN_INDICATOR && alert.past() -> R.string.alert_known_indicator_past_title
-    alert.rule == AlertRule.SPECIAL_ACCESS -> when (alert.access()) {
-        SpecialAccess.ACCESSIBILITY -> R.string.alert_accessibility_title
-        SpecialAccess.DEVICE_ADMIN -> R.string.alert_device_admin_title
-        SpecialAccess.NOTIFICATION_LISTENER -> R.string.alert_notification_access_title
-        null -> titleRes(alert.rule)
-    }
+    alert.rule == AlertRule.SPECIAL_ACCESS -> alert.access()?.let { titleRes(it) } ?: titleRes(alert.rule)
     alert.rule == AlertRule.SENSOR_WHILE_AWAY -> when (alert.sensor()) {
         SensorKind.MICROPHONE -> R.string.alert_microphone_while_away_title
         SensorKind.CAMERA -> R.string.alert_camera_while_away_title
         null -> titleRes(alert.rule)
     }
     else -> titleRes(alert.rule)
+}
+
+/** The title of an alert about an app that gained [access] (ID-12). */
+fun titleRes(access: SpecialAccess): Int = when (access) {
+    SpecialAccess.ACCESSIBILITY -> R.string.alert_accessibility_title
+    SpecialAccess.DEVICE_ADMIN -> R.string.alert_device_admin_title
+    SpecialAccess.NOTIFICATION_LISTENER -> R.string.alert_notification_access_title
 }
 
 /**

@@ -268,8 +268,39 @@ CREATE TABLE sensor_use (
 );
 ";
 
+/// What of a rule was allowed for an app, when the rule says more than the app (AL-05):
+/// for special access, the kind (ID-12), by its `sentinel_detect::Access` name, so that
+/// allowing one kind does not silence another (audit A-38). Empty for other rules.
+///
+/// What was allowed for special access before takes the kinds of the alerts it was
+/// allowed from. One whose alerts are gone no longer counts: its app is reported again.
+const V18: &str = "
+CREATE TABLE allowed_by_detail (
+  rule_id TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  created INTEGER NOT NULL,
+  PRIMARY KEY (rule_id, subject, detail)
+);
+INSERT INTO allowed_by_detail (rule_id, subject, created)
+  SELECT rule_id, subject, created FROM allowed WHERE rule_id <> 'special-access';
+INSERT OR IGNORE INTO allowed_by_detail (rule_id, subject, detail, created)
+  SELECT allowed.rule_id, allowed.subject, json_extract(access.value, '$.access'),
+         allowed.created
+  FROM allowed
+  JOIN alert ON alert.rule_id = allowed.rule_id AND alert.user_feedback = 'allowed'
+  JOIN json_each(alert.evidence) AS app
+    ON json_extract(app.value, '$.type') = 'app'
+   AND json_extract(app.value, '$.package') = allowed.subject
+  JOIN json_each(alert.evidence) AS access
+    ON json_extract(access.value, '$.type') = 'access'
+  WHERE allowed.rule_id = 'special-access';
+DROP TABLE allowed;
+ALTER TABLE allowed_by_detail RENAME TO allowed;
+";
+
 const STEPS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
 ];
 
 pub(crate) fn migrate(conn: &Connection) -> Result<()> {
@@ -379,6 +410,91 @@ mod tests {
             [
                 ("chat.example".to_owned(), 0),
                 ("old.example".to_owned(), 0)
+            ]
+        );
+    }
+
+    /// Audit A-38: special access allowed before V18 takes the kinds of the alerts it was
+    /// allowed from, and no other; one whose alerts are gone no longer counts. What was
+    /// allowed for other rules stays as it was.
+    #[test]
+    fn special_access_allowed_before_keeps_only_the_kinds_it_was_allowed_from() {
+        use sentinel_detect::{Access, Evidence, evidence_to_json};
+
+        let conn = Connection::open_in_memory().unwrap();
+        for step in &STEPS[..17] {
+            conn.execute_batch(step).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 17).unwrap();
+        let about = |app: &str, access: Access| {
+            evidence_to_json(&[
+                Evidence::App {
+                    package: app.to_owned(),
+                },
+                Evidence::Access { access },
+            ])
+        };
+        let mut alert = conn
+            .prepare(
+                "INSERT INTO alert (rule_id, severity, evidence, created, state, user_feedback)
+                 VALUES ('special-access', 'high', ?1, 1, 'dismissed', ?2)",
+            )
+            .unwrap();
+        for (app, access, feedback) in [
+            (
+                "org.example.keyboard",
+                Access::Accessibility,
+                Some("allowed"),
+            ),
+            // Not allowed from: gained later, or only dismissed.
+            ("org.example.keyboard", Access::DeviceAdmin, None),
+            (
+                "org.example.keyboard",
+                Access::NotificationListener,
+                Some("not_useful"),
+            ),
+            // Allowed from, but taken back from the list.
+            (
+                "org.example.other",
+                Access::NotificationListener,
+                Some("allowed"),
+            ),
+        ] {
+            alert
+                .execute(rusqlite::params![about(app, access), feedback])
+                .unwrap();
+        }
+        drop(alert);
+        conn.execute_batch(
+            "INSERT INTO allowed (rule_id, subject, created) VALUES
+               ('special-access', 'org.example.keyboard', 10),
+               ('special-access', 'org.example.gone', 11),
+               ('flow-limit', 'org.example.chat', 12);",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT rule_id, subject, detail, created FROM allowed ORDER BY created")
+            .unwrap();
+        let allowed: Vec<(String, String, String, i64)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let row = |rule: &str, app: &str, detail: &str, created| {
+            (rule.to_owned(), app.to_owned(), detail.to_owned(), created)
+        };
+        assert_eq!(
+            allowed,
+            [
+                row(
+                    "special-access",
+                    "org.example.keyboard",
+                    "accessibility",
+                    10
+                ),
+                row("flow-limit", "org.example.chat", "", 12),
             ]
         );
     }

@@ -29,7 +29,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AllowedRule
 import java.text.DateFormat
 import java.util.Date
@@ -51,10 +50,10 @@ fun allowedAlerts(context: Context): List<AllowedRule> =
         emptyList()
     }
 
-/** Takes back what the user allowed for [app] and [rule]. Returns whether it was allowed. */
-fun takeBackAllowed(context: Context, rule: AlertRule, app: String): Boolean =
+/** Takes back what the user [allowed]. Returns whether it was allowed. */
+fun takeBackAllowed(context: Context, allowed: AllowedRule): Boolean =
     try {
-        History.get(context).takeBackAllowed(rule, app)
+        History.get(context).takeBackAllowed(allowed.rule, allowed.app, allowed.access)
     } catch (e: Exception) {
         Log.w(TAG, "what was allowed cannot be taken back", e)
         false
@@ -66,6 +65,7 @@ data class AllowedRow(val allowed: AllowedRule, val appLabel: String)
 /**
  * Every alert the user allowed: one kind of alert about one app each, newest first, each
  * with Take back (AL-05, audit A-08). Allowing is for good, so it must not stay hidden.
+ * Special access is allowed one kind at a time, and each is named (audit A-38).
  */
 @Composable
 fun AllowedScreen(onBack: () -> Unit) {
@@ -85,7 +85,7 @@ fun AllowedScreen(onBack: () -> Unit) {
     }
     AllowedList(rows, takenBack, onBack, onTakeBack = { row ->
         scope.launch {
-            if (withContext(Dispatchers.IO) { takeBackAllowed(context, row.allowed.rule, row.allowed.app) }) {
+            if (withContext(Dispatchers.IO) { takeBackAllowed(context, row.allowed) }) {
                 takenBack = row.appLabel
             }
             generation++
@@ -132,7 +132,9 @@ fun AllowedList(
                 )
             }
         }
-        items(rows, key = { "${it.allowed.rule}/${it.allowed.app}" }) { row -> AllowedRowView(row, onTakeBack) }
+        items(rows, key = { "${it.allowed.rule}/${it.allowed.app}/${it.allowed.access}" }) { row ->
+            AllowedRowView(row, onTakeBack)
+        }
     }
 }
 
@@ -142,7 +144,8 @@ private fun AllowedRowView(row: AllowedRow, onTakeBack: (AllowedRow) -> Unit) {
         DateFormat.SHORT, DateFormat.SHORT, LocalConfiguration.current.locales[0],
     )
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(stringResource(titleRes(row.allowed.rule)), style = MaterialTheme.typography.titleSmall)
+        val title = row.allowed.access?.let { titleRes(it) } ?: titleRes(row.allowed.rule)
+        Text(stringResource(title), style = MaterialTheme.typography.titleSmall)
         Text(row.appLabel, style = MaterialTheme.typography.bodyMedium)
         Text(
             stringResource(R.string.allowed_since, format.format(Date(row.allowed.createdMs))),

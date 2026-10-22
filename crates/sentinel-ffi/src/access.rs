@@ -218,6 +218,55 @@ mod tests {
         );
     }
 
+    /// Audit A-38: allowing an app's access allows that kind only. The same app gaining
+    /// another kind is reported; the list of what was allowed names the kind, and Take
+    /// back takes back that kind.
+    #[test]
+    fn allowing_one_kind_of_access_leaves_the_others_reported() {
+        use SpecialAccess::{Accessibility, NotificationListener};
+
+        let dir = tempfile::tempdir().unwrap();
+        let history = history(dir.path());
+        let watch = || "com.example.watch".to_owned();
+        let reads = held("com.example.watch", NotificationListener, false);
+        let sees = held("com.example.watch", Accessibility, false);
+        history.check_access(vec![reads.clone()]).unwrap();
+        let id = history.alerts(true, 100).unwrap()[0].id;
+        assert!(
+            history
+                .set_feedback(id, Some(AlertFeedback::Allowed))
+                .unwrap()
+        );
+
+        let both = vec![reads, sees.clone()];
+        assert_eq!(
+            history.check_access(both.clone()).unwrap(),
+            AccessCheck { held: 2, gained: 1 }
+        );
+        assert_eq!(reported(&history), [(watch(), Accessibility)]);
+        let allowed = history.allowed().unwrap();
+        assert_eq!(allowed.len(), 1);
+        assert_eq!(
+            (allowed[0].app.clone(), allowed[0].access),
+            (watch(), Some(NotificationListener))
+        );
+
+        let take_back = |access| {
+            history
+                .take_back_allowed(AlertRule::SpecialAccess, watch(), Some(access))
+                .unwrap()
+        };
+        assert!(!take_back(Accessibility), "not allowed");
+        assert!(take_back(NotificationListener));
+        assert!(history.allowed().unwrap().is_empty());
+        history.check_access(vec![sees]).unwrap();
+        history.check_access(both).unwrap();
+        assert_eq!(
+            reported(&history),
+            [(watch(), Accessibility), (watch(), NotificationListener)]
+        );
+    }
+
     /// Audit A-35: access whose alert could not be kept is not taken as seen, so the
     /// next check reports it.
     #[test]

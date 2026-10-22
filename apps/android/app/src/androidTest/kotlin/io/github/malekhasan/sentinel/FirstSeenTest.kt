@@ -72,6 +72,43 @@ class FirstSeenTest {
         assertEquals(FlowOwner(-1, null, null, false, emptyList()), names.ownerOf(-1))
     }
 
+    /**
+     * Audit A-36: what is known of an app is forgotten once a package is removed or
+     * installed. Android gives a removed app's UID to the next app installed, which must
+     * not be taken for it, and an app installed again is new by its new install time.
+     * A UID Android names no package for is named so that a rule can block it (audit
+     * A-37).
+     */
+    @Test
+    fun whatIsKnownOfAnAppIsForgottenOnceItIsRemovedOrInstalledAgain() {
+        val history = History.get(context)
+        val probe = Probe(history)
+        Probe.uninstall()
+        probe.install()
+        try {
+            val names = AppNames(context)
+            val uid = context.packageManager.getPackageUid(Probe.PACKAGE, 0)
+            val owner = names.ownerOf(uid)
+            assertEquals(Probe.PACKAGE, owner.app)
+            val installed = checkNotNull(owner.installedMs)
+
+            Probe.uninstall()
+            val unnamed = names.packageFor(uid)
+            assertEquals("uid:$uid", unnamed)
+            assertNull(names.installedAt(Probe.PACKAGE))
+            assertTrue("a rule can block it", blockApp(context, checkNotNull(unnamed)))
+
+            probe.install()
+            val again = context.packageManager.getPackageUid(Probe.PACKAGE, 0)
+            assertEquals(Probe.PACKAGE, names.packageFor(again))
+            val reinstalled = checkNotNull(names.installedAt(Probe.PACKAGE))
+            assertTrue("installed again at $reinstalled, first at $installed", reinstalled > installed)
+        } finally {
+            Probe.uninstall()
+            history.firewallRules().forEach { history.removeFirewallRule(it.key) }
+        }
+    }
+
     @Test
     fun anAppInstalledBeforeTheHistoryBeganIsNotNew() {
         History.wipe(context)

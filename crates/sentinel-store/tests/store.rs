@@ -1041,13 +1041,25 @@ fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
     );
 
     // Allowed: on the allow-list, for this rule and app only.
-    assert!(!store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
+    assert!(
+        !store
+            .is_allowed(Rule::MonitoringInterrupted, chat, None)
+            .unwrap()
+    );
     let allow = raise(chat, Severity::Warning);
     store
         .set_feedback(allow, Some(Feedback::Allowed), NOW + 1)
         .unwrap();
-    assert!(store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
-    assert!(!store.is_allowed(Rule::MonitoringInterrupted, None).unwrap());
+    assert!(
+        store
+            .is_allowed(Rule::MonitoringInterrupted, chat, None)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .is_allowed(Rule::MonitoringInterrupted, None, None)
+            .unwrap()
+    );
     // An alert about no app cannot be allowed: it would silence the rule for the whole
     // phone (audit A-08). It can be marked not useful.
     let own = raise(None, Severity::Warning);
@@ -1065,6 +1077,7 @@ fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
         vec![sentinel_store::AllowedEntry {
             rule: Rule::MonitoringInterrupted,
             app: "org.example.chat".to_owned(),
+            access: None,
             created: NOW + 1,
         }]
     );
@@ -1072,7 +1085,11 @@ fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
     store
         .set_feedback(allow, Some(Feedback::NotUseful), NOW)
         .unwrap();
-    assert!(!store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
+    assert!(
+        !store
+            .is_allowed(Rule::MonitoringInterrupted, chat, None)
+            .unwrap()
+    );
     // So does taking it back from the list. The alert it was allowed from no longer says
     // so, and stays dismissed; another app's stays allowed.
     store
@@ -1085,10 +1102,14 @@ fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
         .unwrap();
     assert!(
         store
-            .take_back(Rule::MonitoringInterrupted, "org.example.chat")
+            .take_back(Rule::MonitoringInterrupted, "org.example.chat", None)
             .unwrap()
     );
-    assert!(!store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
+    assert!(
+        !store
+            .is_allowed(Rule::MonitoringInterrupted, chat, None)
+            .unwrap()
+    );
     let taken_back = store.alert(allow).unwrap().unwrap();
     assert_eq!(taken_back.feedback, None);
     assert_eq!(taken_back.state, AlertState::Dismissed);
@@ -1098,12 +1119,12 @@ fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
     );
     assert!(
         !store
-            .take_back(Rule::MonitoringInterrupted, "org.example.chat")
+            .take_back(Rule::MonitoringInterrupted, "org.example.chat", None)
             .unwrap()
     );
     assert!(
         store
-            .take_back(Rule::MonitoringInterrupted, "org.example.mail")
+            .take_back(Rule::MonitoringInterrupted, "org.example.mail", None)
             .unwrap()
     );
     assert!(store.allowed().unwrap().is_empty());
@@ -1125,7 +1146,11 @@ fn feedback_is_kept_and_tunes_only_later_alerts_like_it() {
         .unwrap();
     drop(store);
     let store = Store::open(&db(&dir), &KEY).unwrap();
-    assert!(store.is_allowed(Rule::MonitoringInterrupted, chat).unwrap());
+    assert!(
+        store
+            .is_allowed(Rule::MonitoringInterrupted, chat, None)
+            .unwrap()
+    );
     assert_eq!(
         store.alert(first).unwrap().unwrap().state,
         AlertState::Dismissed
@@ -1204,7 +1229,7 @@ fn an_allowance_for_no_app_no_longer_counts() {
     drop(older);
 
     let store = Store::open(&path, &KEY).unwrap();
-    assert!(!store.is_allowed(Rule::SensorWhileAway, None).unwrap());
+    assert!(!store.is_allowed(Rule::SensorWhileAway, None, None).unwrap());
     assert!(store.allowed().unwrap().is_empty());
 }
 

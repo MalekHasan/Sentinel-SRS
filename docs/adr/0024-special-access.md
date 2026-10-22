@@ -25,7 +25,8 @@ Sentinel itself uses none of them. SRS §2.4 forbids it any accessibility servic
 1. **One rule, `special-access`, High.** An app that holds one of the three, and did not hold it at the last check, raises a High alert: like a new admin account (SRS §8.3), serious but often explained. The alert names the app and the access. Its title and explanation are written for each kind ("An app can read your notifications"). It says that some apps need this, and that if the user did not turn it on, someone else may have.
 2. **The allow list.**
    - **Apps that came with the phone are never reported.** These are apps on its system image, such as the screen reader or the launcher. Someone who can change the system image needs no special access.
-   - **The user can allow any other app** from its alert (AL-05): the rule raises nothing more about that app. A High alert can be allowed; a Critical one cannot.
+   - **The user can allow any other app** from its alert (AL-05): the rule raises nothing more about that app and that kind of access. A High alert can be allowed; a Critical one cannot.
+   - **Each kind is allowed on its own** (audit A-38). An app allowed to read notifications is still reported once it can see the screen or becomes a device admin. Before, allowing one kind allowed all three, so an app could be allowed for something harmless and then take more. The list of what was allowed names the kind, and Take back takes back that kind. What was allowed before takes the kinds of the alerts it was allowed from (schema version 18).
 3. **Reported once per grant.** The history keeps the access each app held at the last check (table `app_access`, schema 15). A check reports what is held now and was not then. What is held is kept only once its alerts are: an alert that cannot be kept leaves the last check as it was, so the next check reports the access again (audit A-35).
    - The first check reports everything already held, since stalkerware may predate Sentinel.
    - Access turned off and on again is reported again, unless its alert is still open.
@@ -55,13 +56,13 @@ Sentinel itself uses none of them. SRS §2.4 forbids it any accessibility servic
   - access held stays reported once, even after its alert is dismissed;
   - a new device admin is reported;
   - access turned off and on again after a dismissal is reported again, but not while its alert is open;
-  - an app the user allowed raises nothing more.
+  - an app the user allowed raises nothing more for the kind allowed, and is reported for another; that kind taken back is reported again (A-38).
 - On the Android 14 emulator (`SpecialAccessTest`), with the probe app's inert components turned on as Android's shell user would:
   - notification access raises the alert within 5 s while monitoring runs, with its three actions, and only once;
   - an accessibility service raises it within 5 s;
   - a device admin is found at the next check.
 
-  `RtlTest` shows the alert in Arabic, right to left.
+  `RtlTest` shows the alert in Arabic, right to left. `AllowedTest`: an app whose accessibility is allowed is still reported for notification access (A-38).
 
 ## Consequences
 

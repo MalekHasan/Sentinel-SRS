@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 
 use crate::alerts::{
     AlertDelivery, AlertFeedback, AlertListener, AlertRule, AllowedRule, HistoryAlert,
+    SpecialAccess,
 };
 use crate::enrich::{CategoryFact, CompanyFact};
 use crate::firewall::{AppAccess, FirewallMode, FirewallRule, HistoryRule};
@@ -585,16 +586,25 @@ impl HistoryStore {
             .map(|entry| AllowedRule {
                 rule: entry.rule.into(),
                 app: entry.app,
+                access: entry.access.map(Into::into),
                 created_ms: entry.created,
             })
             .collect())
     }
 
-    /// Take back what the user allowed for `app` and `rule`, from the list of what was
-    /// allowed (audit A-08): its alerts come again, and the alerts it was allowed from no
-    /// longer say it is allowed. Returns whether it was allowed.
-    pub fn take_back_allowed(&self, rule: AlertRule, app: String) -> Result<bool, HistoryError> {
-        Ok(self.store.take_back(rule.into(), &app)?)
+    /// Take back what the user allowed for `app` and `rule`, and for special access, the
+    /// kind `access` (audit A-38), from the list of what was allowed (audit A-08): its
+    /// alerts come again, and the alerts it was allowed from no longer say it is allowed.
+    /// Returns whether it was allowed.
+    pub fn take_back_allowed(
+        &self,
+        rule: AlertRule,
+        app: String,
+        access: Option<SpecialAccess>,
+    ) -> Result<bool, HistoryError> {
+        Ok(self
+            .store
+            .take_back(rule.into(), &app, access.map(Into::into))?)
     }
 
     /// Tell `listener` about every new alert from now on, or no one.
@@ -846,7 +856,10 @@ impl HistoryStore {
         alert: &sentinel_detect::Alert,
         join_since: Option<i64>,
     ) -> Result<(), HistoryError> {
-        if self.store.is_allowed(alert.rule, alert.app())? {
+        if self
+            .store
+            .is_allowed(alert.rule, alert.app(), alert.allowed_access())?
+        {
             return Ok(());
         }
         if let Some(since) = join_since
@@ -1368,7 +1381,7 @@ mod tests {
             .unwrap();
         assert!(
             history
-                .take_back_allowed(AlertRule::FlowLimit, "org.example.app".into())
+                .take_back_allowed(AlertRule::FlowLimit, "org.example.app".into(), None)
                 .unwrap()
         );
         assert_eq!(history.alert(second).unwrap().unwrap().feedback, None);
