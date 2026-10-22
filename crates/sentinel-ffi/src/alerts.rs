@@ -343,6 +343,9 @@ pub struct HistoryAlert {
     /// What the user said about it (AL-05).
     #[uniffi(default = None)]
     pub feedback: Option<AlertFeedback>,
+    /// Whether it may be allowed: it is about an app, and not Critical (audit A-08).
+    #[uniffi(default = false)]
+    pub can_allow: bool,
 }
 
 /// What the user says about an alert (AL-05). Kept on the device only.
@@ -351,7 +354,8 @@ pub enum AlertFeedback {
     /// Later alerts like it wait in the app instead of notifying; Critical ones still
     /// notify.
     NotUseful,
-    /// No more alerts from this rule about the same app. Not for Critical alerts.
+    /// No more alerts from this rule about the same app. Only for an alert about an app,
+    /// and not a Critical one (audit A-08).
     Allowed,
 }
 
@@ -373,12 +377,11 @@ impl From<Feedback> for AlertFeedback {
     }
 }
 
-/// A rule the user allowed for an app, or for Sentinel itself.
+/// A rule the user allowed for an app.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AllowedRule {
     pub rule: AlertRule,
-    /// `None` for alerts about Sentinel itself.
-    pub app: Option<String>,
+    pub app: String,
     pub created_ms: i64,
 }
 
@@ -404,6 +407,32 @@ impl From<Rule> for AlertRule {
             Rule::SharingSiteUpload => AlertRule::SharingSiteUpload,
             Rule::HistoryStartedAnew => AlertRule::HistoryStartedAnew,
             Rule::MonitoringKeepsStopping => AlertRule::MonitoringKeepsStopping,
+        }
+    }
+}
+
+impl From<AlertRule> for Rule {
+    fn from(rule: AlertRule) -> Self {
+        match rule {
+            AlertRule::MonitoringInterrupted => Rule::MonitoringInterrupted,
+            AlertRule::FirstNetworkUse => Rule::FirstNetworkUse,
+            AlertRule::NewDestination => Rule::NewDestination,
+            AlertRule::DnsServersChanged => Rule::DnsServersChanged,
+            AlertRule::PrivateDnsChanged => Rule::PrivateDnsChanged,
+            AlertRule::ProxyChanged => Rule::ProxyChanged,
+            AlertRule::KnownIndicator => Rule::KnownIndicator,
+            AlertRule::SpecialAccess => Rule::SpecialAccess,
+            AlertRule::RemoteAccessExposed => Rule::RemoteAccessExposed,
+            AlertRule::NewRootCertificate => Rule::NewRootCertificate,
+            AlertRule::SensorWhileAway => Rule::SensorWhileAway,
+            AlertRule::FlowLimit => Rule::FlowLimit,
+            AlertRule::BeaconLike => Rule::BeaconLike,
+            AlertRule::DnsTunnel => Rule::DnsTunnel,
+            AlertRule::OwnEncryptedDns => Rule::OwnEncryptedDns,
+            AlertRule::UploadSurge => Rule::UploadSurge,
+            AlertRule::SharingSiteUpload => Rule::SharingSiteUpload,
+            AlertRule::HistoryStartedAnew => Rule::HistoryStartedAnew,
+            AlertRule::MonitoringKeepsStopping => Rule::MonitoringKeepsStopping,
         }
     }
 }
@@ -442,6 +471,7 @@ pub trait AlertListener: Send + Sync {
 impl From<StoredAlert> for HistoryAlert {
     fn from(stored: StoredAlert) -> Self {
         let alert = stored.alert;
+        let can_allow = Feedback::Allowed.allowed_on(&alert);
         HistoryAlert {
             id: stored.id,
             rule: alert.rule.into(),
@@ -590,6 +620,7 @@ impl From<StoredAlert> for HistoryAlert {
             open: stored.state == AlertState::Open,
             notified_ms: stored.notified,
             feedback: stored.feedback.map(Into::into),
+            can_allow,
         }
     }
 }

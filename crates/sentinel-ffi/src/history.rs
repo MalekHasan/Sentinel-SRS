@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use sentinel_detect::{FirewallMode as Mode, Isolation, Place, RuleSet};
 use sentinel_store::{KEY_LEN, Store, StoreError, Undo};
 
-use crate::alerts::{AlertDelivery, AlertFeedback, AlertListener, AllowedRule, HistoryAlert};
+use crate::alerts::{
+    AlertDelivery, AlertFeedback, AlertListener, AlertRule, AllowedRule, HistoryAlert,
+};
 use crate::enrich::{CategoryFact, CompanyFact};
 use crate::firewall::{AppAccess, FirewallMode, FirewallRule, HistoryRule};
 use crate::flows::{FlowProto, NameSource};
@@ -538,7 +540,7 @@ impl HistoryStore {
             .set_feedback(id, feedback.map(Into::into), now_ms())?)
     }
 
-    /// Everything the user allowed, newest first.
+    /// Everything the user allowed, newest first: a rule for an app each.
     pub fn allowed(&self) -> Result<Vec<AllowedRule>, HistoryError> {
         Ok(self
             .store
@@ -550,6 +552,13 @@ impl HistoryStore {
                 created_ms: entry.created,
             })
             .collect())
+    }
+
+    /// Take back what the user allowed for `app` and `rule`, from the list of what was
+    /// allowed (audit A-08): its alerts come again, and the alerts it was allowed from no
+    /// longer say it is allowed. Returns whether it was allowed.
+    pub fn take_back_allowed(&self, rule: AlertRule, app: String) -> Result<bool, HistoryError> {
+        Ok(self.store.take_back(rule.into(), &app)?)
     }
 
     /// Tell `listener` about every new alert from now on, or no one.
@@ -1234,54 +1243,87 @@ mod tests {
         drop(notifier);
     }
 
-    /// AL-05: allowing a gap alert stops the next gaps from raising alerts, until the
-    /// user takes it back; "not useful" holds the next one's notification.
+    /// AL-05: allowing an app's alert stops that app's next alerts of the rule, until the
+    /// user takes it back, on the alert or from the list of what was allowed; "not
+    /// useful" holds the next one's notification. An alert about no app, such as a gap,
+    /// cannot be allowed (audit A-08).
     #[test]
     fn feedback_tunes_later_alerts_only() {
-        use crate::alerts::AlertRule;
-
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("h.db").to_string_lossy().into_owned();
         let history = HistoryStore::open(path, vec![1; 32]).unwrap();
-        let gap = |at: i64| {
-            history.open_gap(Some(at), "r".into()).unwrap();
-            history.close_gap(at + 1).unwrap();
+        let busy = |at: i64| {
+            history
+                .raise(&sentinel_detect::flow_limit(at, "org.example.app", 512))
+                .unwrap();
         };
         let open_count = || history.alerts(true, 10).unwrap().len();
 
-        gap(0);
-        let first = history.alerts(true, 10).unwrap()[0].id;
+        busy(0);
+        let first = history.alerts(true, 10).unwrap()[0].clone();
+        assert!(first.can_allow);
         assert!(
             history
-                .set_feedback(first, Some(AlertFeedback::Allowed))
+                .set_feedback(first.id, Some(AlertFeedback::Allowed))
                 .unwrap()
         );
         assert_eq!(open_count(), 0, "allowing dismisses it");
         assert_eq!(
-            history.alert(first).unwrap().unwrap().feedback,
+            history.alert(first.id).unwrap().unwrap().feedback,
             Some(AlertFeedback::Allowed)
         );
-        assert_eq!(
-            history.allowed().unwrap()[0].rule,
-            AlertRule::MonitoringInterrupted
-        );
-        assert_eq!(history.allowed().unwrap()[0].app, None);
-        gap(10);
+        let allowed = history.allowed().unwrap();
+        assert_eq!(allowed.len(), 1);
+        assert_eq!(allowed[0].rule, AlertRule::FlowLimit);
+        assert_eq!(allowed[0].app, "org.example.app");
+        busy(10);
         assert_eq!(history.alerts(false, 10).unwrap().len(), 1, "no new alert");
 
-        history.set_feedback(first, None).unwrap();
+        history.set_feedback(first.id, None).unwrap();
         assert!(history.allowed().unwrap().is_empty());
-        gap(20);
+        busy(20);
         assert_eq!(open_count(), 1, "alerts again after taking it back");
 
+        // Taken back from the list of what was allowed.
         let second = history.alerts(true, 10).unwrap()[0].id;
         history
-            .set_feedback(second, Some(AlertFeedback::NotUseful))
+            .set_feedback(second, Some(AlertFeedback::Allowed))
             .unwrap();
-        gap(30);
-        let third = history.alerts(true, 10).unwrap()[0].id;
+        assert!(
+            history
+                .take_back_allowed(AlertRule::FlowLimit, "org.example.app".into())
+                .unwrap()
+        );
+        assert_eq!(history.alert(second).unwrap().unwrap().feedback, None);
+        busy(30);
         assert_eq!(
-            history.claim_notification(third, false).unwrap(),
+            open_count(),
+            1,
+            "alerts again after taking it back from the list"
+        );
+
+        // A gap names no app: allowing it would silence gaps for good. It can be marked
+        // not useful, which holds the next one's notification.
+        history.open_gap(Some(40), "r".into()).unwrap();
+        history.close_gap(41).unwrap();
+        let gap = history
+            .alerts(true, 10)
+            .unwrap()
+            .into_iter()
+            .find(|alert| alert.rule == AlertRule::MonitoringInterrupted)
+            .unwrap();
+        assert!(!gap.can_allow);
+        assert!(matches!(
+            history.set_feedback(gap.id, Some(AlertFeedback::Allowed)),
+            Err(HistoryError::Failed { .. })
+        ));
+        history
+            .set_feedback(gap.id, Some(AlertFeedback::NotUseful))
+            .unwrap();
+        history.open_gap(Some(50), "r".into()).unwrap();
+        let next = history.alerts(true, 10).unwrap()[0].id;
+        assert_eq!(
+            history.claim_notification(next, false).unwrap(),
             Some(AlertDelivery::HeldForFeedback)
         );
         assert!(!history.set_feedback(9_999, None).unwrap());
@@ -1289,7 +1331,8 @@ mod tests {
 
     /// CM-07: each change of the network settings raises one Warning alert offering
     /// the network settings, also when it happened while Sentinel was not running; the
-    /// first state seen raises nothing, and an allowed rule raises nothing more.
+    /// first state seen raises nothing. A change names no app, so it cannot be allowed
+    /// (audit A-08).
     #[test]
     fn network_setting_changes_raise_alerts() {
         use crate::alerts::{AlertAction, AlertEvidence, AlertRule, AlertSeverity};
@@ -1331,12 +1374,18 @@ mod tests {
         );
         assert_eq!(alerts[0].actions, [AlertAction::OpenNetworkSettings]);
 
-        // Allowed: proxy changes raise nothing more; other settings still do.
-        history
-            .set_feedback(alerts[0].id, Some(AlertFeedback::Allowed))
-            .unwrap();
+        // It cannot be allowed: the next proxy change raises an alert again.
+        assert!(
+            history
+                .set_feedback(alerts[0].id, Some(AlertFeedback::Allowed))
+                .is_err()
+        );
         history.network_seen(home.clone()).unwrap();
-        assert!(history.alerts(true, 10).unwrap().is_empty());
+        let alerts = history.alerts(true, 10).unwrap();
+        assert_eq!(alerts.len(), 2);
+        for alert in alerts {
+            history.dismiss_alert(alert.id).unwrap();
+        }
 
         // Changed while Sentinel was not running: found when it runs again.
         drop(history);

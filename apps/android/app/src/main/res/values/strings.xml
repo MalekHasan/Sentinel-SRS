@@ -73,6 +73,7 @@
     <string name="company_blocked">Blocked in every app.</string>
     <string name="firewall_unblock">Unblock</string>
     <string name="journal_action">Your actions</string>
+    <string name="allowed_action">Alerts you allowed</string>
     <string name="hardening_action">Make this phone harder to spy on</string>
     <string name="hardening_title">Make this phone harder to spy on</string>
     <string name="hardening_explainer">Each step makes spying harder. None of them can show that this phone is not watched.</string>
@@ -175,6 +176,12 @@
     <string name="journal_undo_done">Undone. It is back as it was.</string>
     <string name="journal_changed_since">This was changed again since, so it was left as it is.</string>
     <string name="journal_cannot_undo">This cannot be undone.</string>
+    <string name="allowed_title">Alerts you allowed</string>
+    <string name="allowed_explainer">For each one, Sentinel no longer alerts you about that app for that reason. Take it back to get those alerts again.</string>
+    <string name="allowed_empty">You have not allowed any alerts.</string>
+    <string name="allowed_since">Allowed %1$s</string>
+    <string name="allowed_take_back">Take back</string>
+    <string name="allowed_taken_back">Taken back. Sentinel will alert you about %1$s again.</string>
     <string name="feed_title">Indicator list</string>
     <string name="feed_none">No indicator list yet. Sentinel needs one to look for known spyware and stalkerware.</string>
     <string name="feed_no_keys">This version of Sentinel cannot check indicator lists yet, so it uses none.</string>

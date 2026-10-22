@@ -3,6 +3,7 @@
 - Status: **Accepted** (Sprint 5; `crates/sentinel-detect`, `crates/sentinel-store`, `apps/android`)
 - Date: 2026-10-15
 - Implements: SRS AL-01, AL-02, the alert for monitoring gaps (SP-03), delivery as notifications (AL-03, AL-04, AL-06), and feedback (AL-05)
+- Amended 2026-10-22 for audit finding A-08 ([AUDIT-PHASE-A](../AUDIT-PHASE-A.md)): decisions 14 and 15, and the list of what was allowed.
 
 ## Context
 
@@ -56,8 +57,10 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
 13. **Every alert asks whether it was useful.** The user can answer:
     - **Not useful.** The alert is dismissed. Later alerts from the same rule about the same app are still kept and shown in the app, but they no longer notify.
     - **Allow.** The alert is dismissed, and its rule and app go on an allow-list. That rule raises no more alerts about that app; what it watches, such as monitoring gaps, is still recorded.
-14. **Both can be undone** from the alert. Taking back "allow" removes the allow-list entry.
-15. **A Critical alert cannot be allowed, and "not useful" never holds a Critical notification.** Someone else holding the phone could otherwise silence what such an alert found, such as spyware (THREAT-MODEL-A B5).
+14. **Both can be undone** from the alert. Taking back "allow" removes the allow-list entry. **Everything allowed is also listed** on its own screen ("Alerts you allowed", opened from the main screen): each kind of alert, the app, when, and Take back. Taking one back there brings its alerts again, and the alerts it was allowed from no longer say it is allowed; they stay dismissed.
+15. **Only an alert about an app, and not a Critical one, can be allowed; "not useful" never holds a Critical notification.** The core decides (`Feedback::allowed_on`), tells the app on each alert (`can_allow`), and refuses the rest.
+    - **A Critical alert:** someone else holding the phone could otherwise silence what it found, such as spyware (THREAT-MODEL-A B5).
+    - **An alert about no app:** allowing goes by rule and app, so allowing one of these would silence its rule for the whole phone, for good. One tap would stop every later alert about the microphone used while the screen is off, a monitoring gap, a network setting changed, or a certificate added (audit A-08). These can be dismissed or marked not useful. What an earlier version allowed for no app no longer counts, and is not listed.
 16. **Feedback is kept in the encrypted history and changes only this user's alerts.** It is stored in `alert.user_feedback` and, for allowing, in an `allowed` table (schema version 8). It never leaves the phone (NF-11), and it tunes nothing but these two local thresholds.
 
 ## Verification
@@ -81,10 +84,10 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
   - the store and FFI tests check the atomic claim, that a claim is never counted twice, and that the app's listener can claim from inside the call.
 - Feedback:
   - the store test checks that "not useful" holds later alerts like it but not other apps' or Critical ones;
-  - it checks that allowing adds to the allow-list and that changing or undoing the feedback removes the entry;
-  - it checks that a Critical alert cannot be allowed, and that everything survives reopening;
-  - the FFI test shows that an allowed gap rule raises nothing until undone.
-  - `AlertsTest` on the emulator does the same with gaps recorded by the app, and checks the buttons, their results and Undo (no Allow on a Critical alert); `RtlTest` checks them in Arabic.
+  - it checks that allowing adds to the allow-list and that changing or undoing the feedback removes the entry, as does taking it back from the list, which clears that app's alerts' feedback only;
+  - it checks that a Critical alert, and an alert about no app, cannot be allowed, that an older allowance for no app no longer counts and is not listed, and that everything survives reopening;
+  - the FFI test shows that an allowed rule raises nothing about that app until undone, or taken back from the list, and that a gap cannot be allowed.
+  - `AlertsTest` on the emulator checks that a gap recorded by the app cannot be allowed and that the next gap alerts again, and checks the buttons, their results and Undo (no Allow where the core says so); `AllowedTest` allows an app's special access, finds it on the list, takes it back there, and is alerted again; `RtlTest` checks them in Arabic.
 - `AlertNotificationTest` on the emulator checks:
   - the four channels' importance, sounds and vibrations;
   - that a gap posts a secret Warning notification;
@@ -97,5 +100,5 @@ Sentinel is used in English and Arabic (§12.4), and the user can change the pho
 - A gap's reason is stored as text in the language of the moment it was recorded (the gap log predates this decision); the alert shows it as evidence, as recorded.
 - **Do Not Disturb on Android.** Android lets only the user allow an app's channel through Do Not Disturb. Sentinel asks for it on the High and Critical channels, and posts those alerts during Do Not Disturb. Whether they make a sound depends on the user allowing Sentinel in Do Not Disturb. Quiet hours on Android are Do Not Disturb schedules, so Sentinel has no quiet-hours setting of its own. A settings screen that shows the user how to let Critical alerts through comes with the settings work.
 - Alerts held for Do Not Disturb or the rate limit are not notified later; they wait in the app's list.
-- The allow-list has no screen of its own yet: an allowed rule is undone from one of its alerts. A list of everything allowed comes with the settings screen (the store already provides it).
-- Someone holding the unlocked phone can still allow Warning and High alerts, such as "monitoring stopped". That person can also turn Sentinel off, so this adds no new risk (THREAT-MODEL-A B5).
+- An alert about the phone itself is never silenced for good. A user who changes a network setting often gets an alert each time; "not useful" keeps those in the app without a notification.
+- Someone holding the unlocked phone can still allow an app's Warning and High alerts. That person can also turn Sentinel off, so this adds no new risk (THREAT-MODEL-A B5); the list shows what was allowed, and when.

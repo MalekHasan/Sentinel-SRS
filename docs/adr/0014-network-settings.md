@@ -26,7 +26,7 @@ The attacks behind CM-07 are a DNS or proxy setting that sends the phone's traff
    - `private-dns-changed`;
    - `proxy-changed`.
 
-   Each alert's evidence is the value before and after. Its action opens Android's network settings, where all three are changed back. They are Warnings, not High, because users change these settings themselves. They count as Sentinel's own alerts for the rate limit (ADR-0012), and each can be allowed on its own.
+   Each alert's evidence is the value before and after. Its action opens Android's network settings, where all three are changed back. They are Warnings, not High, because users change these settings themselves. They count as Sentinel's own alerts for the rate limit (ADR-0012), and they cannot be allowed: they name no app, so allowing one would silence its rule for good (ADR-0012, audit A-08).
 2. **The app reports, the core decides.** Whenever the network the phone would use without the VPN changes or its settings change, Kotlin reports a `NetworkState`, and also when Android announces a proxy change. A state holds that network's id, its DNS servers, the named Private DNS provider, the network's own proxy, and the proxy in effect. `sentinel-detect` compares it with the state before (`network_changes`), and the alerts go through the usual raising path.
 3. **The last state is kept in the history** (schema version 10, `network_state`). A change made while Sentinel was not running is therefore found when it runs again. The first state a history sees raises nothing; after a wipe the history starts again.
 4. **What counts as a change:**
@@ -49,7 +49,7 @@ The attacks behind CM-07 are a DNS or proxy setting that sends the phone's traff
 - `sentinel-store`: the last state survives reopening, and a wipe forgets it.
 - `sentinel-ffi`:
   - the first state raises nothing, and an unchanged state raises nothing;
-  - a proxy change raises one Warning alert offering the network settings, and once that rule is allowed it raises nothing more;
+  - a proxy change raises one Warning alert offering the network settings; it cannot be allowed, so the next change raises one again once it is dismissed;
   - a Private DNS change made while the history was closed raises an alert when it next sees the network.
 - On the Android 14 emulator (`NetworkSettingsTest`), with monitoring running:
   - setting a proxy for the whole phone (`settings put global http_proxy`) raises a Warning alert within 5 s, with no proxy before and the new one after;

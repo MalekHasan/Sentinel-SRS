@@ -84,6 +84,7 @@
     <string name="company_blocked">محجوبة بكل التطبيقات.</string>
     <string name="firewall_unblock">فك الحجب</string>
     <string name="journal_action">تغييراتك</string>
+    <string name="allowed_action">التنبيهات اللي سمحت فيها</string>
     <string name="hardening_action">خلّي التجسس على هالتلفون أصعب</string>
     <string name="hardening_title">خلّي التجسس على هالتلفون أصعب</string>
     <string name="hardening_explainer">كل خطوة بتصعّب التجسس. بس ولا وحدة منها بتقدر تثبت إنو التلفون مش مراقب.</string>
@@ -186,6 +187,12 @@
     <string name="journal_undo_done">تراجعنا. رجع متل ما كان.</string>
     <string name="journal_changed_since">هاد تغيّر مرة تانية من بعدها، فتركناه متل ما هو.</string>
     <string name="journal_cannot_undo">ما فيك تتراجع عن هاد.</string>
+    <string name="allowed_title">التنبيهات اللي سمحت فيها</string>
+    <string name="allowed_explainer">لكل وحدة، Sentinel ما عاد بينبّهك عن هالتطبيق لهالسبب. اسحبها إذا بدك ترجعلك هالتنبيهات.</string>
+    <string name="allowed_empty">لسا ما سمحت بأي تنبيه.</string>
+    <string name="allowed_since">سمحت فيه %1$s</string>
+    <string name="allowed_take_back">اسحب السماح</string>
+    <string name="allowed_taken_back">سحبنا السماح. Sentinel رح ينبّهك عن %1$s مرة تانية.</string>
     <string name="feed_title">قائمة المؤشرات</string>
     <string name="feed_none">لسا ما في قائمة مؤشرات. Sentinel بيحتاجها ليدوّر على برامج التجسس والمراقبة المعروفة.</string>
     <string name="feed_no_keys">هالنسخة من Sentinel لسا ما بتقدر تتحقق من قوائم المؤشرات، فما بتستعمل ولا قائمة.</string>

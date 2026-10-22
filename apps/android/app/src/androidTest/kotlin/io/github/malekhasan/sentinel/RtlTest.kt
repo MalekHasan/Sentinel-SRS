@@ -36,6 +36,7 @@ import io.github.malekhasan.sentinel.core.AppAccess
 import io.github.malekhasan.sentinel.core.AlertEvidence
 import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
+import io.github.malekhasan.sentinel.core.AllowedRule
 import io.github.malekhasan.sentinel.core.CategoryFact
 import io.github.malekhasan.sentinel.core.CompanyFact
 import io.github.malekhasan.sentinel.core.ExportFormat
@@ -290,6 +291,23 @@ class RtlTest {
         assertRightToLeft(compose.onNodeWithText(said))
         compose.onNodeWithText(arabic.getString(R.string.journal_from_alert)).assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.journal_undo)).assertAtTheRight()
+    }
+
+    @Test
+    fun allowedScreen() {
+        val row = AllowedRow(AllowedRule(AlertRule.SPECIAL_ACCESS, PACKAGE, now), LABEL)
+        compose.setContent {
+            InArabic { AllowedList(listOf(row), takenBack = LABEL, onBack = {}, onTakeBack = {}) }
+        }
+        compose.onNodeWithText(arabic.getString(R.string.back)).assertAtTheRight()
+        compose.onNodeWithText(arabic.getString(R.string.allowed_title)).assertAtTheRight()
+        // Texts that may fill a line are checked by their direction, not their place.
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.allowed_explainer)))
+        // A Latin name inside the sentence must not turn it around.
+        val said = arabic.getString(R.string.allowed_taken_back, isolate(LABEL))
+        assertRightToLeft(compose.onNodeWithText(said))
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_special_access_title)))
+        compose.onNodeWithText(arabic.getString(R.string.allowed_take_back)).assertAtTheRight()
     }
 
     @Test
