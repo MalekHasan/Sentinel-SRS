@@ -20,7 +20,11 @@ Some questions had to be settled:
 
 ## Decision
 
-1. **Look back once per list version.** The history keeps the version it was last checked against (`meta`, key `hunted`; no schema change). A check runs when a list comes into force: right after an install, before the update returns, and again when monitoring starts, should a check have been cut short. Nothing runs when the history was already checked against the version in force. The version is recorded only once the check is complete, so a check cut short runs again.
+1. **Look back once per list.** The history keeps the list it was last checked against (`meta`, keys `hunted` and `hunted_files`; no schema change): its version, and what its files hold. The latter is the first eight bytes of one SHA-256 over every listed file's path and SHA-256 (`Manifest::files_digest`).
+   - A check runs when a list comes into force: right after an install, before the update returns, and again when monitoring starts, should a check have been cut short.
+   - Nothing runs when the history was already checked against the version in force with the same files.
+   - The files matter because a version can come back with other files (amended after audit A-26). After a bundle signed with a leaked key is dropped, a good bundle of any version installs (ADR-0019 decision 5), its own number included. That bundle must still be looked for.
+   - Both are recorded only once the check is complete, so a check cut short runs again. A history checked before the files were kept is checked once more; what was reported is not repeated (decision 4).
 2. **Everything the history holds is checked** (`Store::past_destinations`): every app, name and address it holds connections to, with the first and last time and how many connections, from kept flows and from daily totals. A name is matched with the list's domains (the name or a domain above it) and an address with its addresses, each on its own, as live matching does.
 3. **One alert per app and indicator**, from the same `known-indicator` rule as a live match.
    - Its evidence adds the past connections: when the first was made, when the last ended, and how many there were. Rolled-up days count from their midnight UTC.
@@ -31,12 +35,14 @@ Some questions had to be settled:
 
 ## Verification
 
-- `sentinel-store`: past destinations cover kept flows (name and address) and rolled-up days (the name, or the address of connections without one), with first, last and count, oldest first. The version checked survives reopening and is replaced, not added to.
+- `sentinel-store`: past destinations cover kept flows (name and address) and rolled-up days (the name, or the address of connections without one), with first, last and count, oldest first. The version and files checked survive reopening and are replaced, not added to.
+- `sentinel-feed`: the files digest is the same for two manifests that list the same files, whatever their versions and dates, and differs when a file's SHA-256 or path differs or a file is added.
 - `sentinel-detect`: a match found in the history is Critical and offers the same actions as a live one. The stored JSON of its evidence is fixed, and it is the same sighting as a live match of the same app and indicator.
 - `sentinel-ffi`:
   - with no list there is no check;
   - a list finds a rolled-up day by name, kept flows by name (two connections, two addresses, one alert with both dates) and a kept flow by address, each with its provenance, and raises nothing for traffic it does not name;
   - checking again against the same version does nothing;
+  - the same version with other files is checked again (A-26), and once only;
   - a newer list that adds an indicator raises only the new match, although an earlier alert was dismissed;
   - a match already reported live is not reported again.
 - On the Android 14 emulator (`IndicatorAlertTest`):

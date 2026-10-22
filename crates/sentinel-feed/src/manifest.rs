@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::FeedError;
 
@@ -51,6 +52,17 @@ impl Manifest {
         let mut out = serde_json::to_vec_pretty(self).unwrap_or_default();
         out.push(b'\n');
         out
+    }
+
+    /// One SHA-256 over every listed file's path and SHA-256, in order: the same for
+    /// two manifests that list the same files, whatever their versions and dates. A
+    /// valid path holds no line break, so the lines cannot run into each other.
+    pub fn files_digest(&self) -> [u8; 32] {
+        let mut digest = Sha256::new();
+        for entry in &self.files {
+            digest.update(format!("{}\n{}\n", entry.path, entry.sha256));
+        }
+        digest.finalize().into()
     }
 
     /// Structural checks that do not depend on time, keys or installed state.
@@ -140,6 +152,31 @@ mod tests {
     fn valid_manifest_round_trips() {
         let m = manifest();
         assert_eq!(Manifest::from_json(&m.to_json()).unwrap(), m);
+    }
+
+    /// The files digest tells lists apart by what they hold, not by their versions.
+    #[test]
+    fn the_files_digest_depends_on_the_files_only() {
+        let m = manifest();
+        let mut later = manifest();
+        later.version = 2;
+        later.created = 1_500;
+        later.expires = 3_000;
+        assert_eq!(later.files_digest(), m.files_digest());
+
+        let mut other = manifest();
+        other.files[0].sha256 = "b".repeat(64);
+        assert_ne!(other.files_digest(), m.files_digest());
+        let mut moved = manifest();
+        moved.files[0].path = "indicators/spyware.json".into();
+        assert_ne!(moved.files_digest(), m.files_digest());
+        let mut more = manifest();
+        more.files.push(FileEntry {
+            path: "ip.db".into(),
+            sha256: "c".repeat(64),
+            size: 1,
+        });
+        assert_ne!(more.files_digest(), m.files_digest());
     }
 
     #[test]

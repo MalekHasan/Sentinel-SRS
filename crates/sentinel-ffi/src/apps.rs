@@ -48,7 +48,7 @@ impl HistoryStore {
         apps: Vec<InstalledApp>,
     ) -> Result<Option<AppCheck>, HistoryError> {
         let _one_at_a_time = self.hunting.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some((version, matcher)) = feed.in_force() else {
+        let Some((version, _, matcher)) = feed.in_force() else {
             return Ok(None);
         };
         let reported = self.store.alerts_of(Rule::KnownIndicator, false)?;

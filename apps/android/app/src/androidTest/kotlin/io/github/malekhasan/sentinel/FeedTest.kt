@@ -2,6 +2,7 @@
 package io.github.malekhasan.sentinel
 
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,6 +30,7 @@ import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -101,6 +103,28 @@ class FeedTest {
         assertEquals(Outcome.INSTALLED, update())
         assertEquals(3L, version())
         assertEquals("the requests name no phone", setOf("Sentinel"), server.userAgents)
+    }
+
+    /** Audit A-22: a list that arrives too slowly is given up, and the list in force
+     *  stays. Updating is free again at once, so a folder can be imported instead. */
+    @Test
+    fun aListThatArrivesTooSlowlyIsGivenUp() {
+        server.files = list(1)
+        assertEquals(Outcome.INSTALLED, update())
+        server.files = list(2)
+        server.slow = setOf("ip.db")
+        // A short pace, so that the test does not wait minutes.
+        val pace = IndicatorFeed.Pace(graceMillis = 1_000, minBytesPerSecond = 1L shl 20)
+        val started = SystemClock.elapsedRealtime()
+        assertEquals(Outcome.UNREACHABLE, IndicatorFeed.update(context, IndicatorFeed.HttpSource(server.base), pace))
+        val took = SystemClock.elapsedRealtime() - started
+        assertTrue("gave up after $took ms", took < 10_000)
+        assertEquals(1L, version())
+        assertFalse(IndicatorFeed.states.value.busy)
+
+        server.slow = emptySet()
+        assertEquals(Outcome.INSTALLED, update())
+        assertEquals(2L, version())
     }
 
     /** SP-04: the list in force is checked again; one that changed is removed at once. */
@@ -191,7 +215,8 @@ class FeedTest {
 
     /** MS-15: "Known traces found" or "No known traces found", with the date of the list,
      *  and what a "not found" cannot say. Nothing is said before the history has been
-     *  checked against the list in force, or without a list. */
+     *  checked against the list in force, without a list, or for a list without
+     *  indicators (audit A-24). */
     @Test
     fun theResultSaysWhetherKnownTracesWereFoundAndWithWhichList() {
         val now = System.currentTimeMillis()
@@ -231,6 +256,13 @@ class FeedTest {
         shown(context.getString(R.string.feed_result_limits))
         absent(R.string.feed_result_found)
 
+        // A list without indicators looked for nothing.
+        feed = IndicatorFeed.State(status = status.copy(indicators = 0u))
+        compose.waitForIdle()
+        results.forEach(::absent)
+        absent(R.string.feed_result_limits)
+        feed = IndicatorFeed.State(status = status)
+
         // A trace found stays found, whatever the check says.
         traces = checkedBefore.copy(alerts = 2u)
         compose.waitForIdle()
@@ -253,13 +285,17 @@ class FeedTest {
         listOf("manifest.dsse.json", INDICATORS, "ip.db", "trackers.db")
             .associateWith { TestFeed.bytes(version, it) }
 
-    /** Serves [files] over plain HTTP on the phone's loopback address, one request at a time. */
+    /** Serves [files] over plain HTTP on the phone's loopback address, one request at a time;
+     *  those in [slow] a byte every 50 ms. */
     private class ListServer : AutoCloseable {
         private val socket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         val base = "http://127.0.0.1:${socket.localPort}/"
 
         @Volatile
         var files: Map<String, ByteArray> = emptyMap()
+
+        @Volatile
+        var slow: Set<String> = emptySet()
         val userAgents: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
         init {
@@ -270,7 +306,11 @@ class FeedTest {
                     } catch (e: IOException) {
                         return@Thread
                     }
-                    client.use(::answer)
+                    try {
+                        client.use(::answer)
+                    } catch (e: IOException) {
+                        // The app gave up on a slow file.
+                    }
                 }
             }, "feed-test-server").apply { isDaemon = true }.start()
         }
@@ -290,7 +330,15 @@ class FeedTest {
             val out = client.getOutputStream()
             val head = if (body == null) "404 Not Found" else "200 OK"
             out.write("HTTP/1.1 $head\r\nContent-Length: ${body?.size ?: 0}\r\nConnection: close\r\n\r\n".toByteArray())
-            body?.let(out::write)
+            if (body != null && path in slow) {
+                for (byte in body) {
+                    out.write(byte.toInt())
+                    out.flush()
+                    Thread.sleep(50)
+                }
+            } else {
+                body?.let(out::write)
+            }
             out.flush()
         }
 

@@ -33,6 +33,11 @@ const UPLOAD_CHECK: Duration = Duration::from_secs(15 * 60);
 /// the 500 one app opens in the CM-03 acceptance test.
 pub(crate) const MAX_FLOWS_PER_APP: u32 = 512;
 
+/// The most alerts kept for the next batch when the history could not take them, as on
+/// a full disk. Each is raised once a run, so that one failure does not lose it (audit
+/// A-25); the cap keeps a history that stays out of reach from costing more each batch.
+const MAX_ALERTS_TO_RETRY: usize = 64;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FlowProto {
     Tcp,
@@ -187,7 +192,8 @@ pub(crate) struct FlowEvents {
     databases: RwLock<Databases>,
     /// The feed whose indicators the traffic is matched against (ID-13).
     feed: RwLock<Option<Arc<Feed>>>,
-    /// Known-indicator alerts waiting for the next batch.
+    /// Alerts waiting for the next batch: known indicators, and the other rules raised
+    /// once a run. Those the history could not take wait again, first.
     sightings: Mutex<Vec<sentinel_detect::Alert>>,
     /// Each app and indicator already sighted in this run, `None` for an app not known:
     /// an app that keeps using a known server raises one alert, not one per lookup.
@@ -315,7 +321,8 @@ impl FlowEvents {
             self.record_flows(&batch);
         }
         if let Some(history) = &self.history {
-            for alert in &sightings {
+            let mut failed = Vec::new();
+            for alert in sightings {
                 // One open alert per app and indicator, or per app at its flow limit.
                 let same =
                     |new: &sentinel_detect::Alert, open: &sentinel_detect::Alert| match new.rule {
@@ -324,9 +331,14 @@ impl FlowEvents {
                         }
                         _ => new.rule == open.rule && new.app() == open.app(),
                     };
-                if let Err(e) = history.raise_unless_open(alert, same) {
-                    log::warn!("could not raise an alert: {e}");
+                if let Err(e) = history.raise_unless_open(&alert, same) {
+                    log::warn!("could not raise an alert, trying again with the next batch: {e}");
+                    failed.push(alert);
                 }
+            }
+            if !failed.is_empty() {
+                failed.truncate(MAX_ALERTS_TO_RETRY);
+                lock(&self.sightings).splice(0..0, failed);
             }
             self.check_uploads(history);
         }
@@ -1657,6 +1669,51 @@ mod tests {
         events.hostname_seen(&tls, "spy.example");
         events.flush();
         assert_eq!(observer.heard.lock().unwrap().len(), 4);
+    }
+
+    /// Audit A-25: a sighting whose alert the history could not take, here because
+    /// another connection holds the database, is raised with the next batch. It is not
+    /// lost for the rest of the run.
+    #[test]
+    fn an_alert_the_history_could_not_take_is_raised_with_the_next_batch() {
+        use crate::feed::tests::{indicators, open, path, stage};
+
+        let (dir, history) = history();
+        let observer = listen(&history, vec![(53, installed("org.example.chat", None))]);
+        let events = FlowEvents::new(observer.clone(), Some(Arc::clone(&history)), 1);
+        let feed = open(&dir.path().join("feed"));
+        let staged = stage(
+            dir.path(),
+            1,
+            &[(
+                "indicators-lab.json",
+                indicators("lab", &[("domain", "spy.example")]),
+            )],
+        );
+        feed.install(path(&staged)).unwrap();
+        events.set_feed(Some(feed));
+        let dns = flow(1, "10.111.222.3:53", None);
+        events.flow_started(&dns);
+        events.flush();
+
+        let other = rusqlite::Connection::open(dir.path().join("history.db")).unwrap();
+        other
+            .pragma_update(None, "key", format!("x'{}'", "07".repeat(32)))
+            .unwrap();
+        other.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        events.dns_query(&dns, "spy.example", 1);
+        events.flush();
+        assert!(
+            observer.heard.lock().unwrap().is_empty(),
+            "the history is held"
+        );
+
+        other.execute_batch("COMMIT").unwrap();
+        events.dns_query(&dns, "spy.example", 1);
+        events.flush();
+        let heard = observer.heard.lock().unwrap().clone();
+        assert_eq!(heard.len(), 1, "{heard:?}");
+        assert_eq!(heard[0].rule, crate::alerts::AlertRule::KnownIndicator);
     }
 
     /// CM-04: an app installed since the history began raises one alert on its first

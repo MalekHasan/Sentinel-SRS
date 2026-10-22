@@ -53,14 +53,15 @@ impl HistoryStore {
     /// app, name and address it holds connections to, kept flows and rolled-up days.
     /// Each app and indicator found raises one Critical alert with when the connections
     /// were made and how many, unless an alert already reported them, open or dismissed.
-    /// Runs once per list version; `None` when there is no list in force or the history
-    /// was already checked against it.
+    /// Runs once per list, told apart by its version and what its files hold (audit
+    /// A-26); `None` when there is no list in force or the history was already checked
+    /// against it.
     pub fn hunt(&self, feed: Arc<Feed>) -> Result<Option<HuntReport>, HistoryError> {
         let _one_at_a_time = self.hunting.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some((version, matcher)) = feed.in_force() else {
+        let Some((version, files, matcher)) = feed.in_force() else {
             return Ok(None);
         };
-        if self.store.hunted()? == Some(version) {
+        if self.store.hunted()? == Some(version) && self.store.hunted_files()? == Some(files) {
             return Ok(None);
         }
         let found = matches(&matcher, &self.store.past_destinations()?);
@@ -86,7 +87,7 @@ impl HistoryStore {
             raised += 1;
         }
         // Only now: a check cut short is run again, and what it raised is not repeated.
-        self.store.set_hunted(version)?;
+        self.store.set_hunted(version, files)?;
         Ok(Some(HuntReport {
             version,
             matches: u32::try_from(found.len()).unwrap_or(u32::MAX),
@@ -391,6 +392,66 @@ mod tests {
         );
     }
 
+    /// Audit A-26: a list of a version the history was checked against, but with other
+    /// files, is checked again. A list removed at its re-check may come back with its own
+    /// version (ADR-0019), and what that one holds must still be looked for.
+    #[test]
+    fn a_list_of_the_same_version_with_other_files_is_checked_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = history(dir.path());
+        let feed = open(&dir.path().join("feed"));
+        let row = flow(
+            "org.example.chat",
+            Some("spy.example"),
+            "203.0.113.5",
+            now_ms(),
+        );
+        let event = FlowEvent {
+            engine_id: 1,
+            flow: row,
+            destination: None,
+        };
+        history.store.record_flows(1, &[event]).unwrap();
+
+        let unrelated = stage(
+            dir.path(),
+            1,
+            &[(
+                "indicators-lab.json",
+                indicators("lab", &[("domain", "other.example")]),
+            )],
+        );
+        feed.install(path(&unrelated)).unwrap();
+        let none_found = HuntReport {
+            version: 1,
+            matches: 0,
+            raised: 0,
+        };
+        assert_eq!(history.hunt(Arc::clone(&feed)).unwrap(), Some(none_found));
+
+        let file = feed.file("indicators-lab.json".into()).unwrap();
+        std::fs::write(file, b"changed").unwrap();
+        assert!(feed.recheck().is_err());
+        let again = stage(
+            dir.path(),
+            1,
+            &[(
+                "indicators-lab.json",
+                indicators("lab", &[("domain", "spy.example")]),
+            )],
+        );
+        feed.install(path(&again)).unwrap();
+        assert_eq!(
+            history.hunt(Arc::clone(&feed)).unwrap(),
+            Some(HuntReport {
+                version: 1,
+                matches: 1,
+                raised: 1
+            })
+        );
+        assert_eq!(history.hunt(feed).unwrap(), None, "once per list");
+    }
+
     /// A match already reported live (ID-13) is not reported again from the history.
     #[test]
     fn a_match_already_seen_live_is_not_reported_again() {
@@ -423,7 +484,7 @@ mod tests {
                 }],
             )
             .unwrap();
-        let (_, matcher) = feed.in_force().unwrap();
+        let (_, _, matcher) = feed.in_force().unwrap();
         let hit = matcher.name("spy.example").unwrap();
         let live = sentinel_detect::known_indicator(
             now_ms(),

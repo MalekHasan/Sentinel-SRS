@@ -430,13 +430,35 @@ impl Store {
         Ok(value.and_then(|v| u64::try_from(v).ok()))
     }
 
-    /// Note that the history was checked against version `version` of the indicator list.
-    pub fn set_hunted(&self, version: u64) -> Result<()> {
-        lock(&self.conn).execute(
-            "INSERT INTO meta (key, value) VALUES ('hunted', ?1)
-             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            [i64::try_from(version).unwrap_or(i64::MAX)],
-        )?;
+    /// What the files of the indicator list the history was last checked against hold,
+    /// as `set_hunted` was told, if known (audit A-26). A list of the same version can
+    /// hold other files, as after a bundle signed with a leaked key is dropped.
+    pub fn hunted_files(&self) -> Result<Option<i64>> {
+        Ok(lock(&self.conn)
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'hunted_files'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Note that the history was checked against version `version` of the indicator
+    /// list, whose files `files` identifies.
+    pub fn set_hunted(&self, version: u64, files: i64) -> Result<()> {
+        let mut conn = lock(&self.conn);
+        let tx = conn.transaction()?;
+        for (key, value) in [
+            ("hunted", i64::try_from(version).unwrap_or(i64::MAX)),
+            ("hunted_files", files),
+        ] {
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 

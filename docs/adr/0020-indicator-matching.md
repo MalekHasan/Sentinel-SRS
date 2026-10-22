@@ -35,7 +35,7 @@
    - the family, the threat (spyware or stalkerware), the source's name, the report's date and the report's link (MS-10).
 
    It is stored as JSON in the alert, like all evidence ([ADR-0012](0012-alerts.md)), and its field names are fixed by a test. A match whose app Android cannot name is still raised, about the phone. As a Critical alert it is always notified, comes through Do Not Disturb where the user allows it, and cannot be "allowed" away (ADR-0012, THREAT-MODEL-A B5).
-5. **The alert goes out with the next batch.** The engine thread only queues it. The batch thread stores it and tells the app 250 ms later (`BATCH_DELAY`), within CM-01's one-second batch, well inside ID-13's 5 s.
+5. **The alert goes out with the next batch.** The engine thread only queues it. The batch thread stores it and tells the app 250 ms later (`BATCH_DELAY`), within CM-01's one-second batch, well inside ID-13's 5 s. An alert the history could not take, on a full disk for example, is queued again for the following batch, so the sighting is not lost for the run (audit A-25). This holds for every alert raised once a run. At most 64 wait this way, so a history that stays out of reach does not cost more each batch.
 6. **One alert per app and indicator.**
    - Within one monitoring run, an app and an indicator are queued once, however they are seen again. A DNS query, then a TLS name, then a connection to the same server is one alert.
    - A later run raises nothing new while an alert about the same app and indicator is still open.
@@ -64,6 +64,7 @@
     - an app not known is reported;
     - the same app and indicator raise one alert per run, and none in a later run while it is open, but one again once it is dismissed;
     - a list removed at its check matches nothing more;
+    - while another connection holds the history, the alert cannot be written; it is raised with the next batch once the history is free (A-25);
   - through the real packet engine, a datagram to an address on the list raises the alert in under a second and is not blocked;
   - the device tests' signed lists match the planted name.
 - On the Android 14 emulator (`IndicatorAlertTest`), with the signed test list in force:

@@ -91,7 +91,8 @@ fun IndicatorList(
 /**
  * MS-15: "Known traces found" whenever an alert named one, open or dismissed, else "No
  * known traces found" once the history was checked against the list in force, with the
- * list's date and the limits of such a result (SRS §8A.3).
+ * list's date and the limits of such a result (SRS §8A.3). A list without indicators
+ * looked for nothing, so it gives no result (audit A-24).
  */
 @Composable
 private fun TraceResult(status: FeedStatus, traces: KnownTraces, format: DateFormat) {
@@ -109,6 +110,7 @@ private fun TraceResult(status: FeedStatus, traces: KnownTraces, format: DateFor
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
+        status.indicators == 0u -> {}
         traces.checkedVersion == status.version -> {
             Text(stringResource(R.string.feed_result_none), style = MaterialTheme.typography.titleSmall)
             Text(
