@@ -96,14 +96,20 @@ object History {
 
     /**
      * One-tap wipe (SRS §13.2): delete the database and its key. Only while monitoring
-     * is off, because the engine writes to the open database.
+     * is off, because the engine writes to the open database. It waits for a check or an
+     * export still using the history, and nothing reads or writes it afterwards (audit
+     * A-28): call it off the main thread.
      */
     fun wipe(context: Context) = synchronized(this) {
         check(Monitor.status.value == Monitor.Status.OFF) { "stop monitoring before deleting the history" }
-        store?.close()
+        store?.let {
+            it.closeDatabase()
+            it.close()
+        }
         store = null
         deleteFiles(context.applicationContext)
         Heartbeat.forget(context.applicationContext)
+        AlertNotifier.cancelAll(context.applicationContext)
     }
 
     /**

@@ -475,9 +475,11 @@
 
     <string name="wipe_action">امسح السجل</string>
     <string name="wipe_title">بدك تمسح السجل كله؟</string>
-    <string name="wipe_text">هاد بيمسح كل الاتصالات والفجوات المسجّلة على هالموبايل، والمفتاح اللي بيحميهم. ما في رجعة.</string>
+    <string name="wipe_text">هاد بيمسح كل شي سجّله تطبيق Sentinel على هالموبايل: الاتصالات، والفجوات، والتنبيهات، والتنبيهات اللي سمحت فيها، وقواعد الجدار الناري والعزل، وتغييراتك، والمفتاح اللي بيحميهم. ما في رجعة.</string>
     <string name="wipe_confirm">امسح</string>
     <string name="wipe_cancel">إلغاء</string>
+    <string name="wipe_failed">ما قدرنا نمسح السجل. تأكد إنه المراقبة مطفية، وجرّب كمان مرة.</string>
+    <string name="wipe_failed_ok">تمام</string>
 
     <string name="channel_monitoring">المراقبة</string>
     <string name="channel_monitoring_description">بيظهر طول ما Sentinel عم يراقب هالموبايل.</string>

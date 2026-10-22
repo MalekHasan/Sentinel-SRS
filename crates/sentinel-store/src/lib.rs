@@ -424,6 +424,18 @@ impl Store {
         self.began
     }
 
+    /// Close the database before it is wiped (audit A-28): wait until nothing is using
+    /// it, close it, and leave an empty database in memory in its place, so that a call
+    /// made later fails without touching a file. Without this, a check or an export
+    /// still running would go on reading and writing the wiped history: an export could
+    /// save what the user had just deleted. (The next history's files are safe either
+    /// way: SQLite does not checkpoint or delete the log of a database file that moved.)
+    pub fn close(&self) -> Result<()> {
+        let mut conn = lock(&self.conn);
+        let open = std::mem::replace(&mut *conn, Connection::open_in_memory()?);
+        open.close().map_err(|(_, e)| StoreError::Sqlite(e))
+    }
+
     /// The version of the indicator list the history was last checked against (MS-02),
     /// if any.
     pub fn hunted(&self) -> Result<Option<u64>> {

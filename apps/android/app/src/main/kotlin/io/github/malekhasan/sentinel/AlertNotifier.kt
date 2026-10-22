@@ -155,6 +155,17 @@ object AlertNotifier {
         }
     }
 
+    /**
+     * Take back every alert's notification, as after a wipe: its alert is gone, and its
+     * number will be given to a new alert (audit A-32).
+     */
+    fun cancelAll(context: Context) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.activeNotifications
+            .filter { it.id == NOTIFICATION_ID }
+            .forEach { manager.cancel(it.tag, it.id) }
+    }
+
     /** Notify [alert] now if the core allows it; otherwise it waits in the app. */
     fun deliver(context: Context, history: HistoryStore, alert: HistoryAlert) {
         try {

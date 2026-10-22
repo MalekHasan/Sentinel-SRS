@@ -128,6 +128,21 @@ class AlertNotificationTest {
         assertTrue(text, text.endsWith(more))
     }
 
+    /**
+     * Audit A-32: a wipe takes back the alerts' notifications. Their alerts are gone, and
+     * their numbers would open new alerts that are not the ones they told of.
+     */
+    @Test
+    fun aWipeTakesBackTheAlertsNotifications() {
+        GapLog.open(context, System.currentTimeMillis(), "before the wipe")
+        waitForAlertNotification()
+        History.wipe(context)
+        // Android takes a notification back a moment after it is asked to.
+        waitFor("the alert notification to go", 5_000) {
+            manager.activeNotifications.none { it.id == AlertNotifier.NOTIFICATION_ID }
+        }
+    }
+
     /** AL-04: while Do Not Disturb is on, a Warning waits in the app. */
     @Test
     fun doNotDisturbKeepsAWarningInTheApp() {

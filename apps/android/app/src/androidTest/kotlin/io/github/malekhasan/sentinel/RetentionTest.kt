@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package io.github.malekhasan.sentinel
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -80,6 +83,42 @@ class RetentionTest {
 
         compose.onNode(hasText(days(90)) and isSelectable()).performScrollTo().performClick()
         assertEquals("not asked", listOf(7u, 90u), chosen)
+    }
+
+    /**
+     * Audit A-27: deleting the history is offered whenever monitoring is off, also with
+     * no connection or gap to show, since alerts, rules and the journal go with it.
+     */
+    @Test
+    fun theWipeIsOfferedWheneverMonitoringIsOff() {
+        var status by mutableStateOf(Monitor.Status.OFF)
+        var asked = 0
+        compose.setContent {
+            SentinelTheme {
+                MonitorContent(
+                    coreVersion = "0.0.1",
+                    status = status,
+                    snapshot = null,
+                    flows = emptyList(),
+                    gaps = emptyList(),
+                    away = emptyList(),
+                    alerts = emptyList(),
+                    onStart = {},
+                    onStop = {},
+                    onShowLive = {},
+                    onOpenApp = {},
+                    onOpenAlert = {},
+                    onWipe = { asked++ },
+                )
+            }
+        }
+        val wipe = context.getString(R.string.wipe_action)
+        compose.onNodeWithText(wipe).performScrollTo().assertIsDisplayed().performClick()
+        assertEquals(1, asked)
+
+        status = Monitor.Status.ON
+        compose.waitForIdle()
+        compose.onNodeWithText(wipe).assertDoesNotExist()
     }
 
     /**

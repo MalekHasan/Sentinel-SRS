@@ -430,9 +430,11 @@
 
     <string name="wipe_action">Delete history</string>
     <string name="wipe_title">Delete the whole history?</string>
-    <string name="wipe_text">This deletes every connection and gap recorded on this phone, and the key that protects them. It cannot be undone.</string>
+    <string name="wipe_text">This deletes everything Sentinel recorded on this phone: connections, gaps, alerts, the alerts you allowed, firewall rules and isolation, your actions, and the key that protects them. It cannot be undone.</string>
     <string name="wipe_confirm">Delete</string>
     <string name="wipe_cancel">Cancel</string>
+    <string name="wipe_failed">The history could not be deleted. Make sure monitoring is off, then try again.</string>
+    <string name="wipe_failed_ok">OK</string>
 
     <string name="channel_monitoring">Monitoring</string>
     <string name="channel_monitoring_description">Shown the whole time Sentinel is monitoring this phone.</string>
