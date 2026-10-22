@@ -301,12 +301,12 @@ class RtlTest {
         }
         compose.onNodeWithText(arabic.getString(R.string.back)).assertAtTheRight()
         compose.onNodeWithText(arabic.getString(R.string.allowed_title)).assertAtTheRight()
-        compose.onNodeWithText(arabic.getString(R.string.allowed_explainer)).assertAtTheRight()
+        // Texts that may fill a line are checked by their direction, not their place.
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.allowed_explainer)))
         // A Latin name inside the sentence must not turn it around.
         val said = arabic.getString(R.string.allowed_taken_back, isolate(LABEL))
-        compose.onNodeWithText(said).assertAtTheRight()
         assertRightToLeft(compose.onNodeWithText(said))
-        compose.onNodeWithText(arabic.getString(R.string.alert_special_access_title)).assertAtTheRight()
+        assertRightToLeft(compose.onNodeWithText(arabic.getString(R.string.alert_special_access_title)))
         compose.onNodeWithText(arabic.getString(R.string.allowed_take_back)).assertAtTheRight()
     }
 
