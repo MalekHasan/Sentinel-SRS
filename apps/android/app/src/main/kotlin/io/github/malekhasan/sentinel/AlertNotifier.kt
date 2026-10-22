@@ -16,6 +16,7 @@ import android.util.Log
 import io.github.malekhasan.sentinel.core.AlertDelivery
 import io.github.malekhasan.sentinel.core.AlertEvidence
 import io.github.malekhasan.sentinel.core.AlertListener
+import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
 import io.github.malekhasan.sentinel.core.HistoryAlert
 import io.github.malekhasan.sentinel.core.HistoryStore
@@ -26,7 +27,9 @@ import io.github.malekhasan.sentinel.core.HistoryStore
  * notified now: at most three non-critical notifications an hour per app (AL-03), and
  * Info and Warning wait in the app while Do Not Disturb is on (AL-04). Repeated alerts
  * of one kind share one notification, which says how many more are open (AL-03). On a
- * locked phone a notification makes its sound but shows nothing (ADR-0012).
+ * locked phone a notification makes its sound but shows nothing (ADR-0012). An alert
+ * that could tell someone watching the phone they were found says only that there is
+ * something to review (audit A-10).
  */
 object AlertNotifier {
     private const val TAG = "SentinelAlertNotifier"
@@ -42,10 +45,50 @@ object AlertNotifier {
 
     fun channelId(severity: AlertSeverity): String = "alert-${severity.name.lowercase()}"
 
-    /** Alerts of one rule about one app share a notification. */
+    /**
+     * Alerts of one rule about one app share a notification. Discreet alerts all share
+     * one, whose tag names neither: an app that reads notifications sees the tag too.
+     */
     fun groupKey(alert: HistoryAlert): String {
+        if (isDiscreet(alert.rule)) return DISCREET_KEY
         val app = alert.evidence.filterIsInstance<AlertEvidence.App>().firstOrNull()?.app.orEmpty()
         return "${alert.rule.name}:$app"
+    }
+
+    /** The tag of the one notification that discreet alerts share. */
+    const val DISCREET_KEY = "review"
+
+    /**
+     * Whether [rule]'s notification says only that Sentinel has something to review,
+     * with no title, explanation, severity or app (audit A-10, THREAT-MODEL-A B4). These
+     * rules find signs of someone watching the phone. Spyware that reads notifications,
+     * as such apps do, would otherwise learn it was found, and could tell whoever put it
+     * there. What was found shows in the app only. A new rule does not build until it is
+     * placed in one list or the other.
+     */
+    fun isDiscreet(rule: AlertRule): Boolean = when (rule) {
+        // About Sentinel itself, or what any app does when new: nothing found about anyone.
+        AlertRule.MONITORING_INTERRUPTED,
+        AlertRule.MONITORING_KEEPS_STOPPING,
+        AlertRule.HISTORY_STARTED_ANEW,
+        AlertRule.FIRST_NETWORK_USE,
+        AlertRule.NEW_DESTINATION,
+        AlertRule.FLOW_LIMIT,
+        -> false
+        AlertRule.KNOWN_INDICATOR,
+        AlertRule.SPECIAL_ACCESS,
+        AlertRule.REMOTE_ACCESS_EXPOSED,
+        AlertRule.NEW_ROOT_CERTIFICATE,
+        AlertRule.SENSOR_WHILE_AWAY,
+        AlertRule.DNS_SERVERS_CHANGED,
+        AlertRule.PRIVATE_DNS_CHANGED,
+        AlertRule.PROXY_CHANGED,
+        AlertRule.BEACON_LIKE,
+        AlertRule.DNS_TUNNEL,
+        AlertRule.OWN_ENCRYPTED_DNS,
+        AlertRule.UPLOAD_SURGE,
+        AlertRule.SHARING_SITE_UPLOAD,
+        -> true
     }
 
     /** Hears the core's new alerts. */
@@ -140,9 +183,11 @@ object AlertNotifier {
     }
 
     private fun build(context: Context, alert: HistoryAlert, alike: Int): Notification {
-        val text = context.getString(explanationRes(alert))
+        val discreet = isDiscreet(alert.rule)
+        val title = context.getString(if (discreet) R.string.alert_review_title else titleRes(alert))
+        val text = context.getString(if (discreet) R.string.alert_review_text else explanationRes(alert))
         val more = alike - 1
-        val details = if (more > 0) {
+        val details = if (more > 0 && !discreet) {
             text + "\n" + context.resources.getQuantityString(R.plurals.alert_more_like_this, more, more)
         } else {
             text
@@ -157,10 +202,10 @@ object AlertNotifier {
         )
         return Notification.Builder(context, channelId(alert.severity))
             .setSmallIcon(R.drawable.ic_monitoring)
-            .setContentTitle(context.getString(titleRes(alert)))
+            .setContentTitle(title)
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(details))
-            .setSubText(context.getString(severityNameRes(alert.severity)))
+            .setSubText(if (discreet) null else context.getString(severityNameRes(alert.severity)))
             .setContentIntent(open)
             .setAutoCancel(true)
             // Nothing on a locked phone, whatever the lock screen setting: what was found

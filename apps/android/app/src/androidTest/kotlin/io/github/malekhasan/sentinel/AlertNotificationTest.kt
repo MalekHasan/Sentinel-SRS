@@ -6,9 +6,13 @@ import android.app.NotificationManager
 import android.media.RingtoneManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.malekhasan.sentinel.core.AlertRule
 import io.github.malekhasan.sentinel.core.AlertSeverity
+import io.github.malekhasan.sentinel.core.HeldAccess
+import io.github.malekhasan.sentinel.core.SpecialAccess
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -73,6 +77,33 @@ class AlertNotificationTest {
         assertEquals(Notification.VISIBILITY_SECRET, posted.notification.visibility)
         assertNotNull("tapping opens the alert", posted.notification.contentIntent)
         assertNotNull(History.get(context).alerts(true, 10u).single().notifiedMs)
+    }
+
+    /**
+     * Audit A-10: an alert about signs of someone watching the phone says only that there
+     * is something to review, for spyware that reads notifications sees them too. Its
+     * title, explanation, severity and app show in the app only, and the notification's
+     * tag names neither the rule nor the app.
+     */
+    @Test
+    fun anAlertAboutSpyingSaysOnlyThatThereIsSomethingToReview() {
+        val spy = "org.example.watcher"
+        History.get(context).checkAccess(listOf(HeldAccess(spy, SpecialAccess.ACCESSIBILITY, false)))
+        val posted = waitForAlertNotification()
+        val alert = History.get(context).alerts(true, 10u).single()
+        assertEquals(AlertRule.SPECIAL_ACCESS, alert.rule)
+        assertNotNull("notified", alert.notifiedMs)
+        val extras = posted.notification.extras
+        assertEquals(context.getString(R.string.alert_review_title), extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        assertEquals(context.getString(R.string.alert_review_text), extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+        assertNull("no severity", extras.getCharSequence(Notification.EXTRA_SUB_TEXT))
+        val shown = listOf(Notification.EXTRA_TITLE, Notification.EXTRA_TEXT, Notification.EXTRA_BIG_TEXT)
+            .joinToString(" ") { extras.getCharSequence(it)?.toString().orEmpty() }
+        assertFalse(shown, shown.contains(spy))
+        assertEquals(AlertNotifier.DISCREET_KEY, posted.tag)
+        assertEquals(Notification.VISIBILITY_SECRET, posted.notification.visibility)
+        assertTrue(AlertNotifier.isDiscreet(AlertRule.KNOWN_INDICATOR))
+        assertFalse(AlertNotifier.isDiscreet(AlertRule.MONITORING_INTERRUPTED))
     }
 
     /** AL-03: repeated alerts share one notification, and three an hour are notified. */
