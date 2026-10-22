@@ -1296,6 +1296,41 @@ fn wipe_deletes_the_database_and_its_journal() {
     assert!(store.recent_flows(10).unwrap().is_empty());
 }
 
+/// Audit A-28: a history closed before the wipe gives nothing more, as a check or an
+/// export still running would otherwise read the history just deleted. The next history
+/// at the same path keeps its own files when the old one is dropped.
+#[test]
+fn a_history_closed_before_the_wipe_gives_nothing_more() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let old = Store::open(&path, &KEY).unwrap();
+    old.record_flows(1, &[event(1, flow("org.example.old", "old.example", NOW))])
+        .unwrap();
+    old.close().unwrap();
+    wipe(&path).unwrap();
+    assert!(old.recent_flows(10).is_err(), "nothing wiped can be read");
+    assert!(
+        old.record_flows(1, &[event(2, flow("org.example.old", "late.example", NOW))])
+            .is_err()
+    );
+
+    let next = Store::open(&path, &KEY).unwrap();
+    next.record_flows(1, &[event(1, flow("org.example.new", "new.example", NOW))])
+        .unwrap();
+    let mut wal = path.clone().into_os_string();
+    wal.push("-wal");
+    assert!(Path::new(&wal).exists());
+    drop(old);
+    assert!(
+        Path::new(&wal).exists(),
+        "the next history's log is its own"
+    );
+    drop(next);
+    let flows = Store::open(&path, &KEY).unwrap().recent_flows(10).unwrap();
+    assert_eq!(flows.len(), 1);
+    assert_eq!(flows[0].flow.app.as_deref(), Some("org.example.new"));
+}
+
 #[test]
 fn reopening_keeps_the_schema_and_data() {
     let dir = tempfile::tempdir().unwrap();

@@ -340,6 +340,8 @@ fun MonitorScreen(
     val names = remember(context) { AppNames(context) }
     val scope = rememberCoroutineScope()
     var confirmWipe by remember { mutableStateOf(false) }
+    // The last wipe failed, as when monitoring started meanwhile (audit A-27).
+    var wipeFailed by remember { mutableStateOf(false) }
     // Bumped after a wipe, or retention, so the lists reload.
     var generation by remember { mutableIntStateOf(0) }
 
@@ -379,15 +381,32 @@ fun MonitorScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmWipe = false
-                    // Refused if monitoring started meanwhile; the button then hides.
-                    runCatching { History.wipe(context) }
-                    generation++
+                    scope.launch {
+                        // Refused if monitoring started meanwhile. It may wait for a check
+                        // or an export to finish, so not on the main thread.
+                        val wiped = withContext(Dispatchers.IO) { runCatching { History.wipe(context) } }
+                        wipeFailed = wiped.isFailure
+                        generation++
+                    }
                 }) { Text(stringResource(R.string.wipe_confirm)) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmWipe = false }) {
                     Text(stringResource(R.string.wipe_cancel))
                 }
+            },
+        )
+    }
+
+    if (wipeFailed) {
+        AlertDialog(
+            onDismissRequest = { wipeFailed = false },
+            text = {
+                GuardDialogWindow()
+                Text(stringResource(R.string.wipe_failed))
+            },
+            confirmButton = {
+                TextButton(onClick = { wipeFailed = false }) { Text(stringResource(R.string.wipe_failed_ok)) }
             },
         )
     }
@@ -640,8 +659,9 @@ fun MonitorContent(
         KeepFlowsChoice(keepFlowsDays, onKeepFlowsDays)
 
         // The engine writes to the history while it runs, so it can only be deleted
-        // while monitoring is off.
-        if (status == Monitor.Status.OFF && (flows.isNotEmpty() || gaps.isNotEmpty())) {
+        // while monitoring is off. Alerts, rules and the journal are deleted with it, so it
+        // is offered even without a connection or gap to show (audit A-27).
+        if (status == Monitor.Status.OFF) {
             OutlinedButton(onClick = onWipe) {
                 Text(stringResource(R.string.wipe_action))
             }

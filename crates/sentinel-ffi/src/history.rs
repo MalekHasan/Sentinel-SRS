@@ -478,6 +478,13 @@ impl HistoryStore {
         self.store.began()
     }
 
+    /// Close the database before it is wiped (audit A-28). It waits until nothing is
+    /// using it; later calls fail without touching a file, so that nothing still running
+    /// reads or writes the wiped history.
+    pub fn close_database(&self) -> Result<(), HistoryError> {
+        Ok(self.store.close()?)
+    }
+
     /// Start a monitoring gap, unless one is already open. `started_ms` is `None` when
     /// the start is unknown. A new gap raises an alert (SP-03).
     pub fn open_gap(&self, started_ms: Option<i64>, reason: String) -> Result<(), HistoryError> {
